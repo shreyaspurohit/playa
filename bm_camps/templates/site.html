@@ -130,7 +130,47 @@
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
     padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
   }
+  .camp .camp-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 8px;
+  }
+  .camp .camp-head h3 { flex: 1; min-width: 0; word-break: break-word; }
   .camp h3 { margin: 0; font-size: 16px; font-weight: 600; }
+  /* Favorite star on each card */
+  .fav-btn {
+    width: 36px; height: 36px; flex-shrink: 0; padding: 0; border: 0;
+    background: transparent; cursor: pointer; font-size: 22px; line-height: 1;
+    color: var(--muted); border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.15s, background 0.15s, transform 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fav-btn:hover, .fav-btn:focus-visible { background: var(--chip-bg); transform: scale(1.08); outline: none; }
+  .fav-btn.active { color: #f59e0b; }           /* star-gold, readable on every theme */
+  .fav-btn.active:hover { color: #fbbf24; }
+  /* Favorites-only filter toggle — in the controls row */
+  .fav-filter {
+    padding: 10px 14px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text);
+    border-radius: 8px; cursor: pointer; font-size: 14px;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fav-filter:hover { border-color: var(--accent); }
+  .fav-filter.active {
+    background: #f59e0b; border-color: #f59e0b; color: #1a1a1a; font-weight: 500;
+  }
+  .fav-filter.active:hover { background: #fbbf24; border-color: #fbbf24; }
+  .fav-filter .count { opacity: 0.7; margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .fav-clear {
+    padding: 10px 14px; border: 1px solid var(--border);
+    background: var(--card); color: var(--muted);
+    border-radius: 8px; cursor: pointer; font-size: 14px;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fav-clear:hover { border-color: #c2410c; color: #c2410c; }
+  .fav-clear.hidden { display: none; }
   .camp .meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .camp .meta a { color: var(--accent); text-decoration: none; }
   .camp .meta a:hover { text-decoration: underline; }
@@ -201,6 +241,12 @@
   .modal-body .warn { display: inline-block; background: var(--mark-bg); color: var(--mark-text); padding: 1px 7px; border-radius: 4px; font-weight: 600; margin-right: 4px; }
   .modal-body .badge { display: inline-block; background: var(--chip-bg); color: var(--text); padding: 2px 8px; border-radius: 999px; font-weight: 500; margin-right: 6px; font-size: 12px; }
   .modal-body .footnote { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  .modal-body .danger-btn {
+    padding: 6px 12px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); border-radius: 6px;
+    cursor: pointer; font-size: 12px; margin-left: 4px; white-space: nowrap;
+  }
+  .modal-body .danger-btn:hover { border-color: #c2410c; color: #c2410c; }
   footer.site-footer {
     padding: 24px 24px 40px; margin-top: 8px; border-top: 1px solid var(--border);
     color: var(--muted); font-size: 12px; line-height: 1.55;
@@ -281,6 +327,8 @@
   <div class="stats"><span id="total"></span> camps · <span id="count">—</span> matching <span id="filter-note"></span></div>
   <div class="controls">
     <input id="search" type="search" placeholder="Search name, description, events, location, or tags…" autocomplete="off">
+    <button id="fav-filter" class="fav-filter" type="button" aria-pressed="false" title="Show only camps you've starred">☆ Favorites <span class="count">(0)</span></button>
+    <button id="fav-clear" class="fav-clear hidden" type="button" title="Remove all starred camps">Unfavorite all</button>
     <button id="clear" type="button">Clear</button>
   </div>
 </header>
@@ -329,6 +377,8 @@
       <p><strong>Camp owner? Want your camp removed?</strong> <a href="mailto:__CONTACT_EMAIL__?subject=%5BBM%20Camps%5D%20Takedown%20request&amp;body=Camp%20name%3A%20%0ACamp%20URL%20on%20directory.burningman.org%3A%20%0A%0APlease%20remove%20my%20camp%20from%20this%20site.%20Thanks.">Email a takedown request</a> — please include the camp name and directory URL, and the entry will be removed on the next build.</p>
 
       <p><strong>Found a bug or a mis-parse?</strong> <a href="https://github.com/shreyaspurohit/playa/issues" target="_blank" rel="noopener">Open an issue on GitHub</a> — include the camp name and what looks wrong.</p>
+
+      <p><strong>Stored on this device:</strong> theme, password (per tab), and the camps you've starred. Nothing leaves your browser. <button id="clear-data" class="danger-btn" type="button">Clear all local data</button></p>
 
       <p class="footnote">No affiliation with Black Rock City, LLC or the Burning Man Project. Updated __SCRAPED_DATE__.</p>
     </div>
@@ -423,11 +473,31 @@ async function loadCamps() {
   DATA.forEach(c => c.tags.forEach(t => tagFreq.set(t, (tagFreq.get(t) || 0) + 1)));
   const sortedTags = [...tagFreq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
+  // --- Favorites (localStorage) ---------------------------------------
+  // Stored under 'bm-favs' as a JSON array of camp ids. Camp id is the
+  // directory.burningman.org path number, so it's stable across scrapes
+  // and survives name/description changes on a camp.
+  const FAVS_KEY = 'bm-favs';
+  function loadFavs() {
+    try {
+      const raw = localStorage.getItem(FAVS_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed.map(String));
+    } catch (e) {}
+    return new Set();
+  }
+  function persistFavs(favs) {
+    try { localStorage.setItem(FAVS_KEY, JSON.stringify([...favs])); } catch (e) {}
+  }
+
   const state = {
     query: '',
     queryLower: '',
     activeTags: new Set(),
     showAllTags: false,
+    favs: loadFavs(),
+    favOnly: false,
   };
 
   const RESULT_CAP = 600;
@@ -441,6 +511,8 @@ async function loadCamps() {
   const cloud = $('tagcloud');
   const searchEl = $('search');
   const clearEl = $('clear');
+  const favFilterEl = $('fav-filter');
+  const favClearEl = $('fav-clear');
 
   totalEl.textContent = DATA.length;
 
@@ -521,6 +593,7 @@ async function loadCamps() {
   }
 
   function matches(camp) {
+    if (state.favOnly && !state.favs.has(camp.id)) return false;
     for (const t of state.activeTags) {
       if (!camp.tags.includes(t)) return false;
     }
@@ -567,9 +640,22 @@ async function loadCamps() {
       web,
       canonical,
     ].filter(Boolean).join(' · ');
+    const isFav = state.favs.has(camp.id);
+    const favBtn = (
+      '<button class="fav-btn' + (isFav ? ' active' : '') + '"' +
+      ' type="button" data-fav-id="' + escapeHTML(camp.id) + '"' +
+      ' aria-pressed="' + (isFav ? 'true' : 'false') + '"' +
+      ' aria-label="' + (isFav ? 'Remove from favorites' : 'Add to favorites') + '"' +
+      ' title="' + (isFav ? 'Unfavorite' : 'Favorite') + '">' +
+      (isFav ? '★' : '☆') +
+      '</button>'
+    );
     return (
       '<article class="camp">' +
-        '<h3>' + highlight(camp.name, q) + '</h3>' +
+        '<div class="camp-head">' +
+          '<h3>' + highlight(camp.name, q) + '</h3>' +
+          favBtn +
+        '</div>' +
         '<div class="meta">' + metaBits + '</div>' +
         descHTML +
         '<div class="tags">' + tags + '</div>' +
@@ -577,6 +663,53 @@ async function loadCamps() {
       '</article>'
     );
   }
+
+  // --- Favorites UI wiring ---------------------------------------------
+  function renderFavFilter() {
+    const n = state.favs.size;
+    favFilterEl.innerHTML = (state.favOnly ? '★' : '☆') +
+      ' Favorites <span class="count">(' + n + ')</span>';
+    favFilterEl.classList.toggle('active', state.favOnly);
+    favFilterEl.setAttribute('aria-pressed', state.favOnly ? 'true' : 'false');
+    // The "Unfavorite all" button only makes sense while the favorites
+    // filter is engaged — hidden otherwise.
+    favClearEl.classList.toggle('hidden', !state.favOnly || n === 0);
+  }
+  function toggleFav(id) {
+    if (state.favs.has(id)) state.favs.delete(id);
+    else state.favs.add(id);
+    persistFavs(state.favs);
+    renderFavFilter();
+    render();
+  }
+  favFilterEl.addEventListener('click', () => {
+    // If the user clicks the filter with no favs, just nudge them — don't
+    // engage an empty-result filter silently.
+    if (!state.favOnly && state.favs.size === 0) {
+      favFilterEl.animate(
+        [{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' },
+         { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }],
+        { duration: 220 }
+      );
+      return;
+    }
+    state.favOnly = !state.favOnly;
+    renderFavFilter();
+    render();
+  });
+  favClearEl.addEventListener('click', () => {
+    const n = state.favs.size;
+    if (n === 0) return;
+    const msg = "Remove all " + n + " starred camp" + (n === 1 ? '' : 's') +
+                "?\n\nThis can't be undone — you'll need to star them again one by one.";
+    if (!confirm(msg)) return;
+    state.favs.clear();
+    persistFavs(state.favs);
+    state.favOnly = false;   // nothing to filter to now
+    renderFavFilter();
+    render();
+  });
+  renderFavFilter();
 
   function render() {
     const matched = DATA.filter(matches);
@@ -598,8 +731,13 @@ async function loadCamps() {
     results.innerHTML = html;
   }
 
-  // Clicking a tag badge inside a card toggles that tag as a filter.
+  // Delegated click handler for the cards grid: fav star + tag badges.
   results.addEventListener('click', e => {
+    const fav = e.target.closest('.fav-btn');
+    if (fav) {
+      toggleFav(fav.dataset.favId);
+      return;
+    }
     const badge = e.target.closest('.tagbadge');
     if (!badge) return;
     const tag = badge.dataset.tag;
@@ -625,7 +763,9 @@ async function loadCamps() {
     state.query = '';
     state.queryLower = '';
     state.activeTags.clear();
+    state.favOnly = false;
     buildCloud();
+    renderFavFilter();
     render();
     searchEl.focus();
   });
@@ -648,6 +788,26 @@ async function loadCamps() {
   infoClose.addEventListener('click', infoHide);
   infoModal.addEventListener('click', e => {
     if (e.target === infoModal) infoHide();   // backdrop click
+  });
+
+  // "Clear all local data" button inside the modal. Wipes everything this
+  // site stores on the device: favorites, theme, info-seen flag, cached
+  // password. Requires confirmation because clearing the password means
+  // re-entering it on the gate.
+  $('clear-data').addEventListener('click', () => {
+    const msg = "Clear all local data?\n\nThis removes:\n" +
+                "  • your favorited camps\n" +
+                "  • your theme preference\n" +
+                "  • the password cached for this tab\n\n" +
+                "You'll need to re-enter the password.";
+    if (!confirm(msg)) return;
+    try {
+      localStorage.removeItem('bm-favs');
+      localStorage.removeItem('bm-theme');
+      localStorage.removeItem('bm-info-seen');
+    } catch (e) {}
+    try { sessionStorage.removeItem('bm-pw'); } catch (e) {}
+    location.reload();
   });
 
   // Pulse the info button the first few times a user visits, then let it be.
