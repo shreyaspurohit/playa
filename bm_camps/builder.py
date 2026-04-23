@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .models import Camp
 from .tagger import Tagger
+from .timeparser import derive_week_map, format_display, parse_event_time
 
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "site.html"
@@ -71,7 +72,8 @@ class SiteBuilder:
         }
 
     def load_camps(self) -> list[Camp]:
-        """Dedupe by id, skip denylisted, apply tags, sort by lowercased name."""
+        """Dedupe by id, skip denylisted, apply tags, enrich event times,
+        sort by lowercased name."""
         denied = self.load_denylist()
         seen: set[str] = set()
         skipped = 0
@@ -88,9 +90,39 @@ class SiteBuilder:
                 camp.tags = self.tagger.tag_camp(camp)
                 camps.append(camp)
         camps.sort(key=lambda c: c.name.lower())
+        self._enrich_event_times(camps)
         if skipped:
             print(f"  (skipped {skipped} camp(s) per denylist)")
         return camps
+
+    @staticmethod
+    def _enrich_event_times(camps: list[Camp]) -> None:
+        """Populate event.display_time in place. Two-pass: parse everything
+        to build the day→date map for this scrape, then format each event
+        with that map. Events whose raw time we can't parse keep
+        display_time == '' and fall back to raw in the UI."""
+        # Pass 1: parse every event's raw time.
+        parses: list[tuple] = []  # list[(event, parsed_or_None)]
+        parsed_only = []
+        for camp in camps:
+            for ev in camp.events:
+                p = parse_event_time(ev.time)
+                parses.append((ev, p))
+                if p:
+                    parsed_only.append(p)
+        # Derive week map from this scrape only (year-agnostic).
+        week_map = derive_week_map(parsed_only)
+        # Pass 2: format.
+        recognized = 0
+        for ev, p in parses:
+            s = format_display(p, week_map)
+            if s:
+                ev.display_time = s
+                recognized += 1
+        if parses:
+            print(f"  event times parsed: {recognized}/{len(parses)} "
+                  f"({100 * recognized // len(parses)}%); "
+                  f"week map: {dict(sorted(week_map.items()))}")
 
     # --- encryption -------------------------------------------------------
 

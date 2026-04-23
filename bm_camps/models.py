@@ -16,10 +16,17 @@ class Event:
     name: str
     description: str
     time: str
+    # Normalized display form ("Tue 8/27 · 10:00 AM – 11:15 AM"). Populated
+    # by SiteBuilder post-load; empty string if the raw `time` couldn't be
+    # parsed. The template falls back to `time` when this is empty.
+    display_time: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name,
-                "description": self.description, "time": self.time}
+        return {
+            "id": self.id, "name": self.name,
+            "description": self.description, "time": self.time,
+            "display_time": self.display_time,
+        }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Event":
@@ -28,6 +35,7 @@ class Event:
             name=d.get("name", ""),
             description=d.get("description", ""),
             time=d.get("time", ""),
+            display_time=d.get("display_time", ""),
         )
 
 

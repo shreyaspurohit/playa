@@ -113,6 +113,9 @@ the site's stable HTML shape.
   `fetch()` with retries + backoff, `scrape_page()` / `scrape_page_to_file()`.
 - `tagger.py` — `TAGS` dict (taxonomy of ~120 tags) + `Tagger(taxonomy)`
   class. `tag(text)`, `tag_camp(camp)`, `haystack(camp)` helpers.
+- `timeparser.py` — normalizes raw event time strings into a structured
+  parse + a clean display line. Pure functions only (no class). See the
+  dedicated "Event time parsing" section below.
 - `meta.py` — `write_meta(config)` function (no class — one-shot op).
 - `merger.py` — `merge_csv(config)` function + `write_tagged_csv` helper.
 - `builder.py` — `SiteBuilder(config, tagger)`. `load_camps()`,
@@ -366,6 +369,82 @@ parameters, assert the plaintext matches. If you change iteration count
 or algorithm, update **both** sides (Python + JS in the template) and
 re-run `make test`.
 
+## Event time parsing
+
+Raw event times from `directory.burningman.org` come in two main shapes
+(~99.98% of 4167 events in the last scrape):
+
+  1. `Begins Tue (8/27) at 10:00 AM, Ends 11:15 AM`  — single-occurrence
+  2. `Begins Thu (8/29) at 9:00 PM, Ends Fri at 2:00 AM`  — spans midnight
+  3. `From 11:00 AM to 3:00 PM on Mon, Tue, Wed, Thu, Fri`  — recurring
+
+`bm_camps/timeparser.py` normalizes these into:
+
+  * A **structured parse** (for the future calendar view):
+    ```
+    {"kind": "single" | "recurring",
+     "days": ["Tue"] | ["Mon", ..., "Fri"],
+     "start_day", "start_date", "start_time",   # 24h "HH:MM"
+     "end_day",   "end_time"}
+    ```
+  * A **display string** attached to each `Event` as `display_time`:
+    ```
+    Tue 8/27 · 10:00 AM – 11:15 AM
+    Thu 8/29 9:00 PM – Fri 8/30 2:00 AM
+    Mon–Fri · 11:00 AM – 3:00 PM (starts 8/26)
+    Daily · 7:00 PM – 12:00 AM (starts 8/26)
+    Tue, Thu · 10:00 AM – 11:00 AM (starts 8/27)
+    ```
+
+**Year is never hardcoded.** `derive_week_map()` scans every
+single-occurrence parse in the scrape and builds `{day_abbrev: "M/D"}`
+from the `(M/D)` tuples the directory itself posted. When burn rolls
+over to the next year, the map self-adjusts on the next nightly scrape.
+Recurring events (which have no date) then get their `(starts M/D)`
+annotation from the earliest day in their day-list, looked up in that
+map.
+
+**Day-abbrev suffixes.** The directory uses `Sun2`/`Mon2` to
+disambiguate the closing Sunday from the opening one (burn week spans
+two Sundays). The parser strips the trailing digit and dedupes — so
+`Mon, Tue, …, Sat, Sun2` collapses to `Mon–Sun`. The second-occurrence
+info is lost at display time, which is fine for the current UI; the
+calendar view can re-derive it by re-parsing the raw `time` field.
+
+**Day compaction rules** (see `_compact_days()`):
+  * 3+ contiguous days → range: `Mon–Fri`, `Tue–Thu`
+  * All 7 → `Daily`
+  * Non-contiguous → comma list: `Tue, Thu`
+  * Exactly 2 days → always comma: `Mon, Tue` (avoids `Mon–Tue`
+    reading like a single day label)
+  * `WEEK_ORDER` in the module is **Mon-first** (not Sun-first) since
+    camp usage in the directory overwhelmingly treats Mon as "day 1".
+
+**Integration.** `SiteBuilder._enrich_event_times(camps)` runs at the
+end of `load_camps()`. Two-pass: parse every event, derive the week map
+from the collected parses, format each event with the map. Prints a
+one-line coverage summary at build time:
+```
+event times parsed: 4166/4167 (99%); week map: {'Fri': '8/30', ...}
+```
+
+**Graceful fallback.** `display_time == ""` when the raw string
+couldn't be parsed. The template renders `e.display_time || e.time`,
+so any future format drift degrades to showing the raw text instead
+of crashing or hiding the event.
+
+**Display guarantees** (test-enforced):
+  * No 4-digit year appears in any output (`test_no_year_in_any_output`
+    runs a regex assertion against sample outputs)
+  * AM/PM boundaries: `12:00 AM` ↔ `00:00`, `12:00 PM` ↔ `12:00`,
+    `12:30 AM` ↔ `00:30` (see `TimeConversionTests`)
+
+**If the directory introduces a new time format** that the parser
+doesn't recognize, coverage drops but nothing breaks — those events
+just show their raw strings. Watch the coverage percentage in the
+build log; if it drops meaningfully below 99%, inspect the unparsed
+samples and extend `_BEGINS_RE`/`_FROM_RE` or add a third regex.
+
 ## Design notes / gotchas
 
 - 0.2s sleep between detail fetches; 3 retries with backoff (see
@@ -379,13 +458,14 @@ re-run `make test`.
   one-line joke camps or blank descriptions — rarely worth chasing.
 - Dependency graph: `config` is a leaf; `models` depends on nothing;
   `parsers` ← `models`; `scraper` ← `config, models, parsers`;
-  `tagger` ← `models`; `builder` ← `config, models, tagger`;
+  `tagger` ← `models`; `timeparser` is a leaf (pure functions on
+  strings); `builder` ← `config, models, tagger, timeparser`;
   `meta` / `merger` ← `config`; `cli` ← everything. No cycles.
 
 ## Tests
 
 ```bash
-make test        # stdlib `unittest`, 63 tests, ~0.1s
+make test        # stdlib `unittest`, 92 tests, ~0.15s
 ```
 
 - `tests/test_parsers.py` — `_clean()`, `ListingParser.parse()`,
@@ -395,6 +475,10 @@ make test        # stdlib `unittest`, 63 tests, ~0.1s
   (`art` ≠ `heart`), case-insensitivity, multi-tag firing, a floor of
   ~100 tags so accidental deletions are caught, `Tagger.haystack()`
   event-text inclusion.
+- `tests/test_timeparser.py` — AM/PM↔24h boundary conversions, both
+  `Begins`/`From` shapes, `Day2` suffix handling, week-map derivation
+  (most-common-wins on conflicts), day compaction (range / daily /
+  comma-list), and the year-free display guarantee.
 - `tests/test_merger.py` — column order, dedupe by id, alphabetical
   sort, handling of legacy JSONs that predate the `website` field.
 - `tests/test_meta.py` — scraped_at format (ISO-8601 UTC),

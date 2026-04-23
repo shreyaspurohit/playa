@@ -678,6 +678,9 @@ async function loadCamps() {
           (evFav ? '★' : '☆') +
           '</button>'
         );
+        // Prefer the normalized display time when Python could parse the
+        // raw string; fall back to the raw otherwise (directory-format drift).
+        const evWhen = e.display_time || e.time || '';
         return '<li>' +
           '<div class="ev-head">' +
             '<a class="evname" href="' + escapeHTML(evUrl) +
@@ -686,7 +689,7 @@ async function loadCamps() {
             '</a>' +
             evStar +
           '</div>' +
-          (e.time ? '<span class="evtime">' + escapeHTML(e.time) + '</span>' : '') +
+          (evWhen ? '<span class="evtime">' + escapeHTML(evWhen) + '</span>' : '') +
           (e.description ? '<p class="evdesc">' + highlight(e.description, q) + '</p>' : '') +
         '</li>';
       }).join('');
