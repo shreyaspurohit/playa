@@ -94,8 +94,11 @@
   .controls { display: flex; gap: 8px; align-items: center; }
   .controls input[type="search"] { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; background: var(--card); color: var(--text); min-width: 0; }
   .controls input[type="search"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-  .controls button { padding: 10px 14px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; cursor: pointer; font-size: 14px; }
-  .controls button:hover { background: var(--chip-bg); }
+  /* Buttons use --chip-bg (not --card) so they stand out from the input,
+     which sits on --card. Hover shifts to --accent-soft — a warm tint
+     that reads clearly on both light and dark themes. */
+  .controls button { padding: 10px 14px; border: 1px solid var(--border); background: var(--chip-bg); color: var(--text); border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .controls button:hover { background: var(--accent-soft); border-color: var(--accent); }
   .themes { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); }
   .theme-btn {
     width: 28px; height: 28px; padding: 0; border: 0; background: transparent;
@@ -151,25 +154,32 @@
   /* Favorites-only filter toggle — in the controls row */
   .fav-filter {
     padding: 10px 14px; border: 1px solid var(--border);
-    background: var(--card); color: var(--text);
+    background: var(--chip-bg); color: var(--text);
     border-radius: 8px; cursor: pointer; font-size: 14px;
     white-space: nowrap;
     -webkit-tap-highlight-color: transparent;
   }
-  .fav-filter:hover { border-color: var(--accent); }
+  .fav-filter:hover { border-color: var(--accent); background: var(--accent-soft); }
   .fav-filter.active {
     background: #f59e0b; border-color: #f59e0b; color: #1a1a1a; font-weight: 500;
   }
   .fav-filter.active:hover { background: #fbbf24; border-color: #fbbf24; }
   .fav-filter .count { opacity: 0.7; margin-left: 4px; font-variant-numeric: tabular-nums; }
+  /* Second controls row: filters-left, actions-right. The margin-left:auto
+     on .actions pushes it to the far right; flex-wrap keeps things sane on
+     narrow viewports (actions wrap under filters, not next to them). */
+  .controls.toolbar-row { margin-top: 8px; gap: 8px; flex-wrap: wrap; }
+  .controls.toolbar-row .filters,
+  .controls.toolbar-row .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls.toolbar-row .actions { margin-left: auto; }
   .fav-clear {
     padding: 10px 14px; border: 1px solid var(--border);
-    background: var(--card); color: var(--muted);
+    background: var(--chip-bg); color: var(--muted);
     border-radius: 8px; cursor: pointer; font-size: 14px;
     white-space: nowrap;
     -webkit-tap-highlight-color: transparent;
   }
-  .fav-clear:hover { border-color: #c2410c; color: #c2410c; }
+  .fav-clear:hover { border-color: #c2410c; color: #c2410c; background: var(--accent-soft); }
   .fav-clear.hidden { display: none; }
   .camp .meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .camp .meta a { color: var(--accent); text-decoration: none; }
@@ -184,9 +194,27 @@
   details.events summary:hover { color: var(--accent); }
   details.events ul { margin: 8px 0 0; padding: 0 0 0 2px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
   details.events li { border-left: 2px solid var(--accent-soft); padding-left: 8px; }
-  details.events .evname { font-weight: 600; font-size: 13px; }
+  details.events .evname { font-weight: 600; font-size: 13px; color: var(--text); text-decoration: none; }
+  details.events a.evname:hover { color: var(--accent); }
+  details.events .ev-ext { opacity: 0.45; font-size: 10px; margin-left: 3px; }
+  details.events a.evname:hover .ev-ext { opacity: 1; color: var(--accent); }
   details.events .evtime { color: var(--muted); font-size: 11px; display: block; margin-top: 1px; }
   details.events .evdesc { margin: 4px 0 0 0; color: var(--text); font-size: 13px; }
+  details.events .ev-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 6px;
+  }
+  details.events .ev-head a.evname { flex: 1; min-width: 0; word-break: break-word; }
+  .ev-fav {
+    width: 28px; height: 28px; flex-shrink: 0; padding: 0; border: 0;
+    background: transparent; cursor: pointer; font-size: 16px; line-height: 1;
+    color: var(--muted); border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.15s, background 0.15s, transform 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ev-fav:hover, .ev-fav:focus-visible { background: var(--chip-bg); transform: scale(1.12); outline: none; }
+  .ev-fav.active { color: #f59e0b; }
+  .ev-fav.active:hover { color: #fbbf24; }
   .empty-state { grid-column: 1/-1; text-align: center; color: var(--muted); padding: 40px 0; font-style: italic; }
   .more { grid-column: 1/-1; text-align: center; padding: 18px; color: var(--muted); font-size: 13px; background: var(--card); border: 1px dashed var(--border); border-radius: 8px; }
   mark { background: var(--mark-bg); color: var(--mark-text); padding: 0 1px; border-radius: 2px; }
@@ -327,9 +355,15 @@
   <div class="stats"><span id="total"></span> camps · <span id="count">—</span> matching <span id="filter-note"></span></div>
   <div class="controls">
     <input id="search" type="search" placeholder="Search name, description, events, location, or tags…" autocomplete="off">
-    <button id="fav-filter" class="fav-filter" type="button" aria-pressed="false" title="Show only camps you've starred">☆ Favorites <span class="count">(0)</span></button>
-    <button id="fav-clear" class="fav-clear hidden" type="button" title="Remove all starred camps">Unfavorite all</button>
-    <button id="clear" type="button">Clear</button>
+  </div>
+  <div class="controls toolbar-row">
+    <div class="filters">
+      <button id="fav-filter" class="fav-filter" type="button" aria-pressed="false" title="Show only camps you've starred. Click again to exit.">☆ Favorites <span class="count">(0)</span></button>
+    </div>
+    <div class="actions">
+      <button id="fav-clear" class="fav-clear hidden" type="button" title="Remove every starred camp and event">Unfavorite all</button>
+      <button id="clear" type="button">Clear</button>
+    </div>
   </div>
 </header>
 <div id="tagcloud" class="tagcloud"></div>
@@ -378,7 +412,7 @@
 
       <p><strong>Found a bug or a mis-parse?</strong> <a href="https://github.com/shreyaspurohit/playa/issues" target="_blank" rel="noopener">Open an issue on GitHub</a> — include the camp name and what looks wrong.</p>
 
-      <p><strong>Stored on this device:</strong> theme, password (per tab), and the camps you've starred. Nothing leaves your browser. <button id="clear-data" class="danger-btn" type="button">Clear all local data</button></p>
+      <p><strong>Stored on this device:</strong> theme, password (per tab), and the camps and events you've starred. Nothing leaves your browser. <button id="clear-data" class="danger-btn" type="button">Clear all local data</button></p>
 
       <p class="footnote">No affiliation with Black Rock City, LLC or the Burning Man Project. Updated __SCRAPED_DATE__.</p>
     </div>
@@ -474,22 +508,30 @@ async function loadCamps() {
   const sortedTags = [...tagFreq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
   // --- Favorites (localStorage) ---------------------------------------
-  // Stored under 'bm-favs' as a JSON array of camp ids. Camp id is the
-  // directory.burningman.org path number, so it's stable across scrapes
-  // and survives name/description changes on a camp.
+  // Two separate keys. Camps and events both come from directory.burningman.org
+  // but live under different URL prefixes (/camps/N/ and /events/N/), and
+  // their numeric IDs are independent — a camp id and event id can collide
+  // as numbers. Keeping them in separate sets avoids that entirely.
+  //   bm-favs       → JSON array of camp ids
+  //   bm-fav-events → JSON array of event ids
   const FAVS_KEY = 'bm-favs';
-  function loadFavs() {
+  const FAV_EVENTS_KEY = 'bm-fav-events';
+  function _loadSet(key) {
     try {
-      const raw = localStorage.getItem(FAVS_KEY);
+      const raw = localStorage.getItem(key);
       if (!raw) return new Set();
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return new Set(parsed.map(String));
     } catch (e) {}
     return new Set();
   }
-  function persistFavs(favs) {
-    try { localStorage.setItem(FAVS_KEY, JSON.stringify([...favs])); } catch (e) {}
+  function _persistSet(key, set) {
+    try { localStorage.setItem(key, JSON.stringify([...set])); } catch (e) {}
   }
+  const loadFavs        = () => _loadSet(FAVS_KEY);
+  const loadFavEvents   = () => _loadSet(FAV_EVENTS_KEY);
+  const persistFavs       = s => _persistSet(FAVS_KEY, s);
+  const persistFavEvents  = s => _persistSet(FAV_EVENTS_KEY, s);
 
   const state = {
     query: '',
@@ -497,6 +539,7 @@ async function loadCamps() {
     activeTags: new Set(),
     showAllTags: false,
     favs: loadFavs(),
+    favEvents: loadFavEvents(),
     favOnly: false,
   };
 
@@ -592,8 +635,14 @@ async function loadCamps() {
     return escaped.replace(re, m => '<mark>' + m + '</mark>');
   }
 
+  function campHasFavEvent(camp) {
+    if (!state.favEvents.size) return false;
+    return (camp.events || []).some(e => state.favEvents.has(e.id));
+  }
   function matches(camp) {
-    if (state.favOnly && !state.favs.has(camp.id)) return false;
+    if (state.favOnly) {
+      if (!state.favs.has(camp.id) && !campHasFavEvent(camp)) return false;
+    }
     for (const t of state.activeTags) {
       if (!camp.tags.includes(t)) return false;
     }
@@ -617,18 +666,39 @@ async function loadCamps() {
     ).join('');
     let events = '';
     if (camp.events && camp.events.length) {
-      const items = camp.events.map(e =>
-        '<li>' +
-          '<span class="evname">' + highlight(e.name, q) + '</span>' +
+      const items = camp.events.map(e => {
+        const evFav = state.favEvents.has(e.id);
+        const evUrl = 'https://directory.burningman.org/events/' + encodeURIComponent(e.id) + '/';
+        const evStar = (
+          '<button class="ev-fav' + (evFav ? ' active' : '') + '"' +
+          ' type="button" data-fav-event-id="' + escapeHTML(e.id) + '"' +
+          ' aria-pressed="' + (evFav ? 'true' : 'false') + '"' +
+          ' aria-label="' + (evFav ? 'Remove event from favorites' : 'Add event to favorites') + '"' +
+          ' title="' + (evFav ? 'Unfavorite event' : 'Favorite event') + '">' +
+          (evFav ? '★' : '☆') +
+          '</button>'
+        );
+        return '<li>' +
+          '<div class="ev-head">' +
+            '<a class="evname" href="' + escapeHTML(evUrl) +
+              '" target="_blank" rel="noopener" title="Open on directory.burningman.org">' +
+              highlight(e.name, q) + '<span class="ev-ext">↗</span>' +
+            '</a>' +
+            evStar +
+          '</div>' +
           (e.time ? '<span class="evtime">' + escapeHTML(e.time) + '</span>' : '') +
           (e.description ? '<p class="evdesc">' + highlight(e.description, q) + '</p>' : '') +
-        '</li>'
-      ).join('');
+        '</li>';
+      }).join('');
       const anyQueryHitInEvents = q && camp.events.some(e =>
         (e.name && e.name.toLowerCase().includes(state.queryLower)) ||
         (e.description && e.description.toLowerCase().includes(state.queryLower))
       );
-      const openAttr = anyQueryHitInEvents ? ' open' : '';
+      // Keep events open whenever something inside is worth seeing —
+      // search hit OR at least one favorited event. Means re-render after
+      // starring an event doesn't collapse the section.
+      const hasFavEvent = camp.events.some(e => state.favEvents.has(e.id));
+      const openAttr = (anyQueryHitInEvents || hasFavEvent) ? ' open' : '';
       events =
         '<details class="events"' + openAttr + '>' +
           '<summary>' + camp.events.length + ' event' + (camp.events.length === 1 ? '' : 's') + '</summary>' +
@@ -665,15 +735,29 @@ async function loadCamps() {
   }
 
   // --- Favorites UI wiring ---------------------------------------------
+  function countFavMatchingCamps() {
+    // How many camps would pass the fav-only filter: camp is fav OR has
+    // any fav event. O(camps × events-per-camp); fine at this scale.
+    let n = 0;
+    for (const c of DATA) {
+      if (state.favs.has(c.id) || campHasFavEvent(c)) n++;
+    }
+    return n;
+  }
   function renderFavFilter() {
-    const n = state.favs.size;
+    const campN = state.favs.size;
+    const evN = state.favEvents.size;
+    const matchN = countFavMatchingCamps();
     favFilterEl.innerHTML = (state.favOnly ? '★' : '☆') +
-      ' Favorites <span class="count">(' + n + ')</span>';
+      ' Favorites <span class="count">(' + matchN + ')</span>';
+    favFilterEl.title = (state.favOnly ? 'Click to exit. ' : '') +
+      campN + ' starred camp' + (campN === 1 ? '' : 's') +
+      ', ' + evN + ' starred event' + (evN === 1 ? '' : 's');
     favFilterEl.classList.toggle('active', state.favOnly);
     favFilterEl.setAttribute('aria-pressed', state.favOnly ? 'true' : 'false');
-    // The "Unfavorite all" button only makes sense while the favorites
-    // filter is engaged — hidden otherwise.
-    favClearEl.classList.toggle('hidden', !state.favOnly || n === 0);
+    // "Unfavorite all" sits in the actions pane; visible only while the
+    // favorites filter is engaged AND the user has something to clear.
+    favClearEl.classList.toggle('hidden', !state.favOnly || (campN + evN) === 0);
   }
   function toggleFav(id) {
     if (state.favs.has(id)) state.favs.delete(id);
@@ -682,10 +766,16 @@ async function loadCamps() {
     renderFavFilter();
     render();
   }
+  function toggleFavEvent(id) {
+    if (state.favEvents.has(id)) state.favEvents.delete(id);
+    else state.favEvents.add(id);
+    persistFavEvents(state.favEvents);
+    renderFavFilter();
+    render();
+  }
   favFilterEl.addEventListener('click', () => {
-    // If the user clicks the filter with no favs, just nudge them — don't
-    // engage an empty-result filter silently.
-    if (!state.favOnly && state.favs.size === 0) {
+    // If the user clicks the filter with nothing starred, just nudge them.
+    if (!state.favOnly && state.favs.size === 0 && state.favEvents.size === 0) {
       favFilterEl.animate(
         [{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' },
          { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }],
@@ -698,14 +788,21 @@ async function loadCamps() {
     render();
   });
   favClearEl.addEventListener('click', () => {
-    const n = state.favs.size;
-    if (n === 0) return;
-    const msg = "Remove all " + n + " starred camp" + (n === 1 ? '' : 's') +
-                "?\n\nThis can't be undone — you'll need to star them again one by one.";
+    const campN = state.favs.size;
+    const evN = state.favEvents.size;
+    const total = campN + evN;
+    if (total === 0) return;
+    const parts = [];
+    if (campN) parts.push(campN + ' camp' + (campN === 1 ? '' : 's'));
+    if (evN)   parts.push(evN + ' event' + (evN === 1 ? '' : 's'));
+    const msg = "Remove all " + total + " starred item" + (total === 1 ? '' : 's') +
+                " (" + parts.join(', ') + ")?\n\nThis can't be undone.";
     if (!confirm(msg)) return;
     state.favs.clear();
+    state.favEvents.clear();
     persistFavs(state.favs);
-    state.favOnly = false;   // nothing to filter to now
+    persistFavEvents(state.favEvents);
+    state.favOnly = false;       // nothing to filter to now
     renderFavFilter();
     render();
   });
@@ -731,8 +828,15 @@ async function loadCamps() {
     results.innerHTML = html;
   }
 
-  // Delegated click handler for the cards grid: fav star + tag badges.
+  // Delegated click handler for the cards grid: fav stars (camp + event) +
+  // tag badges. Note: the event anchor (<a class="evname" href="…">)
+  // handles its own click natively, so we don't need to intercept it.
   results.addEventListener('click', e => {
+    const evFav = e.target.closest('.ev-fav');
+    if (evFav) {
+      toggleFavEvent(evFav.dataset.favEventId);
+      return;
+    }
     const fav = e.target.closest('.fav-btn');
     if (fav) {
       toggleFav(fav.dataset.favId);
@@ -796,13 +900,14 @@ async function loadCamps() {
   // re-entering it on the gate.
   $('clear-data').addEventListener('click', () => {
     const msg = "Clear all local data?\n\nThis removes:\n" +
-                "  • your favorited camps\n" +
+                "  • your favorited camps and events\n" +
                 "  • your theme preference\n" +
                 "  • the password cached for this tab\n\n" +
                 "You'll need to re-enter the password.";
     if (!confirm(msg)) return;
     try {
       localStorage.removeItem('bm-favs');
+      localStorage.removeItem('bm-fav-events');
       localStorage.removeItem('bm-theme');
       localStorage.removeItem('bm-info-seen');
     } catch (e) {}
