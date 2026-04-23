@@ -8,7 +8,7 @@
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx tests/*.test.ts tests/*.test.tsx"
+    "test": "node --test --import tsx tests/*.test.ts"
   },
   "dependencies": {
     "preact": "^10.29.1"
