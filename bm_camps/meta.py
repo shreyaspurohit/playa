@@ -1,11 +1,20 @@
-"""Write data/meta.json with the timestamp + counts of the current scrape."""
+"""Write data/meta.json with the timestamp + counts of the current scrape.
+
+Displayed date ("Updated YYYY-MM-DD") is in Pacific time since that's the
+relevant time zone for Burners and the user audience. The machine-readable
+`scraped_at` stays UTC for unambiguity (the tooltip on the site says "UTC").
+"""
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .config import Config
+
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def write_meta(config: Config) -> Path:
@@ -17,11 +26,12 @@ def write_meta(config: Config) -> Path:
         camps += len(data)
         for c in data:
             events += len(c.get("events") or [])
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    pacific = now_utc.astimezone(PACIFIC)
     meta = {
-        "scraped_at":   now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "scraped_date": now.strftime("%Y-%m-%d"),
-        "version":      "v" + now.strftime("%Y.%m.%d"),
+        "scraped_at":   now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "scraped_date": pacific.strftime("%Y-%m-%d"),
+        "version":      "v" + pacific.strftime("%Y.%m.%d"),
         "camps":        camps,
         "events":       events,
         "pages":        len(pages),

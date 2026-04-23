@@ -21,6 +21,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .config import Config
 from .models import Camp
@@ -28,6 +29,7 @@ from .tagger import Tagger
 
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "site.html"
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 class SiteBuilder:
@@ -60,11 +62,12 @@ class SiteBuilder:
         if not pages:
             return {"scraped_date": "unknown", "version": "v0.0.0"}
         newest = max(p.stat().st_mtime for p in pages)
-        dt = datetime.fromtimestamp(newest, tz=timezone.utc)
+        dt_utc = datetime.fromtimestamp(newest, tz=timezone.utc)
+        dt_pt = dt_utc.astimezone(PACIFIC)
         return {
-            "scraped_at":   dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "scraped_date": dt.strftime("%Y-%m-%d"),
-            "version":      "v" + dt.strftime("%Y.%m.%d"),
+            "scraped_at":   dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "scraped_date": dt_pt.strftime("%Y-%m-%d"),   # Pacific for display
+            "version":      "v" + dt_pt.strftime("%Y.%m.%d"),
         }
 
     def load_camps(self) -> list[Camp]:
