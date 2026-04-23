@@ -1,0 +1,27 @@
+# === SCRAPED CAMP DATA — deliberately not committed ===
+# The repo is public; the scraped camp content (owned by individual camps
+# per the directory.burningman.org ToS) must not live in git history.
+# All of these files are regenerated on every CI run on the ephemeral
+# GH Actions runner, uploaded as a Pages artifact, then evaporate.
+data/pages/
+data/meta.json
+data/camps.csv
+data/camps_tagged.csv
+data/logs/
+
+# === GENERATED SITE — not committed either ===
+# site/index.html contains the (encrypted) scraped payload. Built on the
+# runner, uploaded via actions/upload-pages-artifact, deployed from there.
+# site/CNAME, site/robots.txt, site/.nojekyll stay committed — they're
+# config, not data.
+site/index.html
+
+# === Standard ignores ===
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local overrides. Put real SITE_PASSWORD / CONTACT_EMAIL in env or a repo
+# secret, not in the tree.
+.env
+.env.local

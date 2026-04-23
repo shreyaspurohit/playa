@@ -1,0 +1,6 @@
+# Camp IDs (from the directory.burningman.org URL path, e.g. 779 from
+# /camps/779/) listed here are filtered out of the published site at build
+# time. Raw page JSONs under data/pages/ still contain the data, so a
+# takedown is reversible by removing the id from this file.
+#
+# One id per line. Lines starting with # are comments.

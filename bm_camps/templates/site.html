@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="googlebot" content="noindex, nofollow, noarchive">
+<title>Burning Man Camps</title>
+<style>
+  /* Themes are sorted brightest -> darkest. Pick via data-theme on <html>. */
+  :root,
+  :root[data-theme="paper"] {
+    --bg: #faf7f2;
+    --card: #ffffff;
+    --border: #e6dfd4;
+    --text: #1a1a1a;
+    --muted: #6b6256;
+    --accent: #c2410c;
+    --accent-soft: #fde7d7;
+    --chip-bg: #f1ece3;
+    --chip-active-bg: #c2410c;
+    --chip-active-text: #ffffff;
+    --mark-bg: #fde7d7;
+    --mark-text: #c2410c;
+    --header-bg: linear-gradient(180deg, #ffffff, #faf7f2);
+  }
+  :root[data-theme="daylight"] {
+    --bg: #ffffff;
+    --card: #f7f7f8;
+    --border: #e3e3e6;
+    --text: #0a0a0a;
+    --muted: #5f5f63;
+    --accent: #ea580c;
+    --accent-soft: #ffedd5;
+    --chip-bg: #eeeef0;
+    --chip-active-bg: #ea580c;
+    --chip-active-text: #ffffff;
+    --mark-bg: #ffedd5;
+    --mark-text: #ea580c;
+    --header-bg: #ffffff;
+  }
+  :root[data-theme="dusk"] {
+    --bg: #2b231c;
+    --card: #3a3028;
+    --border: #544739;
+    --text: #ead9bf;
+    --muted: #a6988a;
+    --accent: #fb923c;
+    --accent-soft: #5a3e2a;
+    --chip-bg: #483c30;
+    --chip-active-bg: #fb923c;
+    --chip-active-text: #1a1410;
+    --mark-bg: #5a3e2a;
+    --mark-text: #fdba74;
+    --header-bg: linear-gradient(180deg, #3a3028, #2b231c);
+  }
+  :root[data-theme="night"] {
+    --bg: #161618;
+    --card: #1f1f24;
+    --border: #2e2e36;
+    --text: #e6e6ea;
+    --muted: #9897a0;
+    --accent: #fb923c;
+    --accent-soft: #3a2a1c;
+    --chip-bg: #2a2a32;
+    --chip-active-bg: #fb923c;
+    --chip-active-text: #161618;
+    --mark-bg: #3a2a1c;
+    --mark-text: #fdba74;
+    --header-bg: linear-gradient(180deg, #1f1f24, #161618);
+  }
+  :root[data-theme="eclipse"] {
+    --bg: #000000;
+    --card: #0a0a0e;
+    --border: #1c1c24;
+    --text: #e8e8ec;
+    --muted: #888890;
+    --accent: #fb923c;
+    --accent-soft: #2a1f14;
+    --chip-bg: #14141a;
+    --chip-active-bg: #fb923c;
+    --chip-active-text: #000000;
+    --mark-bg: #2a1f14;
+    --mark-text: #fdba74;
+    --header-bg: #050508;
+  }
+  html { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 15px; line-height: 1.45; }
+  header { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); background: var(--header-bg); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(6px); }
+  header .topline { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header .stats { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .controls { display: flex; gap: 8px; align-items: center; }
+  .controls input[type="search"] { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px; background: var(--card); color: var(--text); min-width: 0; }
+  .controls input[type="search"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .controls button { padding: 10px 14px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .controls button:hover { background: var(--chip-bg); }
+  .themes { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); }
+  .theme-btn {
+    width: 28px; height: 28px; padding: 0; border: 0; background: transparent;
+    border-radius: 999px; cursor: pointer; font-size: 15px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.15s, transform 0.15s; color: var(--text);
+  }
+  .theme-btn:hover { background: var(--chip-bg); transform: scale(1.05); }
+  .theme-btn.active { background: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  header .topline-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  header .version { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; border: 1px solid var(--border); padding: 3px 10px; border-radius: 999px; background: var(--card); white-space: nowrap; }
+  .tagcloud { padding: 10px 24px 14px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px; background: var(--bg); max-height: 140px; overflow-y: auto; transition: max-height 0.2s; }
+  .tagcloud.expanded { max-height: 400px; }
+  .tag {
+    background: var(--chip-bg); color: var(--text); border: 1px solid transparent;
+    padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+    font-weight: 500; white-space: nowrap;
+  }
+  .tag:hover { border-color: var(--accent); }
+  .tag.active { background: var(--chip-active-bg); color: var(--chip-active-text); }
+  .tag .n { opacity: 0.6; margin-left: 4px; font-weight: 400; }
+  .tagcloud-toggle { margin-left: auto; align-self: flex-start; padding: 4px 12px; font-size: 12px; font-weight: 500; cursor: pointer; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 999px; }
+  .tagcloud-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  main { padding: 16px 24px 64px; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+  .camp {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .camp h3 { margin: 0; font-size: 16px; font-weight: 600; }
+  .camp .meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .camp .meta a { color: var(--accent); text-decoration: none; }
+  .camp .meta a:hover { text-decoration: underline; }
+  .camp .desc { margin: 0; font-size: 14px; color: var(--text); }
+  .camp .desc.empty { color: var(--muted); font-style: italic; }
+  .camp .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tagbadge { background: var(--chip-bg); color: var(--muted); padding: 2px 8px; border-radius: 999px; font-size: 11px; cursor: pointer; }
+  .tagbadge:hover { background: var(--accent-soft); color: var(--accent); }
+  details.events { margin-top: 2px; border-top: 1px dashed var(--border); padding-top: 8px; font-size: 13px; }
+  details.events summary { cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
+  details.events summary:hover { color: var(--accent); }
+  details.events ul { margin: 8px 0 0; padding: 0 0 0 2px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  details.events li { border-left: 2px solid var(--accent-soft); padding-left: 8px; }
+  details.events .evname { font-weight: 600; font-size: 13px; }
+  details.events .evtime { color: var(--muted); font-size: 11px; display: block; margin-top: 1px; }
+  details.events .evdesc { margin: 4px 0 0 0; color: var(--text); font-size: 13px; }
+  .empty-state { grid-column: 1/-1; text-align: center; color: var(--muted); padding: 40px 0; font-style: italic; }
+  .more { grid-column: 1/-1; text-align: center; padding: 18px; color: var(--muted); font-size: 13px; background: var(--card); border: 1px dashed var(--border); border-radius: 8px; }
+  mark { background: var(--mark-bg); color: var(--mark-text); padding: 0 1px; border-radius: 2px; }
+  .camp .meta .canonical { color: var(--muted); }
+  .camp .meta .canonical:hover { color: var(--accent); }
+  /* "About & disclaimer" button in the header */
+  .info-btn {
+    width: 28px; height: 28px; padding: 0;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    border-radius: 999px; cursor: pointer; font-size: 15px; font-weight: 600;
+    line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+    font-family: Georgia, "Times New Roman", serif; font-style: italic;
+  }
+  .info-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .info-btn.pulse { animation: info-pulse 1.4s ease-out 3; }
+  @keyframes info-pulse {
+    0%   { box-shadow: 0 0 0 0 var(--accent); }
+    60%  { box-shadow: 0 0 0 10px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  /* Modal (shared — info-modal, could host others later) */
+  .modal {
+    position: fixed; inset: 0; z-index: 90;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px; background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+  }
+  .modal-hidden { display: none !important; }
+  .modal-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; max-width: 560px; width: 100%;
+    max-height: 82vh; overflow-y: auto; color: var(--text);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.25);
+  }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px 10px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--card);
+  }
+  .modal-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .modal-close {
+    width: 30px; height: 30px; padding: 0; border: 0;
+    background: transparent; color: var(--muted); cursor: pointer;
+    font-size: 18px; line-height: 1; border-radius: 999px;
+  }
+  .modal-close:hover { background: var(--chip-bg); color: var(--text); }
+  .modal-body { padding: 14px 20px 20px; font-size: 13.5px; line-height: 1.55; }
+  .modal-body p { margin: 0 0 10px; color: var(--text); }
+  .modal-body p:last-child { margin-bottom: 0; }
+  .modal-body a { color: var(--accent); text-decoration: none; }
+  .modal-body a:hover { text-decoration: underline; }
+  .modal-body .warn { display: inline-block; background: var(--mark-bg); color: var(--mark-text); padding: 1px 7px; border-radius: 4px; font-weight: 600; margin-right: 4px; }
+  .modal-body .badge { display: inline-block; background: var(--chip-bg); color: var(--text); padding: 2px 8px; border-radius: 999px; font-weight: 500; margin-right: 6px; font-size: 12px; }
+  .modal-body .footnote { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  footer.site-footer {
+    padding: 24px 24px 40px; margin-top: 8px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 12px; line-height: 1.55;
+    background: var(--card);
+  }
+  footer.site-footer .col { max-width: 780px; margin: 0 auto; }
+  footer.site-footer p { margin: 0 0 8px; }
+  footer.site-footer a { color: var(--accent); text-decoration: none; }
+  footer.site-footer a:hover { text-decoration: underline; }
+  footer.site-footer .badge { display: inline-block; background: var(--chip-bg); color: var(--text); padding: 2px 8px; border-radius: 999px; font-weight: 500; margin-right: 6px; }
+  /* Password gate (shown only when content is encrypted) */
+  .gate {
+    position: fixed; inset: 0; z-index: 100; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    background: var(--bg);
+  }
+  .gate-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 28px 28px 24px; max-width: 420px; width: 100%;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+  .gate-card h2 { margin: 0 0 8px; font-size: 18px; }
+  .gate-card p { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .gate-card form { display: flex; gap: 8px; }
+  .gate-card input {
+    flex: 1; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 15px; background: var(--bg); color: var(--text);
+  }
+  .gate-card input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .gate-card button {
+    padding: 10px 16px; border: 0; background: var(--accent); color: #fff;
+    border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;
+  }
+  .gate-card button:hover { filter: brightness(1.05); }
+  .gate-card .err { color: #c2410c; font-size: 12px; margin-top: 10px; min-height: 1em; }
+  .gate-hidden { display: none !important; }
+  .main-hidden > header, .main-hidden > #tagcloud, .main-hidden > main, .main-hidden > footer.site-footer { visibility: hidden; }
+  @media (max-width: 600px) {
+    header { padding: 14px 14px 10px; }
+    .tagcloud { padding: 10px 14px; }
+    main { padding: 12px 14px 48px; }
+    footer.site-footer { padding: 20px 14px 32px; }
+  }
+</style>
+<script>
+  // Apply saved theme before body renders, to avoid flash of wrong theme.
+  try {
+    var t = localStorage.getItem('bm-theme') || 'paper';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
+</head>
+<body class="__BODY_CLASS__">
+
+<!-- Password gate (only shown/used when encrypted) -->
+<div id="gate" class="gate __GATE_HIDDEN__">
+  <div class="gate-card">
+    <h2>Burning Man Camps — private</h2>
+    <p>This is a personal, non-commercial index of the public Playa Info directory, shared with friends. Enter the password you were given to continue.</p>
+    <form id="gate-form">
+      <input id="gate-pw" type="password" autocomplete="current-password" placeholder="Password" autofocus>
+      <button type="submit">Unlock</button>
+    </form>
+    <div id="gate-err" class="err" aria-live="polite"></div>
+  </div>
+</div>
+
+<header>
+  <div class="topline">
+    <h1>Burning Man Camps</h1>
+    <div class="topline-right">
+      <span class="version" title="Directory last scraped __SCRAPED_AT__ UTC">Updated __SCRAPED_DATE__ · __VERSION__</span>
+      <button id="info-btn" class="info-btn" type="button" aria-label="About and disclaimer" title="About & disclaimer">i</button>
+      <div id="themes" class="themes" role="group" aria-label="Theme"></div>
+    </div>
+  </div>
+  <div class="stats"><span id="total"></span> camps · <span id="count">—</span> matching <span id="filter-note"></span></div>
+  <div class="controls">
+    <input id="search" type="search" placeholder="Search name, description, events, location, or tags…" autocomplete="off">
+    <button id="clear" type="button">Clear</button>
+  </div>
+</header>
+<div id="tagcloud" class="tagcloud"></div>
+<main id="results"></main>
+<footer class="site-footer">
+  <div class="col">
+    <p>
+      <span class="badge">Built for Burners, not commercial</span>
+      This is an unofficial personal project to help friends browse and filter the
+      <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">official Burning Man Playa Info directory</a>.
+      All camp names, descriptions, events, and locations are the property of their respective camps and the directory operators.
+    </p>
+    <p>
+      Data is scraped nightly from the public directory and shown here for personal browsing only.
+      For the canonical, up-to-date listing, please use <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">directory.burningman.org</a>.
+      This site has no ads, no analytics, no tracking, and no commercial purpose.
+    </p>
+    <p>
+      <strong>Camp owner? Want your camp removed?</strong>
+      <a href="mailto:__CONTACT_EMAIL__?subject=%5BBM%20Camps%5D%20Takedown%20request&amp;body=Camp%20name%3A%20%0ACamp%20URL%20on%20directory.burningman.org%3A%20%0A%0APlease%20remove%20my%20camp%20from%20this%20site.%20Thanks.">Email a takedown request</a>
+      — please include the camp name and directory URL, and the entry will be removed on the next build.
+    </p>
+    <p style="opacity: 0.7;">No affiliation with Black Rock City, LLC or the Burning Man Project. Updated __SCRAPED_DATE__.</p>
+  </div>
+</footer>
+
+<!-- About / disclaimer modal -->
+<div id="info-modal" class="modal modal-hidden" role="dialog" aria-modal="true" aria-labelledby="info-title">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="info-title">About this site</h2>
+      <button id="info-close" class="modal-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p><span class="warn">⚠ Unofficial &amp; best-effort</span> <span class="badge">Built for Burners, not commercial</span></p>
+
+      <p>This is an unofficial personal project to help friends browse and filter the <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">official Burning Man Playa Info directory</a>. All camp names, descriptions, events, and locations are the property of their respective camps and the directory operators.</p>
+
+      <p><strong>Provided as is.</strong> Camp details here can be stale, incomplete, mis-parsed, or mis-tagged. <strong>Always verify on <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">directory.burningman.org</a></strong> before acting on anything you see here. Use this tool to <em>narrow down</em> a shortlist of possible camps — not as the source of truth.</p>
+
+      <p><strong>What you can trust less:</strong> the auto-generated tags (keyword matching, not curated), event times, and anything that changed on the directory after the last nightly refresh.</p>
+
+      <p>Data is scraped nightly from the public directory and shown here for personal browsing only. For the canonical, up-to-date listing, please use <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">directory.burningman.org</a>. This site has <strong>no ads, no analytics, no tracking, no accounts, and no commercial purpose</strong>.</p>
+
+      <p><strong>Camp owner? Want your camp removed?</strong> <a href="mailto:__CONTACT_EMAIL__?subject=%5BBM%20Camps%5D%20Takedown%20request&amp;body=Camp%20name%3A%20%0ACamp%20URL%20on%20directory.burningman.org%3A%20%0A%0APlease%20remove%20my%20camp%20from%20this%20site.%20Thanks.">Email a takedown request</a> — please include the camp name and directory URL, and the entry will be removed on the next build.</p>
+
+      <p class="footnote">No affiliation with Black Rock City, LLC or the Burning Man Project. Updated __SCRAPED_DATE__.</p>
+    </div>
+  </div>
+</div>
+
+__DATA_SCRIPT__
+<script>
+// --- Data loading: supports plaintext OR password-encrypted payload -------
+async function loadCamps() {
+  const plain = document.getElementById('camps-data');
+  if (plain) return JSON.parse(plain.textContent);
+
+  const encEl = document.getElementById('camps-data-encrypted');
+  if (!encEl) throw new Error('no camps data');
+  const enc = JSON.parse(encEl.textContent);
+
+  const gate = document.getElementById('gate');
+  const form = document.getElementById('gate-form');
+  const pwEl = document.getElementById('gate-pw');
+  const errEl = document.getElementById('gate-err');
+  document.body.classList.add('main-hidden');
+  gate.classList.remove('gate-hidden');
+
+  function b64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
+
+  async function tryDecrypt(password) {
+    const salt = b64(enc.salt);
+    const ct = b64(enc.ct);
+    const baseKey = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']
+    );
+    // OpenSSL with -pbkdf2 derives key||iv (32+16 bytes) via PBKDF2-HMAC-SHA256.
+    const derived = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: enc.iter, hash: 'SHA-256' },
+      baseKey, 48 * 8
+    ));
+    const key = await crypto.subtle.importKey(
+      'raw', derived.slice(0, 32), { name: 'AES-CBC' }, false, ['decrypt']
+    );
+    const iv = derived.slice(32, 48);
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, ct);
+    return new TextDecoder().decode(plaintext);
+  }
+
+  // Try a remembered password first (sessionStorage: per-tab, auto-clears).
+  let remembered = null;
+  try { remembered = sessionStorage.getItem('bm-pw'); } catch (e) {}
+  if (remembered) {
+    try {
+      const text = await tryDecrypt(remembered);
+      gate.classList.add('gate-hidden');
+      document.body.classList.remove('main-hidden');
+      return JSON.parse(text);
+    } catch (e) {
+      try { sessionStorage.removeItem('bm-pw'); } catch (e2) {}
+    }
+  }
+
+  return new Promise(resolve => {
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      errEl.textContent = '';
+      const pw = pwEl.value;
+      if (!pw) return;
+      try {
+        const text = await tryDecrypt(pw);
+        try { sessionStorage.setItem('bm-pw', pw); } catch (e2) {}
+        gate.classList.add('gate-hidden');
+        document.body.classList.remove('main-hidden');
+        resolve(JSON.parse(text));
+      } catch (err) {
+        errEl.textContent = 'Wrong password. Try again.';
+        pwEl.select();
+      }
+    });
+  });
+}
+
+(async () => {
+  const DATA = await loadCamps();
+
+  // Pre-compute lowercase haystack per camp for fast substring search.
+  DATA.forEach(c => {
+    const parts = [c.name, c.location, c.description, c.website || '', c.tags.join(' ')];
+    (c.events || []).forEach(e => { parts.push(e.name, e.description, e.time); });
+    c._hay = parts.join(' ␟ ').toLowerCase();
+  });
+
+  // Tag frequencies.
+  const tagFreq = new Map();
+  DATA.forEach(c => c.tags.forEach(t => tagFreq.set(t, (tagFreq.get(t) || 0) + 1)));
+  const sortedTags = [...tagFreq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  const state = {
+    query: '',
+    queryLower: '',
+    activeTags: new Set(),
+    showAllTags: false,
+  };
+
+  const RESULT_CAP = 600;
+  const TOP_TAGS = 50;
+
+  const $ = id => document.getElementById(id);
+  const results = $('results');
+  const countEl = $('count');
+  const totalEl = $('total');
+  const filterNote = $('filter-note');
+  const cloud = $('tagcloud');
+  const searchEl = $('search');
+  const clearEl = $('clear');
+
+  totalEl.textContent = DATA.length;
+
+  // --- Theme switcher (brightest -> darkest) -----------------------------
+  const THEMES = [
+    ['paper',    '☀️', 'Paper'],     // sun
+    ['daylight', '⛅',       'Daylight'],  // sun behind cloud
+    ['dusk',     '🌇', 'Dusk'],      // sunset over buildings
+    ['night',    '🌙', 'Night'],     // crescent moon
+    ['eclipse',  '🌑', 'Eclipse'],   // new moon
+  ];
+  const themeBar = $('themes');
+  function applyTheme(name) {
+    document.documentElement.setAttribute('data-theme', name);
+    try { localStorage.setItem('bm-theme', name); } catch (e) {}
+    themeBar.querySelectorAll('.theme-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.theme === name);
+      b.setAttribute('aria-pressed', b.dataset.theme === name ? 'true' : 'false');
+    });
+  }
+  THEMES.forEach(([name, icon, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'theme-btn';
+    b.dataset.theme = name;
+    b.title = label;
+    b.setAttribute('aria-label', label + ' theme');
+    b.textContent = icon;
+    b.addEventListener('click', () => applyTheme(name));
+    themeBar.appendChild(b);
+  });
+  let savedTheme = 'paper';
+  try { savedTheme = localStorage.getItem('bm-theme') || 'paper'; } catch (e) {}
+  if (!THEMES.some(t => t[0] === savedTheme)) savedTheme = 'paper';
+  applyTheme(savedTheme);
+
+  function buildCloud() {
+    cloud.innerHTML = '';
+    const list = state.showAllTags ? sortedTags : sortedTags.slice(0, TOP_TAGS);
+    list.forEach(([name, n]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tag' + (state.activeTags.has(name) ? ' active' : '');
+      b.dataset.tag = name;
+      b.innerHTML = escapeHTML(name) + ' <span class="n">' + n + '</span>';
+      b.addEventListener('click', () => {
+        if (state.activeTags.has(name)) state.activeTags.delete(name);
+        else state.activeTags.add(name);
+        b.classList.toggle('active');
+        render();
+      });
+      cloud.appendChild(b);
+    });
+    if (sortedTags.length > TOP_TAGS) {
+      const t = document.createElement('button');
+      t.type = 'button';
+      t.className = 'tagcloud-toggle';
+      t.textContent = state.showAllTags ? 'Show fewer tags' : `Show all ${sortedTags.length} tags`;
+      t.addEventListener('click', () => {
+        state.showAllTags = !state.showAllTags;
+        cloud.classList.toggle('expanded', state.showAllTags);
+        buildCloud();
+      });
+      cloud.appendChild(t);
+    }
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+
+  function highlight(text, q) {
+    if (!q) return escapeHTML(text);
+    const escaped = escapeHTML(text);
+    // escape regex special chars in q
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    return escaped.replace(re, m => '<mark>' + m + '</mark>');
+  }
+
+  function matches(camp) {
+    for (const t of state.activeTags) {
+      if (!camp.tags.includes(t)) return false;
+    }
+    if (state.queryLower && camp._hay.indexOf(state.queryLower) === -1) return false;
+    return true;
+  }
+
+  function cardHTML(camp) {
+    const q = state.queryLower ? state.query : '';
+    const descHTML = camp.description
+      ? '<p class="desc">' + highlight(camp.description, q) + '</p>'
+      : '<p class="desc empty">no description</p>';
+    const web = camp.website
+      ? '<a href="' + escapeHTML(camp.website) + '" target="_blank" rel="noopener">website ↗</a>'
+      : '';
+    const canonical = camp.url
+      ? '<a class="canonical" href="' + escapeHTML(camp.url) + '" target="_blank" rel="noopener" title="Open on directory.burningman.org">on directory ↗</a>'
+      : '';
+    const tags = camp.tags.map(t =>
+      '<span class="tagbadge" data-tag="' + escapeHTML(t) + '">' + escapeHTML(t) + '</span>'
+    ).join('');
+    let events = '';
+    if (camp.events && camp.events.length) {
+      const items = camp.events.map(e =>
+        '<li>' +
+          '<span class="evname">' + highlight(e.name, q) + '</span>' +
+          (e.time ? '<span class="evtime">' + escapeHTML(e.time) + '</span>' : '') +
+          (e.description ? '<p class="evdesc">' + highlight(e.description, q) + '</p>' : '') +
+        '</li>'
+      ).join('');
+      const anyQueryHitInEvents = q && camp.events.some(e =>
+        (e.name && e.name.toLowerCase().includes(state.queryLower)) ||
+        (e.description && e.description.toLowerCase().includes(state.queryLower))
+      );
+      const openAttr = anyQueryHitInEvents ? ' open' : '';
+      events =
+        '<details class="events"' + openAttr + '>' +
+          '<summary>' + camp.events.length + ' event' + (camp.events.length === 1 ? '' : 's') + '</summary>' +
+          '<ul>' + items + '</ul>' +
+        '</details>';
+    }
+    const metaBits = [
+      '<span>' + escapeHTML(camp.location || '—') + '</span>',
+      web,
+      canonical,
+    ].filter(Boolean).join(' · ');
+    return (
+      '<article class="camp">' +
+        '<h3>' + highlight(camp.name, q) + '</h3>' +
+        '<div class="meta">' + metaBits + '</div>' +
+        descHTML +
+        '<div class="tags">' + tags + '</div>' +
+        events +
+      '</article>'
+    );
+  }
+
+  function render() {
+    const matched = DATA.filter(matches);
+    countEl.textContent = matched.length.toLocaleString();
+    if (state.activeTags.size) {
+      filterNote.textContent = '· filters: ' + [...state.activeTags].join(' + ');
+    } else {
+      filterNote.textContent = '';
+    }
+    if (!matched.length) {
+      results.innerHTML = '<div class="empty-state">No camps match. Try clearing filters.</div>';
+      return;
+    }
+    const toRender = matched.slice(0, RESULT_CAP);
+    let html = toRender.map(cardHTML).join('');
+    if (matched.length > RESULT_CAP) {
+      html += '<div class="more">Showing first ' + RESULT_CAP + ' of ' + matched.length + '. Narrow your search to see more.</div>';
+    }
+    results.innerHTML = html;
+  }
+
+  // Clicking a tag badge inside a card toggles that tag as a filter.
+  results.addEventListener('click', e => {
+    const badge = e.target.closest('.tagbadge');
+    if (!badge) return;
+    const tag = badge.dataset.tag;
+    if (state.activeTags.has(tag)) state.activeTags.delete(tag);
+    else state.activeTags.add(tag);
+    buildCloud();
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  let debounceTimer = null;
+  searchEl.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      state.query = searchEl.value.trim();
+      state.queryLower = state.query.toLowerCase();
+      render();
+    }, 120);
+  });
+
+  clearEl.addEventListener('click', () => {
+    searchEl.value = '';
+    state.query = '';
+    state.queryLower = '';
+    state.activeTags.clear();
+    buildCloud();
+    render();
+    searchEl.focus();
+  });
+
+  // --- Info / disclaimer modal ------------------------------------------
+  const infoBtn = $('info-btn');
+  const infoModal = $('info-modal');
+  const infoClose = $('info-close');
+  function infoOpen() {
+    infoModal.classList.remove('modal-hidden');
+    infoBtn.classList.remove('pulse');
+    infoClose.focus();
+  }
+  function infoClosed() { return infoModal.classList.contains('modal-hidden'); }
+  function infoHide() {
+    infoModal.classList.add('modal-hidden');
+    infoBtn.focus();
+  }
+  infoBtn.addEventListener('click', infoOpen);
+  infoClose.addEventListener('click', infoHide);
+  infoModal.addEventListener('click', e => {
+    if (e.target === infoModal) infoHide();   // backdrop click
+  });
+
+  // Pulse the info button the first few times a user visits, then let it be.
+  try {
+    const seen = parseInt(localStorage.getItem('bm-info-seen') || '0', 10);
+    if (seen < 2) {
+      infoBtn.classList.add('pulse');
+      localStorage.setItem('bm-info-seen', String(seen + 1));
+    }
+  } catch (e) {}
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !infoClosed()) {
+      infoHide();
+      return;
+    }
+    if (e.key === '/' && document.activeElement !== searchEl) {
+      e.preventDefault();
+      searchEl.focus();
+      searchEl.select();
+    }
+    if (e.key === 'Escape' && document.activeElement === searchEl) {
+      searchEl.value = '';
+      state.query = '';
+      state.queryLower = '';
+      render();
+    }
+  });
+
+  buildCloud();
+  render();
+  // Focus the search now that we're past the gate (if any).
+  try { searchEl.focus(); } catch (e) {}
+})();
+</script>
+</body>
+</html>
