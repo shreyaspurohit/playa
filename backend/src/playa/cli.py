@@ -1,4 +1,4 @@
-"""argparse-based CLI. Invoke via `python -m bm_camps <subcommand>`.
+"""argparse-based CLI. Invoke via `python -m playa <subcommand>`.
 
 Subcommands:
     scrape <page>    Fetch a single listing page + its detail pages.
@@ -25,7 +25,7 @@ from .tagger import Tagger
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="bm_camps",
+    p = argparse.ArgumentParser(prog="playa",
                                 description="Burning Man camp directory scraper + site builder")
     sub = p.add_subparsers(dest="cmd", required=True)
 

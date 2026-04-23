@@ -65,8 +65,19 @@ class Config:
 
     @classmethod
     def project_root(cls) -> Path:
-        """Repository root (parent of the bm_camps/ package)."""
-        return Path(__file__).resolve().parent.parent
+        """Repository root = parent of `backend/`.
+
+        Walks up from `backend/src/playa/config.py` four levels:
+          parents[0] = playa/
+          parents[1] = src/
+          parents[2] = backend/
+          parents[3] = repo root   ✓
+
+        Only valid for editable installs (`pip install -e ./backend`) or
+        running from the source tree. A non-editable wheel install would
+        put `__file__` in site-packages and break this calculation — we
+        don't support that mode."""
+        return Path(__file__).resolve().parents[3]
 
     @classmethod
     def from_env(cls, root: Path | None = None) -> "Config":

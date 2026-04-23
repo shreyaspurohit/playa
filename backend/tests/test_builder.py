@@ -1,4 +1,4 @@
-"""Unit tests for bm_camps.builder (SiteBuilder).
+"""Unit tests for playa.builder (SiteBuilder).
 
 Covers denylist parsing, load_meta fallbacks, load_camps dedupe + denylist,
 and the full openssl encrypt round-trip against the same parameters the
@@ -15,9 +15,9 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from bm_camps.builder import SiteBuilder
-from bm_camps.config import Config
-from bm_camps.models import Camp
+from playa.builder import SiteBuilder
+from playa.config import Config
+from playa.models import Camp
 
 
 HAS_OPENSSL = shutil.which("openssl") is not None
@@ -212,6 +212,10 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
     """Smoke test: a minimal scrape → site/index.html plaintext build."""
 
     def test_produces_valid_html(self):
+        """Smoke test for the Preact-era build. The template now ships a
+        minimal HTML shell plus CSS; all user-facing DOM is rendered by
+        the bundle at runtime. We assert on the structural invariants
+        the Python side is responsible for."""
         self.config = self._make_config()
         self._page = lambda n, c: (self.config.pages_dir / f"page_{n:02d}.json").write_text(json.dumps(c))
         self._page(1, [{
@@ -219,13 +223,39 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
             "description": "free pancakes and yoga",
             "website": "https://example.com", "events": [],
         }])
+        # Drop a stub client bundle where _read_bundle() expects it.
+        # (The real bundle is produced by esbuild; tests don't run it.)
+        bundle_dir = self.config.root / "client" / "dist"
+        bundle_dir.mkdir(parents=True)
+        bundle_dir.joinpath("bundle.js").write_text(
+            '"use strict";(()=>{/* stub — real bundle built by esbuild in CI/make */})();'
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             SiteBuilder(self.config).build()
         html = self.config.site_html.read_text()
-        self.assertIn("Demo Camp", html)
-        self.assertIn('id="camps-data"', html)    # plaintext mode
-        self.assertIn('class="info-btn"', html)   # disclaimer button present
-        self.assertIn("Always verify on", html)   # disclaimer text
+        # The Preact mount point.
+        self.assertIn('id="app"', html)
+        # Plaintext data payload — camp name is inside the JSON blob.
+        self.assertIn('id="camps-data"', html)
+        self.assertIn('Demo Camp', html)
+        # Meta tags consumed by the client at startup.
+        self.assertIn('name="bm-version"', html)
+        self.assertIn('name="bm-scraped-date"', html)
+        self.assertIn('name="bm-contact-email"', html)
+        # Stub bundle was embedded.
+        self.assertIn('"use strict";(()=>{', html)
+        # Noindex still enforced.
+        self.assertIn('name="robots"', html)
+
+    def test_build_fails_helpfully_when_bundle_missing(self):
+        """If the client bundle hasn't been built yet, the error should
+        tell the user how to fix it rather than producing broken HTML."""
+        self.config = self._make_config()
+        (self.config.pages_dir / "page_01.json").write_text("[]")
+        with self.assertRaises(RuntimeError) as ctx:
+            SiteBuilder(self.config).build()
+        self.assertIn("client bundle missing", str(ctx.exception))
+        self.assertIn("make bundle", str(ctx.exception))
 
 
 if __name__ == "__main__":

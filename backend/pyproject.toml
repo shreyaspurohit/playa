@@ -1,0 +1,52 @@
+# Python project config for the `playa` package (the scraper + site builder).
+# Src-layout: package lives under `src/playa/`, not at the repo root, so
+# imports only resolve via a proper install. Editable install during dev:
+#
+#     pip install -e ./backend
+#
+# After install, run either `python -m playa <cmd>` or the `playa` console
+# script the [project.scripts] block below creates.
+#
+# Build-backend: setuptools. Chosen because it's built into every Python
+# install — no wheel of hatchling/flit needed just to bootstrap.
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "playa"
+version = "0.0.0"
+description = "Burning Man theme-camp directory scraper + static site builder."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Shreyas Purohit" }]
+# No `readme` field — setuptools sandboxes to the package root and refuses
+# to read `../README.md`. The README at repo root is the canonical one;
+# this package doesn't need its own copy.
+# No runtime dependencies — we're stdlib-only plus the `openssl` CLI.
+dependencies = []
+keywords = ["burningman", "scraper", "static-site"]
+classifiers = [
+  "Private :: Do Not Upload",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+# After `pip install -e .`, a `playa` command lands on PATH. Equivalent to
+# `python -m playa` but shorter.
+playa = "playa.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/shreyaspurohit/playa"
+Issues = "https://github.com/shreyaspurohit/playa/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the HTML template with the package so a non-editable install would
+# still find it. For editable installs (our default) this is moot — files
+# are read directly from disk.
+playa = ["templates/*.html"]

@@ -1,0 +1,23 @@
+{
+  "name": "bm-camps-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Preact + JSX client bundled into the BM camps static site.",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx tests/*.test.ts tests/*.test.tsx"
+  },
+  "dependencies": {
+    "preact": "^10.29.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "esbuild": "^0.28.0",
+    "happy-dom": "^20.9.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

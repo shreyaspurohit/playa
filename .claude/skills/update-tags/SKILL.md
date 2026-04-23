@@ -1,6 +1,6 @@
 ---
 name: update-tags
-description: Audit current tag coverage against newly-scraped camps and propose additions to the TAGS taxonomy in bm_camps/tagger.py. Use when a fresh scrape is in data/pages/ and the untagged rate or tag-per-camp count looks low, or when the user says "update the tags", "the new camps aren't being tagged", or "find new tag themes".
+description: Audit current tag coverage against newly-scraped camps and propose additions to the TAGS taxonomy in playa/tagger.py. Use when a fresh scrape is in data/pages/ and the untagged rate or tag-per-camp count looks low, or when the user says "update the tags", "the new camps aren't being tagged", or "find new tag themes".
 ---
 
 # update-tags
@@ -8,7 +8,7 @@ description: Audit current tag coverage against newly-scraped camps and propose 
 Grow the tag taxonomy to cover new camps without breaking existing
 tags. This is a human-in-the-loop skill — **never auto-apply changes**.
 Always show the user the proposed diff and wait for explicit approval
-before editing `bm_camps/tagger.py` or `tests/test_tagger.py`.
+before editing `playa/tagger.py` or `tests/test_tagger.py`.
 
 ## When to run
 
@@ -21,7 +21,7 @@ before editing `bm_camps/tagger.py` or `tests/test_tagger.py`.
 
 ```bash
 cd ~/personal-code/bm-camps
-python3 -m bm_camps tag 2>&1 | tee /tmp/update-tags-before.log
+python3 -m playa tag 2>&1 | tee /tmp/update-tags-before.log
 ```
 
 Record:
@@ -39,8 +39,8 @@ camps with **0 or 1 tags** — those are where coverage is thin.
 ```python
 from pathlib import Path
 import json
-from bm_camps import Config, Tagger
-from bm_camps.models import Camp
+from playa import Config, Tagger
+from playa.models import Camp
 
 config = Config.from_env()
 tagger = Tagger()
@@ -66,7 +66,7 @@ Ignore:
 - numbers, addresses, time strings
 - proper nouns that appear only once (likely camp-specific names)
 - words already heavily represented in existing tags (check `TAGS` in
-  `bm_camps/tagger.py` first — `grep -i "keyword" bm_camps/tagger.py`)
+  `playa/tagger.py` first — `grep -i "keyword" playa/tagger.py`)
 
 ## Step 3 — cluster into proposed tags
 
@@ -128,7 +128,7 @@ request changes, revise the proposal and ask again.
 
 ## Step 6 — apply (only after user approves)
 
-1. **Edit `bm_camps/tagger.py`** — insert into the appropriate section
+1. **Edit `playa/tagger.py`** — insert into the appropriate section
    of `TAGS`. For new tags, pick a section comment (e.g. `# --- Food &
    drink ---`) that fits; for extensions, add to the existing list.
 
@@ -173,8 +173,8 @@ request changes, revise the proposal and ask again.
 ```bash
 # How many camps already tag as X?
 python3 -c "
-from bm_camps import Config, Tagger
-from bm_camps.models import Camp
+from playa import Config, Tagger
+from playa.models import Camp
 import json, glob
 t = Tagger()
 n = 0

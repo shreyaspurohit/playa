@@ -1,4 +1,4 @@
-"""Unit tests for bm_camps.merger."""
+"""Unit tests for playa.merger."""
 import contextlib
 import csv
 import io
@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bm_camps.config import Config
-from bm_camps.merger import FIELDS, merge_csv
+from playa.config import Config
+from playa.merger import FIELDS, merge_csv
 
 
 class MergeCsvTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Unit tests for bm_camps.meta."""
+"""Unit tests for playa.meta."""
 import contextlib
 import io
 import json
@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bm_camps.config import Config
-from bm_camps.meta import write_meta
+from playa.config import Config
+from playa.meta import write_meta
 
 
 class WriteMetaTests(unittest.TestCase):

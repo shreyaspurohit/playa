@@ -1,0 +1,53 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":timezone(America/Los_Angeles)",
+    ":dependencyDashboard"
+  ],
+  "description": "Auto-update dependencies after a 14-day cooling period so we don't land on freshly-published broken releases. Patch + minor updates auto-merge; majors require review.",
+  "minimumReleaseAge": "14 days",
+  "rangeStrategy": "bump",
+  "schedule": [
+    "before 4am on Monday"
+  ],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "packageRules": [
+    {
+      "description": "Group non-major updates of the client-side stack into one PR so I don't drown in 6 separate PRs every week.",
+      "matchFileNames": ["client/package.json"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "client deps (non-major)",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Majors always require a human look — breaking API changes are common (e.g., TypeScript 5 → 6).",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["dependencies", "major"]
+    },
+    {
+      "description": "GitHub Actions versions — group these too, patch+minor auto-merge.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "GitHub Actions",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "description": "Security fixes bypass the 14-day hold and schedule.",
+    "minimumReleaseAge": "0 days",
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 4am on Monday"],
+    "automerge": true
+  }
+}

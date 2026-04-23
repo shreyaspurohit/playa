@@ -1,4 +1,4 @@
-"""Unit tests for bm_camps.timeparser.
+"""Unit tests for playa.timeparser.
 
 Fixtures are drawn from actual shapes seen in the scraped corpus (4167
 events). The invariants we care about:
@@ -9,7 +9,7 @@ events). The invariants we care about:
 """
 import unittest
 
-from bm_camps.timeparser import (
+from playa.timeparser import (
     WEEK_ORDER,
     _compact_days,
     _to_12h,

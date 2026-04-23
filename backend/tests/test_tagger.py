@@ -1,4 +1,4 @@
-"""Unit tests for bm_camps.tagger.
+"""Unit tests for playa.tagger.
 
 Core invariants:
   1. Word boundaries prevent false matches ("art" ≠ "heart").
@@ -9,8 +9,8 @@ Core invariants:
 """
 import unittest
 
-from bm_camps.models import Camp, Event
-from bm_camps.tagger import TAGS, Tagger
+from playa.models import Camp, Event
+from playa.tagger import TAGS, Tagger
 
 
 class TaxonomyTests(unittest.TestCase):

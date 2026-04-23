@@ -1,6 +1,6 @@
 """Build the self-contained site/index.html.
 
-Reads the HTML template from `bm_camps/templates/site.html`, loads camps
+Reads the HTML template from `playa/templates/site.html`, loads camps
 from `data/pages/`, applies tags and denylist, optionally encrypts the
 payload via openssl + PBKDF2 + AES-256-CBC, substitutes placeholders,
 and writes the result.
@@ -30,6 +30,9 @@ from .timeparser import derive_week_map, format_display, parse_event_time
 
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "site.html"
+# The client bundle lives at <repo_root>/client/dist/bundle.js. We derive
+# it from `config.root` at call time (see _read_bundle) rather than via
+# __file__ so it's test-injectable (tests pass a tmp_path root).
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
@@ -158,8 +161,8 @@ class SiteBuilder:
     def _read_template() -> str:
         return TEMPLATE_PATH.read_text(encoding="utf-8")
 
-    def _data_script(self, camps: list[Camp]) -> tuple[str, str, str, str]:
-        """Return (data_script_tag, body_class, gate_hidden_class, mode_label)."""
+    def _data_script(self, camps: list[Camp]) -> tuple[str, str]:
+        """Return (data_script_tag, mode_label)."""
         # Compact JSON — strip indent + whitespace — for payload embedding.
         payload_bytes = json.dumps(
             [c.to_dict() for c in camps],
@@ -173,7 +176,7 @@ class SiteBuilder:
                 + json.dumps(enc, separators=(",", ":"))
                 + "</script>"
             )
-            return tag, "gated", "", f"encrypted (PBKDF2 iter={self.config.pbkdf2_iter})"
+            return tag, f"encrypted (PBKDF2 iter={self.config.pbkdf2_iter})"
 
         # Plain <script type="application/json">. Escape "</" so a stray
         # "</script>" in the data can't break the embed. JSON.parse handles
@@ -184,18 +187,37 @@ class SiteBuilder:
             + payload_text
             + "</script>"
         )
-        return tag, "", "gate-hidden", "plaintext"
+        return tag, "plaintext"
+
+    def _read_bundle(self) -> str:
+        """Load the Preact client bundle. Must exist; CI and Makefile
+        produce it via `npm run build` in client/."""
+        bundle_path = self.config.root / "client" / "dist" / "bundle.js"
+        if not bundle_path.exists():
+            raise RuntimeError(
+                f"client bundle missing at {bundle_path}. "
+                "Build it with `make bundle` (or `cd client && "
+                "npm ci && npm run build`)."
+            )
+        return bundle_path.read_text(encoding="utf-8")
 
     def build(self) -> Path:
         camps = self.load_camps()
         meta = self.load_meta()
-        data_script, body_class, gate_hidden, mode = self._data_script(camps)
+        data_script, mode = self._data_script(camps)
+        bundle_js = self._read_bundle()
+
+        # Guard: our placeholder isn't a substring that could legally appear
+        # inside minified JS. If it did, escape or rename. Two closing </script>
+        # sequences inside the bundle itself would break embed — esbuild
+        # doesn't produce those, but check defensively.
+        if "</script>" in bundle_js.lower():
+            raise RuntimeError("bundle contains a literal </script>; refusing to embed")
 
         html = (
             self._read_template()
             .replace("__DATA_SCRIPT__",   data_script)
-            .replace("__BODY_CLASS__",    body_class)
-            .replace("__GATE_HIDDEN__",   gate_hidden)
+            .replace("__BUNDLE__",        bundle_js)
             .replace("__CONTACT_EMAIL__", self.config.contact_email)
             .replace("__VERSION__",       meta.get("version", "v0.0.0"))
             .replace("__SCRAPED_DATE__",  meta.get("scraped_date", "unknown"))

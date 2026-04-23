@@ -1,11 +1,11 @@
-"""Unit tests for bm_camps.parsers.
+"""Unit tests for playa.parsers.
 
 The HTML fixtures are inlined — the network-touching Scraper.fetch() is
 deliberately not covered by unit tests (would make CI flaky).
 """
 import unittest
 
-from bm_camps.parsers import DetailParser, ListingParser, _clean
+from playa.parsers import DetailParser, ListingParser, _clean
 
 
 LISTING_HTML = """

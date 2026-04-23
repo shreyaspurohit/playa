@@ -80,24 +80,32 @@ takedown and move on. Don't push back against a removal request.
 
 ## Pipeline
 
-The pipeline lives in the `bm_camps/` package. Invoke via
-`python -m bm_camps <subcommand>` (or `make <target>` for common ones):
+Two-stage build. The **client** (TypeScript + Preact + htm) lives in
+`client/` and is bundled by esbuild into one minified IIFE.
+The **server-side scraper/builder** (Python) scrapes the directory,
+assembles the HTML template, and injects the bundle + data payload.
 
 ```
-python -m bm_camps scrape <N>   →  data/pages/page_NN.json  (raw per-page)
-python -m bm_camps scrape-all   →  all 30 pages in parallel (ThreadPoolExecutor)
-python -m bm_camps meta         →  data/meta.json          (scrape timestamp + counts)
-python -m bm_camps merge        →  data/camps.csv          (merged, tags blank)
-python -m bm_camps tag          →  data/camps_tagged.csv   (final CSV)
-python -m bm_camps build        →  site/index.html         (self-contained site)
-python -m bm_camps all          →  the whole nightly pipeline
+npm run build             → client/dist/bundle.js   (~34 KB minified)
+python -m playa scrape <N>   → data/pages/page_NN.json
+python -m playa scrape-all   → all 30 pages in parallel (ThreadPoolExecutor)
+python -m playa meta         → data/meta.json
+python -m playa merge        → data/camps.csv
+python -m playa tag          → data/camps_tagged.csv
+python -m playa build        → site/index.html            (injects bundle)
+python -m playa all          → nightly pipeline (bundle must already exist)
 ```
 
-All Python **stdlib only** plus `openssl` CLI (universally available) for
-optional encryption. No `requests`/BeautifulSoup. Parsing is regex over
-the site's stable HTML shape.
+`make scrape`, `make rebuild`, `make build` all include the bundle step
+as a dependency, so you don't need to think about it day to day.
 
-## Package layout (bm_camps/)
+**Python side:** stdlib only + `openssl` CLI for the encrypted payload.
+**Client side:** `preact` at runtime; `esbuild`, `typescript`, `tsx`,
+`happy-dom` as dev deps. Lives at the repo root in `client/`, sibling
+of `playa/` — not nested, because it's an npm/TS project, not a
+Python module. Dev deps restored via `npm ci`.
+
+## Package layout (`backend/src/playa/`)
 
 - `config.py` — `Config` dataclass. Single source of truth for paths
   (derived from `root`) + env-tunable knobs (SITE_PASSWORD, PAGES,
@@ -127,7 +135,7 @@ the site's stable HTML shape.
   highlighting + readability.
 - `cli.py` — argparse entry point. Each `cmd_*()` function drives one
   subcommand; `cmd_all()` stitches them together for nightly runs.
-- `__main__.py` — enables `python -m bm_camps`.
+- `__main__.py` — enables `python -m playa`.
 
 Classes are used where state + behavior cohere (Scraper holds
 Config+HTTP settings, Tagger holds compiled regexes, SiteBuilder holds
@@ -149,8 +157,14 @@ quick preview. CI sets both via repo secrets.
 
 ## One-shot run
 
+First time only:
 ```bash
-python -m bm_camps all    # or: make scrape
+make bootstrap        # pip install -e ./backend  +  npm ci in client/
+```
+
+Then:
+```bash
+make scrape           # or: playa all   (or: python3 -m playa all)
 # env overrides: PAGES=30 PARALLEL=5 SITE_PASSWORD=… CONTACT_EMAIL=…
 ```
 
@@ -158,17 +172,59 @@ Cleans `data/pages/`, scrapes in parallel (Python `ThreadPoolExecutor`,
 no more xargs shell loop), writes `data/meta.json`, then merges + tags
 + builds the site.
 
-## Project layout (outside the package)
+Note: the `playa` console script is created by
+`[project.scripts] playa = "playa.cli:main"` in `backend/pyproject.toml`.
+After `pip install -e ./backend`, both `playa all` and
+`python3 -m playa all` work.
 
-- `bm_camps/` — the Python package. See "Package layout" above.
-- `tests/` — unit tests, one file per `bm_camps/` submodule:
-  `test_parsers.py`, `test_tagger.py`, `test_meta.py`, `test_merger.py`,
-  `test_builder.py`.
+## Project layout
+
+```
+bm-camps/                       ← repo root (the folder name stays as-is)
+├── backend/
+│   ├── src/playa/              ← the Python package (strict src-layout)
+│   ├── tests/                  ← Python unit tests
+│   └── pyproject.toml          ← setuptools build + `playa` console script
+├── client/
+│   ├── src/                    ← TypeScript + Preact + JSX sources
+│   ├── tests/                  ← JS/TS unit tests (happy-dom)
+│   ├── dist/                   ← gitignored; esbuild output
+│   ├── node_modules/           ← gitignored
+│   ├── package.json, tsconfig.json, esbuild.config.mjs
+├── data/                       ← scrape artifacts (mostly gitignored)
+├── site/                       ← published artifacts; index.html gitignored
+├── scripts/scrape_all.sh
+├── .github/workflows/refresh.yml
+├── .claude/skills/update-tags/
+├── CLAUDE.md, LICENSE, Makefile, README.md
+├── renovate.json
+└── .gitignore
+```
+
+**Why src-layout**: forcing `pip install -e ./backend` before imports
+catches bugs where code happens to work via cwd coincidence. It's the
+PEP 517/518-recommended shape. Downside: one extra bootstrap step
+(`make bootstrap` handles it, and `make test-py` / `make scrape` etc.
+also ensure the install is in place via the `install-backend` target).
+
+**Why `playa`?** The package name matches the domain (`playa.purohit.dev`)
+and the project identity. The repo folder stays `bm-camps` — that's a
+historical artifact and renaming would break anyone who's cloned it.
+
+**Top-level files**:
+- `Makefile` — targets: `make bootstrap` (one-time), `make test`,
+  `make scrape`, `make rebuild`, `make build`, etc. Targets that use
+  the Python package list `install-backend` as a dep.
 - `scripts/scrape_all.sh` — thin compat shim that execs
-  `python -m bm_camps all`. Kept so muscle-memory
+  `python3 -m playa all`. Kept so muscle-memory
   `bash scripts/scrape_all.sh` still works.
-- `Makefile` — convenience targets (`make test`, `make scrape`,
-  `make rebuild`, etc.). Each just shells out to `python -m bm_camps`.
+- `renovate.json` — Renovate bot config (see "Dependency updates"
+  section below).
+
+Python tests live at `backend/tests/` (one file per `playa` module:
+`test_parsers.py`, `test_tagger.py`, `test_timeparser.py`,
+`test_meta.py`, `test_merger.py`, `test_builder.py`). JS tests live at
+`client/tests/`.
 - `data/` — scrape artifacts. **Gitignored in full except `denylist.txt`**
   (public-repo / private-data stance, see top of file).
   - `pages/page_NN.json` — raw per-page scrape. Each camp dict maps 1:1
@@ -191,7 +247,7 @@ no more xargs shell loop), writes `data/meta.json`, then merges + tags
 
 `.github/workflows/refresh.yml` — nightly cron (08:00 UTC) + manual
 dispatch. Three jobs: `test` (runs the unit suite), `build` (runs
-`python -m bm_camps all` on the runner, uploads Pages artifact —
+`python -m playa all` on the runner, uploads Pages artifact —
 **does not commit anything**), `deploy` (publishes to GitHub Pages via
 `actions/deploy-pages@v4`). `build` needs `test`, so a broken parser
 can never produce a broken nightly. Secrets consumed: `SITE_PASSWORD`,
@@ -199,8 +255,10 @@ can never produce a broken nightly. Secrets consumed: `SITE_PASSWORD`,
 
 **Runtime dependencies** (all pre-installed on `ubuntu-latest` —
 nothing to apt-get): `openssl` (encrypted-payload path). Python 3.12
-comes from `actions/setup-python`. Project code is stdlib-only;
-**no `pip install` step needed**.
+comes from `actions/setup-python`. Node 20 comes from
+`actions/setup-node` (for the client bundle + JS tests). Python
+project code is stdlib-only; JS project restores deps via
+`npm ci` (cached on `package-lock.json`).
 
 **How deploy works** — the runner generates `site/index.html` etc. on
 its local filesystem, `actions/upload-pages-artifact@v3` tars up
@@ -242,23 +300,23 @@ All regexes live at the top of `fetch_page.py`.
 ## Rerun from scratch
 
 ```bash
-make scrape     # or: python -m bm_camps all
+make scrape     # or: python -m playa all
 ```
 
 **Page count can change** — check the pagination block at the bottom of
 any listing page (`<nav aria-label="Page pagination">`) and set
-`PAGES=N python -m bm_camps all`. At last scrape: 30 pages, 1458 camps,
+`PAGES=N python -m playa all`. At last scrape: 30 pages, 1458 camps,
 583 with website, 4167 events, 1271 tagged (~87%).
 
 Individual steps if you need them:
 
 ```bash
-python -m bm_camps scrape-all   # just the scrape (parallel threads)
-python -m bm_camps meta         # just data/meta.json
-python -m bm_camps merge        # just data/camps.csv
-python -m bm_camps tag          # just data/camps_tagged.csv
-python -m bm_camps build        # just site/index.html
-python -m bm_camps scrape 5     # single page (debug)
+python -m playa scrape-all   # just the scrape (parallel threads)
+python -m playa meta         # just data/meta.json
+python -m playa merge        # just data/camps.csv
+python -m playa tag          # just data/camps_tagged.csv
+python -m playa build        # just site/index.html
+python -m playa scrape 5     # single page (debug)
 ```
 
 ## Retag / rebuild site without re-scraping
@@ -267,12 +325,12 @@ Changing `TAGS` in `tagger.py` or the HTML template does **not** require
 re-scraping:
 
 ```bash
-make rebuild    # or: python -m bm_camps {meta,merge,tag,build}
+make rebuild    # or: python -m playa {meta,merge,tag,build}
 ```
 
 ## Editing the tag taxonomy
 
-All tag definitions live in the `TAGS` dict in `bm_camps/tagger.py`.
+All tag definitions live in the `TAGS` dict in `backend/src/playa/tagger.py`.
 Each entry is `"tag_name": [regex, regex, …]`.
 
 **For a structured audit**: invoke the project skill
@@ -288,14 +346,14 @@ when the untagged count drifts up.
 - Use `\b` word boundaries to avoid false matches. Bad: `r"art"` will
   match inside `heart`, `party`, `start`. Good: `r"\bart(?:s|ist|work|works)?\b"`.
 - Patterns match against `name + description + event.name + event.description`
-  (see `Tagger.haystack()` in `bm_camps/tagger.py`), so tags fire whether
+  (see `Tagger.haystack()` in `backend/src/playa/tagger.py`), so tags fire whether
   the keyword is in the camp description *or* any of its events.
 - A camp gets a tag if **any** of the tag's patterns hits. Multiple tags
   can fire from the same text.
 
 **Workflow for adding or changing a tag:**
 
-1. Edit `TAGS` in `bm_camps/tagger.py`.
+1. Edit `TAGS` in `backend/src/playa/tagger.py`.
 2. Add a quick test in `tests/test_tagger.py` — a positive case (should
    tag) and ideally a negative case (should not tag):
    ```python
@@ -316,12 +374,12 @@ find camps that matched. Refine the regex with tighter boundaries.
 **Debugging a tag that doesn't fire:**
 Drop into a REPL:
 ```python
-from bm_camps import Tagger
+from playa import Tagger
 t = Tagger()
 print(t.tag("your test string here"))
 ```
 
-## Site UI (bm_camps/builder.py + templates/site.html)
+## Site UI (backend/src/playa/builder.py + templates/site.html)
 
 - Data embed, two modes:
   - **Plaintext:** `<script id="camps-data" type="application/json">` with
@@ -361,13 +419,165 @@ the `Salted__||salt(8)||ciphertext` output. Embedded in the HTML as
 
 JS side: imports raw password → PBKDF2 → 48 bytes → first 32 = AES key,
 last 16 = IV → `AES-CBC` decrypt → UTF-8 decode → `JSON.parse`. See the
-JS in `bm_camps/templates/site.html` (look for `async function loadCamps`).
+JS in `backend/src/playa/templates/site.html` (look for `async function loadCamps`).
 
 `tests/test_builder.py::EncryptPayloadTests` does a full round-trip:
 encrypt via Python, decrypt via `openssl enc -d` with the same
 parameters, assert the plaintext matches. If you change iteration count
 or algorithm, update **both** sides (Python + JS in the template) and
 re-run `make test`.
+
+## Client architecture (`client/`)
+
+The client is a small **Preact + htm + TypeScript** app bundled by
+**esbuild** into a single minified IIFE (`dist/bundle.js`, ~34 KB) that
+the Python builder inlines into the HTML. Zero runtime network
+dependencies — everything ships in the one static file.
+
+### Why this stack
+
+- **Preact** (3 KB): React-compatible API, hooks, tiny. React would add
+  40 KB for no real benefit at this scale.
+- **JSX** via esbuild's automatic runtime (`jsx: "automatic"`,
+  `jsxImportSource: "preact"`). No htm, no tagged-template parser at
+  runtime — standard JSX compiled inline.
+- **esbuild**: zero-config bundler, ~100 ms builds. Single binary,
+  no Webpack/Rollup config surface. Handles TSX natively.
+- **TypeScript** (strict mode): catches state-shape bugs before they
+  ship. `tsconfig.json` has `strict`, `noImplicitAny`,
+  `noImplicitReturns`, `noUnusedLocals`, `noUnusedParameters` all on,
+  and `jsx: "react-jsx"` + `jsxImportSource: "preact"`.
+- **happy-dom** + **node --test** + **tsx**: fast, no Jest/Vitest
+  overhead. Tests run with `npm test`.
+
+We previously tried **htm** for JSX-like tagged-template syntax —
+dropped it because it hasn't been updated in 4+ years and JSX via
+esbuild's automatic runtime does the same thing with first-class
+tooling (editor syntax highlighting, IntelliSense, prettier).
+
+### Source tree
+
+```
+client/
+  package.json          esbuild.config.mjs     tsconfig.json
+  src/
+    index.tsx           # entry — mounts <App/> into #app
+    types.ts            # Camp / Event / EncryptedPayload / LS & SS keys
+    data.ts             # readEmbeddedPayload, indexHaystacks, haystackOf
+    crypto.ts           # Web Crypto AES-CBC + PBKDF2 decrypt
+    utils/
+      storage.ts        # safe localStorage wrappers (Safari private mode safe)
+      highlight.ts      # text + <mark> VNode output for search highlighting
+    hooks/
+      useFavorites.ts   # generic Set + localStorage, used for camps AND events
+      useTheme.ts       # theme name + data-theme on <html>, persisted
+    components/
+      App.tsx           # root state + wiring; owns .site-chrome wrapper
+      Gate.tsx          # password prompt; pops only when payload is encrypted
+      Header.tsx        # title, version pill, report-bug, info button, themes
+      Toolbar.tsx       # search + filter pane (left) + action pane (right)
+      TagCloud.tsx      # tag chip cloud with "show all N tags"
+      CampCard.tsx      # one camp article
+      EventItem.tsx     # one event <li> with star + directory link
+      CampsView.tsx     # grid of cards (cap 600 with overflow hint)
+      InfoModal.tsx     # disclaimer + "Clear all local data"
+      Footer.tsx        # attribution / takedown
+  tests/
+    _dom.ts             # happy-dom install/teardown helpers
+    storage.test.ts
+    highlight.test.ts
+    useFavorites.test.ts
+    data.test.ts
+    crypto.test.ts      # round-trips against openssl CLI
+    CampCard.test.ts
+    Toolbar.test.ts
+```
+
+**Sticky chrome.** `<App>` wraps `<Header>` + `<Toolbar>` in a
+`<div class="site-chrome">`. The CSS makes `.site-chrome` `position:
+sticky; top: 0` (not `<header>` itself), so the title bar, stats line,
+search box, and filters/actions pane all stay pinned together when
+you scroll. Pre-JSX-migration this was implicit because `<header>`
+contained the controls; post-migration the wrapper makes it explicit.
+
+### How Python + client connect
+
+1. `npm run build` produces `client/dist/bundle.js` — a self-contained
+   IIFE that references no external modules.
+2. `backend/src/playa/templates/site.html` is a thin shell: head (CSS, meta
+   tags, early theme-apply script), `<div id="app"></div>`, placeholder
+   `__DATA_SCRIPT__`, placeholder `<script>__BUNDLE__</script>`.
+3. `SiteBuilder._read_bundle()` reads the bundle and substitutes it in.
+   A defensive guard rejects bundles that contain a literal
+   `</script>` (would break the HTML embed). Scrape metadata is
+   injected as `<meta name="bm-version">`, `<meta name="bm-scraped-date">`,
+   etc., and the client reads those on startup.
+4. Data is still embedded via `<script id="camps-data">` (plaintext) or
+   `<script id="camps-data-encrypted">` (encrypted envelope). The client
+   `readEmbeddedPayload()` picks whichever is present.
+
+### State model (in `App.ts`)
+
+All cross-component state lives at the top:
+
+- `query` / `queryLower` — search input
+- `activeTags: Set<string>` — tag-chip AND filter
+- `showAllTags: boolean` — expand the 50-tag cap
+- `favOnly: boolean` — favorites-only filter engaged
+- `campFavs`, `eventFavs` — two independent `useFavorites()` hooks
+  backed by `bm-favs` + `bm-fav-events` localStorage keys
+- `theme` — `useTheme()`
+- `infoOpen`, `infoPulse` — modal
+- `focusKey` — counter; bumping triggers the Toolbar's search to
+  re-focus (used after Clear)
+
+The two expensive derivations are memoized: `sortedTags` (recomputed
+only when `camps` changes) and `filtered` (when any filter input
+changes).
+
+### Rendering highlights
+
+- Search highlighting returns an array of text + `<mark>` VNodes
+  (see `utils/highlight.ts`). Regex metacharacters in the query are
+  escaped — the query is treated literally.
+- `<details>` auto-opens when the query hits an event OR any event in
+  that camp is starred. This keeps the section open across re-renders
+  after a star click.
+- Event times: prefer `display_time` (Python-side normalized), fall
+  back to `time` (raw) when the parser couldn't handle the format.
+
+### Tests (JS)
+
+- `storage.test.ts` — `readString`/`writeString`, `readStringSet`/
+  `writeStringSet`, bad-JSON fallback, coercion to strings.
+- `highlight.test.ts` — VNode shape, case-insensitive match, regex
+  metachar escaping ("foo.bar" doesn't match "fooXbar").
+- `useFavorites.test.ts` — toggle, persist, clear, load-on-mount
+  (fresh container).
+- `data.test.ts` — plaintext vs encrypted payload discovery;
+  haystack includes name/desc/tags/events.
+- `crypto.test.ts` — **round-trip against openssl CLI**
+  (`spawnSync openssl enc` as the encryption side). Same crypto the
+  Python builder uses. Wrong-password rejection too.
+- `CampCard.test.ts` — mounts real Preact into happy-dom, asserts on
+  the rendered DOM: name, tags, fav star state + click, event link,
+  event fav click, `display_time` fallback to raw.
+- `Toolbar.test.ts` — filter pill state, unfav-all visibility
+  (must be hidden unless filter is on AND something is starred),
+  click handlers.
+
+46 tests, ~4.5 s. Run with `make test-js` or `npm test` in the client dir.
+
+### Dev loop
+
+```
+make bundle-watch   # esbuild watch mode, rebuilds dist/bundle.js on save
+make rebuild        # regenerate site from existing data (bundle first)
+make test-js        # TS type-check is run separately in CI via npm run typecheck
+```
+
+Refresh the browser manually — no hot reload. For 34 KB of JS it's
+honestly not worth it.
 
 ## Event time parsing
 
@@ -378,7 +588,7 @@ Raw event times from `directory.burningman.org` come in two main shapes
   2. `Begins Thu (8/29) at 9:00 PM, Ends Fri at 2:00 AM`  — spans midnight
   3. `From 11:00 AM to 3:00 PM on Mon, Tue, Wed, Thu, Fri`  — recurring
 
-`bm_camps/timeparser.py` normalizes these into:
+`backend/src/playa/timeparser.py` normalizes these into:
 
   * A **structured parse** (for the future calendar view):
     ```
@@ -465,8 +675,13 @@ samples and extend `_BEGINS_RE`/`_FROM_RE` or add a third regex.
 ## Tests
 
 ```bash
-make test        # stdlib `unittest`, 92 tests, ~0.15s
+make test        # runs both suites: Python (92) + JS (46)
+make test-py     # Python unit tests only (stdlib unittest, ~0.15s)
+make test-js     # JS/TS tests via node --test + happy-dom (~4.5s)
 ```
+
+Combined: **138 tests, 0 failures**. CI runs both in the `test` job
+before the `build` job touches anything.
 
 - `tests/test_parsers.py` — `_clean()`, `ListingParser.parse()`,
   `DetailParser.parse()`. Fixture HTML inlined; the network-touching
@@ -527,6 +742,31 @@ Takedown workflow:
    never committed, this is a genuine removal — no lingering data in
    git history, no GitHub code-search hits. Reversing a takedown just
    means removing the id from `denylist.txt` and pushing.
+
+## Dependency updates (Renovate)
+
+`renovate.json` at the repo root drives **Renovate Bot**. The bot opens
+pull requests to bump npm + GitHub Actions versions on a schedule, with
+a **14-day cooling period** (`minimumReleaseAge: "14 days"`) so we never
+land on freshly-published broken releases.
+
+One-time setup: install the Renovate GitHub App
+(<https://github.com/apps/renovate>) and grant it access to this repo.
+
+Behavior, in short:
+- **Non-major updates** are grouped into one PR per week (Monday before
+  4am PT), auto-merged after CI passes (`platformAutomerge`).
+- **Major updates** are never auto-merged — labels `dependencies` +
+  `major`, human review required. Major jumps (e.g. TypeScript 5 → 6,
+  or esbuild 0.24 → 0.28) often carry breaking changes.
+- **Security updates** bypass the 14-day hold and open immediately,
+  labelled `security`.
+- **Lock-file maintenance** runs on the same Monday schedule to
+  refresh transitive pins.
+- **Concurrent PR cap: 5**, hourly cap: 2. Keeps the noise sane.
+
+Change the schedule / cadence in `renovate.json` if it needs to be
+quieter or louder.
 
 ## Likely future extensions
 

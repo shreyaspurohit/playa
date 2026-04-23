@@ -16,6 +16,17 @@ data/logs/
 # config, not data.
 site/index.html
 
+# === Client toolchain ===
+# node_modules is restored by `npm ci` in CI; bundle.js is regenerated
+# on every build. Keep only source + config in git.
+client/node_modules/
+client/dist/
+
+# === Python build artifacts (from `pip install -e ./backend`) ===
+backend/src/*.egg-info/
+backend/build/
+*.egg-info/
+
 # === Standard ignores ===
 __pycache__/
 *.pyc
