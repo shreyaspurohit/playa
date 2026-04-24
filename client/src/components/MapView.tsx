@@ -20,6 +20,7 @@ import { friendChipStyle } from '../utils/friendColor';
 import { MapInfoModal } from './MapInfoModal';
 import { MeetSpotEditor } from './MeetSpotEditor';
 import { TrashIcon } from './TrashIcon';
+import { TentIcon } from './TentIcon';
 
 /** Friend-side data imported from share links. Each entry is one
  *  friend's full "rendezvous layer" — their home camp (if set) plus
@@ -467,7 +468,7 @@ export function MapView({
                 class={'map-my-camp-row' + (target?.camp.id === myCampPin.camp.id ? ' active' : '')}
                 onClick={() => { setSelectedSpot(null); setTargetId(myCampPin.camp.id); }}
               >
-                <span class="map-my-camp-icon" aria-hidden="true">🏕</span>
+                <span class="map-my-camp-icon" aria-hidden="true"><TentIcon size={18} /></span>
                 <div>
                   <div class="map-my-camp-name">Your camp — {myCampPin.camp.name}</div>
                   <div class="map-pin-addr">{myCampPin.camp.location}</div>
@@ -556,7 +557,7 @@ export function MapView({
                       class={'map-meet-row clickable' + (target?.camp.id === fp.camp.id ? ' active' : '')}
                       onClick={() => { setSelectedSpot(null); setTargetId(fp.camp.id); }}
                     >
-                      <span class="map-meet-diamond" aria-hidden="true">🏕</span>
+                      <span class="map-meet-diamond friend-tent" aria-hidden="true" style={friendChipStyle(fp.name)}><TentIcon size={16} /></span>
                       <div class="map-meet-body">
                         <div class="map-meet-label">
                           <span class="fav-by-chip" style={friendChipStyle(fp.name)}>{fp.name}</span>
@@ -598,27 +599,10 @@ export function MapView({
             )}
           </div>
 
-          <Svg
-            pins={pins}
-            target={target}
-            targetAddress={target ? parseAddress(target.camp.location) : null}
-            userSvg={userSvg}
-            onSelectPin={(id) => { setSelectedSpot(null); setTargetId(id); }}
-            onClearSelection={clearSelection}
-            myCampPin={myCampPin}
-            myMeetPins={myMeetPins}
-            friendCampPins={friendCampPins}
-            friendMeetPins={friendMeetPins}
-            selectedSpot={selectedSpot}
-            setSelectedSpot={(sel) => { setTargetId(null); setSelectedSpot(sel); }}
-            activeSpot={activeSpot}
-            activeSpotAddress={activeSpot ? parseAddress(activeSpot.address) : null}
-            poiPins={poiPins}
-            zoom={zoom}
-            center={center}
-            setCenter={setCenter}
-          />
-          {/* Pin list + navigation details */}
+          {/* Pin list + navigation details. Placed ABOVE the map SVG
+              so the "tap a row → see it on the map below" flow reads
+              top-to-bottom: pick a camp in the list, scroll (or glance)
+              down to the SVG to see its location + bearing. */}
           <div class="map-list">
             <h4>Starred camps</h4>
             {target && (
@@ -717,6 +701,27 @@ export function MapView({
               ))}
             </ul>
           </div>
+
+          <Svg
+            pins={pins}
+            target={target}
+            targetAddress={target ? parseAddress(target.camp.location) : null}
+            userSvg={userSvg}
+            onSelectPin={(id) => { setSelectedSpot(null); setTargetId(id); }}
+            onClearSelection={clearSelection}
+            myCampPin={myCampPin}
+            myMeetPins={myMeetPins}
+            friendCampPins={friendCampPins}
+            friendMeetPins={friendMeetPins}
+            selectedSpot={selectedSpot}
+            setSelectedSpot={(sel) => { setTargetId(null); setSelectedSpot(sel); }}
+            activeSpot={activeSpot}
+            activeSpotAddress={activeSpot ? parseAddress(activeSpot.address) : null}
+            poiPins={poiPins}
+            zoom={zoom}
+            center={center}
+            setCenter={setCenter}
+          />
         </>
       )}
       <MapInfoModal open={infoOpen} onClose={() => setInfoOpen(false)} />

@@ -1,4 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Playa Camps">
+  <!--
+    Playa Camps app icon. All elements original:
+      - Rounded-square background: standard app-icon convention (no IP).
+      - Fill #c2410c: Tailwind orange-700 (MIT); colors aren't copyrightable.
+      - Tent silhouette: hand-drawn triangle + doorway punch-out,
+        a generic camping glyph. Not copied from any icon library.
+    No Burning Man trademarks (no "Man" figure, no "BRC" / "Burning
+    Man" / "Decompression" wordmarks — see CLAUDE.md §7.2 checklist).
+  -->
   <!-- Background tile — orange matches the default theme accent so the
        installed app feels like part of the site, not a mismatched icon. -->
   <rect width="512" height="512" rx="72" fill="#c2410c"/>

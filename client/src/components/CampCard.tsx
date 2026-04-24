@@ -6,6 +6,7 @@ import type { Camp } from '../types';
 import { highlight } from '../utils/highlight';
 import { friendChipStyle } from '../utils/friendColor';
 import { EventItem } from './EventItem';
+import { TentIcon } from './TentIcon';
 
 interface Props {
   camp: Camp;
@@ -107,7 +108,7 @@ export function CampCard({
               aria-pressed={isMyCamp ? 'true' : 'false'}
               onClick={() => onSetMyCamp(camp.id)}
             >
-              🏕 {isMyCamp ? 'my camp' : 'set as my camp'}
+              <TentIcon size={12} /> {isMyCamp ? 'my camp' : 'set as my camp'}
             </button>
           </>
         )}

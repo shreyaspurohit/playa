@@ -156,6 +156,10 @@ describe('<CampCard>', () => {
 
   test('keeps the pill on the chosen home camp as an unset control', () => {
     mountCard({ isMyCamp: true, myCampSet: true });
-    assert.match(mount.innerHTML, />🏕 my camp</);
+    // The tent is rendered as an inline <svg> (TentIcon), not the 🏕
+    // emoji — font-fallback was showing raw Unicode hex on some phones.
+    assert.match(mount.innerHTML, /class="my-camp-btn active"/);
+    assert.match(mount.innerHTML, /<svg class="tent-icon"/);
+    assert.match(mount.innerHTML, /> my camp</);
   });
 });
