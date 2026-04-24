@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Playa Camps">
+  <!-- Background tile — orange matches the default theme accent so the
+       installed app feels like part of the site, not a mismatched icon. -->
+  <rect width="512" height="512" rx="72" fill="#c2410c"/>
+  <!-- Tent silhouette. Kept inside a ~80% safe zone (51→461) so the
+       image still reads when a launcher crops it into a circle under
+       the `maskable` purpose. -->
+  <path d="M 112 384 L 256 132 L 400 384 Z"
+        fill="#faf7f2" stroke="#faf7f2" stroke-width="4" stroke-linejoin="round"/>
+  <!-- Doorway punched back through in the bg color. -->
+  <path d="M 224 384 L 256 316 L 288 384 Z" fill="#c2410c"/>
+</svg>

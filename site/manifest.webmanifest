@@ -1,0 +1,19 @@
+{
+  "name": "Playa Camps",
+  "short_name": "Playa Camps",
+  "description": "Offline-first browser for theme camps at the annual burn.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#faf7f2",
+  "theme_color": "#c2410c",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

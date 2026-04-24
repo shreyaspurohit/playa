@@ -26,7 +26,7 @@ We normalize to:
   Mon–Fri · 11:00 AM – 3:00 PM (starts 8/26)
 
 We explicitly do NOT hardcode a year. Instead, `derive_week_map()` walks all
-single-occurrence events in a given scrape and builds {day: "M/D"} from
+single-occurrence events in a given fetch and builds {day: "M/D"} from
 what the directory posted this year. Recurring events pick up "(starts M/D)"
 by looking up their earliest day in that map. When the directory updates
 for a new burn year, the map self-adjusts.
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from datetime import date, timedelta
 from typing import Optional
 
 
@@ -150,16 +151,103 @@ def parse_event_time(raw: str) -> Optional[dict]:
 def derive_week_map(parsed_events) -> dict[str, str]:
     """{day_abbrev: 'M/D'} from every single-occurrence event's start date.
 
+    Kept for tests/callers that want to see what dates the fetched data
+    *claims*. Production uses `canonical_week_map()` instead because the
+    directory's per-event tuples are often stale (e.g., 2024 dates still
+    present when we're building the 2026 site).
+
     If a day surfaces with multiple dates (e.g., both opening-Sunday and
-    closing-Sunday of burn week), we pick the most frequent one — in
-    practice, most events cluster in the core Mon–Sat window so this
-    favors the primary occurrence.
+    closing-Sunday of burn week), we pick the most frequent one.
     """
     counts: dict[str, Counter] = {}
     for p in parsed_events:
         if p and p["kind"] == "single" and p["start_date"]:
             counts.setdefault(p["start_day"], Counter())[p["start_date"]] += 1
     return {day: c.most_common(1)[0][0] for day, c in counts.items() if c}
+
+
+def canonical_week_map(burn_start: str, burn_end: str) -> dict[str, str]:
+    """Map weekday abbreviation → 'M/D' string, derived from the
+    burn window (ISO dates).
+
+    First occurrence of each weekday wins. For 2026 (Sun 8/30 → Mon 9/7)
+    this means 'Sun' → '8/30' (opening Sunday), 'Mon' → '8/31' (first
+    Mon), …, 'Sat' → '9/5'. The closing Sunday (9/6) and Monday (9/7)
+    are lost to first-occurrence-wins, matching how the parser
+    collapses `Sun2`/`Mon2` back to `Sun`/`Mon` via `_normalize_day`.
+
+    The `burn_start` passed here is typically the *effective* start —
+    the earliest event date rather than the official gate-open day.
+    Volunteers and early-arrival crews run events before gates, and
+    they appear in the directory with pre-gates dates; we want those
+    visible on the calendar. See `effective_burn_start()`.
+    """
+    start = date.fromisoformat(burn_start)
+    end = date.fromisoformat(burn_end)
+    if end < start:
+        raise ValueError(f"burn_end {burn_end} is before burn_start {burn_start}")
+    out: dict[str, str] = {}
+    d = start
+    while d <= end:
+        name = WEEK_ORDER[d.weekday()]  # date.weekday(): 0=Mon … 6=Sun
+        if name not in out:
+            out[name] = f"{d.month}/{d.day}"
+        d += timedelta(days=1)
+    return out
+
+
+def effective_burn_start(
+    parsed_events,
+    configured_start: str,
+    configured_end: str,
+) -> str:
+    """Earliest event date from the fetched corpus, interpreted in the
+    configured start's year. Falls back to `configured_start` when:
+      - no single-occurrence event carries a date
+      - the earliest date parses to something after `configured_end`
+        (year-assumption is wrong — fetched data from another calendar)
+
+    Rationale: the official burn gates open at `configured_start`
+    (e.g., Sun 8/30 for 2026), but camps routinely host pre-gates
+    events for early-arrival crews. Those appear in the directory
+    with dates like (8/26). Letting them drive the calendar's left
+    edge means the schedule shows what the corpus actually contains
+    instead of hiding early work behind an arbitrary cutoff.
+
+    Returns an ISO 'YYYY-MM-DD' string.
+    """
+    cfg_start = date.fromisoformat(configured_start)
+    cfg_end = date.fromisoformat(configured_end)
+
+    earliest_md: Optional[tuple[int, int]] = None
+    for p in parsed_events:
+        if not p or p.get("kind") != "single":
+            continue
+        raw = p.get("start_date")
+        if not raw:
+            continue
+        try:
+            parts = raw.split("/")
+            md = (int(parts[0]), int(parts[1]))
+        except (ValueError, IndexError):
+            continue
+        if earliest_md is None or md < earliest_md:
+            earliest_md = md
+
+    if earliest_md is None:
+        return configured_start
+
+    try:
+        candidate = date(cfg_start.year, earliest_md[0], earliest_md[1])
+    except ValueError:
+        return configured_start
+
+    # Sanity: if the earliest fetched date lands past burn_end in the
+    # configured year, the fetched corpus is out of phase with this
+    # year's calendar — trust the config instead.
+    if candidate > cfg_end:
+        return configured_start
+    return candidate.isoformat()
 
 
 def _compact_days(days) -> str:

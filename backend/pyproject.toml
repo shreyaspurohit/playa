@@ -1,4 +1,4 @@
-# Python project config for the `playa` package (the scraper + site builder).
+# Python project config for the `playa` package (the fetcher + site builder).
 # Src-layout: package lives under `src/playa/`, not at the repo root, so
 # imports only resolve via a proper install. Editable install during dev:
 #
@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "playa"
 version = "0.0.0"
-description = "Burning Man theme-camp directory scraper + static site builder."
+description = "Burning Man theme-camp directory fetcher + static site builder."
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Shreyas Purohit" }]
@@ -26,7 +26,7 @@ authors = [{ name = "Shreyas Purohit" }]
 # this package doesn't need its own copy.
 # No runtime dependencies — we're stdlib-only plus the `openssl` CLI.
 dependencies = []
-keywords = ["burningman", "scraper", "static-site"]
+keywords = ["burningman", "fetcher", "static-site"]
 classifiers = [
   "Private :: Do Not Upload",
   "License :: OSI Approved :: MIT License",

@@ -62,7 +62,7 @@ describe('indexHaystacks', () => {
       description: 'breathwork sessions',
       tags: ['yoga'],
       events: [{ id: 'e1', name: 'Vinyasa', description: 'daily',
-                  time: '', display_time: '' }],
+                  time: '', display_time: '', parsed_time: null }],
     })];
     indexHaystacks(camps);
     const hay = haystackOf(camps[0]);

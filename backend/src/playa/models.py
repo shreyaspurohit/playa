@@ -20,12 +20,18 @@ class Event:
     # by SiteBuilder post-load; empty string if the raw `time` couldn't be
     # parsed. The template falls back to `time` when this is empty.
     display_time: str = ""
+    # Structured parse for the calendar view. Matches the output shape of
+    # timeparser.parse_event_time(); None when raw `time` is unparseable.
+    #   {kind: "single"|"recurring", days: ["Mon",...], start_day, start_date,
+    #    start_time: "HH:MM" 24h, end_day, end_time}
+    parsed_time: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id, "name": self.name,
             "description": self.description, "time": self.time,
             "display_time": self.display_time,
+            "parsed_time": self.parsed_time,
         }
 
     @classmethod
@@ -36,6 +42,7 @@ class Event:
             description=d.get("description", ""),
             time=d.get("time", ""),
             display_time=d.get("display_time", ""),
+            parsed_time=d.get("parsed_time"),
         )
 
 

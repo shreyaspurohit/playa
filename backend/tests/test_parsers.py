@@ -1,6 +1,6 @@
 """Unit tests for playa.parsers.
 
-The HTML fixtures are inlined — the network-touching Scraper.fetch() is
+The HTML fixtures are inlined — the network-touching Fetcher.fetch() is
 deliberately not covered by unit tests (would make CI flaky).
 """
 import unittest

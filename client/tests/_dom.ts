@@ -30,6 +30,7 @@ const GLOBAL_KEYS = [
   'localStorage',
   'sessionStorage',
   'location',
+  'history',
   'navigator',
   'requestAnimationFrame',
   'cancelAnimationFrame',

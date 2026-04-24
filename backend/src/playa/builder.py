@@ -11,13 +11,14 @@ Placeholders in the template:
     __GATE_HIDDEN__     — "" when encrypted (shown), "gate-hidden" otherwise
     __CONTACT_EMAIL__   — footer + modal takedown mailto
     __VERSION__         — vYYYY.MM.DD
-    __SCRAPED_DATE__    — YYYY-MM-DD
-    __SCRAPED_AT__      — YYYY-MM-DDTHH:MM:SSZ (tooltip)
+    __FETCHED_DATE__    — YYYY-MM-DD
+    __FETCHED_AT__      — YYYY-MM-DDTHH:MM:SSZ (tooltip)
 """
 from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,12 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .models import Camp
 from .tagger import Tagger
-from .timeparser import derive_week_map, format_display, parse_event_time
+from .timeparser import (
+    canonical_week_map,
+    effective_burn_start,
+    format_display,
+    parse_event_time,
+)
 
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "site.html"
@@ -35,11 +41,23 @@ TEMPLATE_PATH = Path(__file__).parent / "templates" / "site.html"
 # __file__ so it's test-injectable (tests pass a tmp_path root).
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
+# Safety rail: refuse to build a site with fewer camps than this. In
+# 2025 the directory had ~1458. A build with 10 camps is a bug (fetch
+# failure, directory reshuffle, ToS revocation) — fail loudly so CI
+# aborts and the last-good deployment stays live. Override with the
+# env var MIN_CAMPS for intentionally-small fixtures or debug fetches.
+DEFAULT_MIN_CAMPS = 500
+
 
 class SiteBuilder:
     def __init__(self, config: Config, tagger: Tagger | None = None):
         self.config = config
         self.tagger = tagger or Tagger()
+        # Populated by _enrich_event_times. The calendar window is derived
+        # from fetched events (earliest event date) + configured burn_end,
+        # so it can't be known until events are loaded.
+        self._effective_start: str = config.burn_start
+        self._week_map: dict[str, str] = {}
 
     # --- data loading -----------------------------------------------------
 
@@ -55,7 +73,7 @@ class SiteBuilder:
         return ids
 
     def load_meta(self) -> dict:
-        """Scrape metadata — falls back to page-file mtime when meta.json
+        """Fetch metadata — falls back to page-file mtime when meta.json
         is missing, and to a sensible default when nothing is there yet."""
         if self.config.meta_file.exists():
             try:
@@ -64,13 +82,13 @@ class SiteBuilder:
                 pass
         pages = sorted(self.config.pages_dir.glob("page_*.json"))
         if not pages:
-            return {"scraped_date": "unknown", "version": "v0.0.0"}
+            return {"fetched_date": "unknown", "version": "v0.0.0"}
         newest = max(p.stat().st_mtime for p in pages)
         dt_utc = datetime.fromtimestamp(newest, tz=timezone.utc)
         dt_pt = dt_utc.astimezone(PACIFIC)
         return {
-            "scraped_at":   dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "scraped_date": dt_pt.strftime("%Y-%m-%d"),   # Pacific for display
+            "fetched_at":   dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fetched_date": dt_pt.strftime("%Y-%m-%d"),   # Pacific for display
             "version":      "v" + dt_pt.strftime("%Y.%m.%d"),
         }
 
@@ -98,33 +116,59 @@ class SiteBuilder:
             print(f"  (skipped {skipped} camp(s) per denylist)")
         return camps
 
-    @staticmethod
-    def _enrich_event_times(camps: list[Camp]) -> None:
-        """Populate event.display_time in place. Two-pass: parse everything
-        to build the day→date map for this scrape, then format each event
-        with that map. Events whose raw time we can't parse keep
-        display_time == '' and fall back to raw in the UI."""
+    def _enrich_event_times(self, camps: list[Camp]) -> None:
+        """Populate event.display_time + parsed_time in place. Derives
+        the calendar window from the fetched events themselves:
+
+          * effective start = earliest single-occurrence event date,
+            interpreted in `config.burn_start`'s year (volunteers +
+            early crews often run events before gates officially open)
+          * end             = `config.burn_end` (the fixed gate-close
+            date from the ticketing page)
+
+        Caches both the effective-start ISO string and the resulting
+        canonical week map on `self` so `build()` can emit them as
+        meta tags without re-parsing events.
+        """
         # Pass 1: parse every event's raw time.
-        parses: list[tuple] = []  # list[(event, parsed_or_None)]
-        parsed_only = []
+        parses: list[tuple] = []
         for camp in camps:
             for ev in camp.events:
-                p = parse_event_time(ev.time)
-                parses.append((ev, p))
-                if p:
-                    parsed_only.append(p)
-        # Derive week map from this scrape only (year-agnostic).
-        week_map = derive_week_map(parsed_only)
-        # Pass 2: format.
+                parses.append((ev, parse_event_time(ev.time)))
+        parsed_only = [p for _, p in parses if p]
+
+        # Derive the calendar window + canonical day→date map once.
+        self._effective_start = effective_burn_start(
+            parsed_only, self.config.burn_start, self.config.burn_end,
+        )
+        week_map = canonical_week_map(self._effective_start, self.config.burn_end)
+        self._week_map = week_map
+
+        # Pass 2: stamp canonical dates + format display strings.
         recognized = 0
         for ev, p in parses:
+            if p:
+                # Override fetched start_date + fill end_date from canonical map.
+                end_day = p["end_day"] or p["start_day"]
+                p["end_day"] = end_day
+                p["start_date"] = (
+                    week_map.get(p["start_day"] or "")
+                    or p.get("start_date")
+                )
             s = format_display(p, week_map)
             if s:
                 ev.display_time = s
                 recognized += 1
+            if p:
+                ev.parsed_time = {
+                    **p,
+                    "end_date": week_map.get(p["end_day"] or ""),
+                }
         if parses:
             print(f"  event times parsed: {recognized}/{len(parses)} "
                   f"({100 * recognized // len(parses)}%); "
+                  f"effective window: {self._effective_start} → "
+                  f"{self.config.burn_end}; "
                   f"week map: {dict(sorted(week_map.items()))}")
 
     # --- encryption -------------------------------------------------------
@@ -201,8 +245,106 @@ class SiteBuilder:
             )
         return bundle_path.read_text(encoding="utf-8")
 
+    def _write_service_worker(self, version: str) -> Path:
+        """Emit site/sw.js so the site works fully offline after first
+        load. Strategy: install-time precache of /, /index.html, and
+        /robots.txt (nothing else is same-origin and needed for the UI).
+        Fetch handler is cache-first with a network-fallback — if the
+        runner deploys a newer build, the SW swap picks it up on the
+        next visit once it activates (skipWaiting). Version is the
+        build version ("vYYYY.MM.DD"); embedded in cache names so old
+        caches get pruned on activate.
+        """
+        sw = (
+            "// Auto-generated by playa.builder — do not edit by hand.\n"
+            "// Version: " + version + "\n"
+            "const VERSION = " + json.dumps(version) + ";\n"
+            "const CACHE = 'playa-' + VERSION;\n"
+            "const SHELL = ['./', './index.html', './robots.txt', "
+            "'./manifest.webmanifest', './icon.svg'];\n"
+            "self.addEventListener('install', (e) => {\n"
+            "  self.skipWaiting();\n"
+            "  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));\n"
+            "});\n"
+            "self.addEventListener('activate', (e) => {\n"
+            "  e.waitUntil((async () => {\n"
+            "    const keys = await caches.keys();\n"
+            "    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));\n"
+            "    await self.clients.claim();\n"
+            "  })());\n"
+            "});\n"
+            "// Message handler — lets the page ask the SW to refresh its\n"
+            "// shell cache from origin before a reload. Non-destructive:\n"
+            "// if any fetch fails, the old cached entry stays in place,\n"
+            "// so the next load still has a working copy of the site.\n"
+            "self.addEventListener('message', (e) => {\n"
+            "  if (e.data !== 'REFRESH_SHELL') return;\n"
+            "  e.waitUntil((async () => {\n"
+            "    const cache = await caches.open(CACHE);\n"
+            "    await Promise.all(SHELL.map(async (url) => {\n"
+            "      try {\n"
+            "        const r = await fetch(url, { cache: 'reload' });\n"
+            "        if (r.ok) await cache.put(url, r.clone());\n"
+            "      } catch (_err) { /* keep existing entry */ }\n"
+            "    }));\n"
+            "    try { e.source && e.source.postMessage('SHELL_REFRESHED'); } catch (_) {}\n"
+            "  })());\n"
+            "});\n"
+            "self.addEventListener('fetch', (e) => {\n"
+            "  const req = e.request;\n"
+            "  if (req.method !== 'GET') return;\n"
+            "  const url = new URL(req.url);\n"
+            "  if (url.origin !== self.location.origin) return;\n"
+            "  // Cache-first for the precache shell + anything same-origin;\n"
+            "  // falls back to network and caches the response on the way by.\n"
+            "  e.respondWith((async () => {\n"
+            "    const cached = await caches.match(req);\n"
+            "    if (cached) {\n"
+            "      // Refresh-in-background so next load gets latest without blocking.\n"
+            "      fetch(req).then(r => r.ok && caches.open(CACHE).then(c => c.put(req, r.clone())))\n"
+            "        .catch(() => {});\n"
+            "      return cached;\n"
+            "    }\n"
+            "    try {\n"
+            "      const net = await fetch(req);\n"
+            "      if (net.ok) {\n"
+            "        const copy = net.clone();\n"
+            "        caches.open(CACHE).then(c => c.put(req, copy));\n"
+            "      }\n"
+            "      return net;\n"
+            "    } catch (err) {\n"
+            "      // Last resort — return the cached shell for navigation requests.\n"
+            "      if (req.mode === 'navigate') {\n"
+            "        const shell = await caches.match('./index.html');\n"
+            "        if (shell) return shell;\n"
+            "      }\n"
+            "      throw err;\n"
+            "    }\n"
+            "  })());\n"
+            "});\n"
+        )
+        out = self.config.site_dir / "sw.js"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(sw, encoding="utf-8")
+        return out
+
     def build(self) -> Path:
         camps = self.load_camps()
+        # Sanity check: a near-empty fetch indicates something upstream
+        # failed (directory/API change, ToS revocation, parser bug) or
+        # we're testing with a fixture. Refusing to build preserves the
+        # last-good deployment — CI's `upload-pages-artifact` step
+        # never runs, the previous deploy stays live. Override with
+        # MIN_CAMPS=0 in env for intentional small/empty builds.
+        min_camps = int(os.environ.get("MIN_CAMPS", DEFAULT_MIN_CAMPS))
+        if len(camps) < min_camps:
+            raise RuntimeError(
+                f"refusing to build — only {len(camps)} camp(s) loaded, "
+                f"minimum is {min_camps}. This usually means the fetch "
+                f"or the upstream source is broken. Set MIN_CAMPS=0 to "
+                f"bypass, but do NOT set it in CI unless you want a "
+                f"degraded build to overwrite the live site."
+            )
         meta = self.load_meta()
         data_script, mode = self._data_script(camps)
         bundle_js = self._read_bundle()
@@ -214,27 +356,37 @@ class SiteBuilder:
         if "</script>" in bundle_js.lower():
             raise RuntimeError("bundle contains a literal </script>; refusing to embed")
 
+        # load_camps() already populated _effective_start. The client
+        # derives calendar columns from burn_start + burn_end directly,
+        # so no separate week-map tag is needed.
         html = (
             self._read_template()
             .replace("__DATA_SCRIPT__",   data_script)
             .replace("__BUNDLE__",        bundle_js)
             .replace("__CONTACT_EMAIL__", self.config.contact_email)
             .replace("__VERSION__",       meta.get("version", "v0.0.0"))
-            .replace("__SCRAPED_DATE__",  meta.get("scraped_date", "unknown"))
-            .replace("__SCRAPED_AT__",    meta.get("scraped_at", "unknown"))
+            .replace("__FETCHED_DATE__",  meta.get("fetched_date", "unknown"))
+            .replace("__FETCHED_AT__",    meta.get("fetched_at", "unknown"))
+            .replace("__BURN_START__",    self._effective_start)
+            .replace("__BURN_END__",      self.config.burn_end)
         )
 
         self.config.site_html.parent.mkdir(parents=True, exist_ok=True)
         self.config.site_html.write_text(html, encoding="utf-8")
+
+        # Service worker so the site is usable offline after first load.
+        # Version stamp pins a cache key — rebuilds evict old caches.
+        sw_path = self._write_service_worker(meta.get("version", "v0.0.0"))
 
         total_events = sum(len(c.events) for c in camps)
         with_web = sum(1 for c in camps if c.website)
         tagged = sum(1 for c in camps if c.tags)
         size_kb = self.config.site_html.stat().st_size / 1024
         print(f"wrote {self.config.site_html}")
+        print(f"wrote {sw_path}")
         print(f"  mode: {mode}")
         print(f"  contact: {self.config.contact_email}")
-        print(f"  version: {meta.get('version', '?')} ({meta.get('scraped_date', '?')})")
+        print(f"  version: {meta.get('version', '?')} ({meta.get('fetched_date', '?')})")
         print(f"  {len(camps)} camps · {with_web} with website · "
               f"{total_events} events · {tagged} tagged")
         print(f"  {size_kb:.1f} KB")

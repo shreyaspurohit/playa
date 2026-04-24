@@ -32,6 +32,20 @@ class Config:
     pages: int = 30
     parallel: int = 5
 
+    # Burn week window (ISO YYYY-MM-DD).
+    #  * burn_end is authoritative — fixed end of the calendar, from
+    #    the ticketing page (2026: Mon Sep 7).
+    #  * burn_start is a fallback. In practice the builder overrides it
+    #    with the EARLIEST fetched event date (volunteers + early crews
+    #    run events before gates) via timeparser.effective_burn_start.
+    #    The configured value is only used when the corpus has no
+    #    dated events yet, or when fetched dates are out of phase with
+    #    this year's calendar.
+    # Override via BURN_START / BURN_END env vars at build time, or
+    # refresh the defaults annually via the /update-map skill.
+    burn_start: str = "2026-08-30"
+    burn_end:   str = "2026-09-07"
+
     # HTTP client settings.
     base_url: str = "https://directory.burningman.org"
     user_agent: str = _DEFAULT_UA
@@ -89,4 +103,6 @@ class Config:
             pbkdf2_iter=int(os.environ.get("PBKDF2_ITER", "200000")),
             pages=int(os.environ.get("PAGES", "30")),
             parallel=int(os.environ.get("PARALLEL", "5")),
+            burn_start=os.environ.get("BURN_START", "2026-08-30").strip(),
+            burn_end=os.environ.get("BURN_END", "2026-09-07").strip(),
         )

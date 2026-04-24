@@ -1,11 +1,11 @@
 // Bottom-of-page attribution + disclaimer + takedown link.
 
 interface Props {
-  scrapedDate: string;
+  fetchedDate: string;
   contactEmail: string;
 }
 
-export function Footer({ scrapedDate, contactEmail }: Props) {
+export function Footer({ fetchedDate, contactEmail }: Props) {
   const takedown =
     `mailto:${contactEmail}` +
     '?subject=%5BBM%20Camps%5D%20Takedown%20request' +
@@ -24,7 +24,7 @@ export function Footer({ scrapedDate, contactEmail }: Props) {
           property of their respective camps and the directory operators.
         </p>
         <p>
-          Data is scraped nightly from the public directory and shown here
+          Data is fetched nightly from the public directory and shown here
           for personal browsing only. For the canonical, up-to-date listing,
           please use{' '}
           <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
@@ -39,8 +39,8 @@ export function Footer({ scrapedDate, contactEmail }: Props) {
           the next build.
         </p>
         <p style={{ opacity: 0.7 }}>
-          No affiliation with Black Rock City, LLC or the Burning Man
-          Project. Updated {scrapedDate}.
+          This app is not affiliated, endorsed, or verified by Burning Man
+          Project. Updated {fetchedDate}.
         </p>
       </div>
     </footer>

@@ -5,12 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="googlebot" content="noindex, nofollow, noarchive">
-<!-- Scrape metadata — consumed by the Preact client at startup. -->
+<!-- PWA / mobile install. `manifest.webmanifest` + `icon.svg` live
+     next to index.html; both are in the service-worker SHELL precache
+     so "Add to Home Screen" + offline launch both work after one
+     successful load. theme-color drives the Chrome/Edge address-bar
+     tint; apple-touch-icon + apple-mobile-web-app-* power iOS. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#c2410c">
+<link rel="apple-touch-icon" href="./icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Playa Camps">
+<!-- Fetch metadata — consumed by the Preact client at startup. -->
 <meta name="bm-version" content="__VERSION__">
-<meta name="bm-scraped-date" content="__SCRAPED_DATE__">
-<meta name="bm-scraped-at" content="__SCRAPED_AT__">
+<meta name="bm-fetched-date" content="__FETCHED_DATE__">
+<meta name="bm-fetched-at" content="__FETCHED_AT__">
 <meta name="bm-contact-email" content="__CONTACT_EMAIL__">
-<title>Burning Man Camps</title>
+<!-- Effective burn-week window. `bm-burn-start` is the earliest
+     fetched event date (so volunteer-week shows on the calendar);
+     `bm-burn-end` is Config.burn_end. ScheduleView walks this window
+     to build one column per day in chronological order. -->
+<meta name="bm-burn-start" content="__BURN_START__">
+<meta name="bm-burn-end" content="__BURN_END__">
+<title>Playa Camps</title>
 <style>
   /* Themes are sorted brightest -> darkest. Pick via data-theme on <html>. */
   :root,
@@ -102,8 +119,20 @@
     backdrop-filter: blur(6px);
   }
   header { padding: 0; border-bottom: 0; background: transparent; }
-  header .topline { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  header h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header .topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header .titleblock { display: flex; flex-direction: column; gap: 2px; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  /* Under the h1: plain subtitle, no pill chrome — nothing else up
+     there carries a background, so the rounded-chip silhouette read
+     as out of place. Keep the tooltip (fetched-at) via the existing
+     `title` attr — the smaller text is enough of a read signal. */
+  header .titleblock .version {
+    font-size: 10px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+  }
   header .stats { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
   .controls { display: flex; gap: 8px; align-items: center; }
   .controls + .controls { margin-top: 8px; }
@@ -131,6 +160,101 @@
     background: var(--card); white-space: nowrap; text-decoration: none;
   }
   header .report-link:hover { color: var(--accent); border-color: var(--accent); }
+  /* === PWA install + status pills ==================================== */
+  /* Share the version-pill shape but fill with accent color so the
+     install CTA reads as actionable. Sits inline with the other
+     header pills; wraps to a new line on narrow viewports via the
+     parent's flex-wrap. */
+  .install-btn {
+    display: inline-flex; align-items: center;
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 999px;
+    padding: 3px 12px; font-size: 12px; font-weight: 500;
+    cursor: pointer; white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .install-btn:hover { background: var(--accent); color: #fff; }
+  /* Muted pill for "Installed" / "Offline-ready" — same silhouette as
+     .version so the group reads as a coherent status row. */
+  .install-pill {
+    display: inline-flex; align-items: center;
+    color: var(--muted); background: var(--card);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 3px 10px; font-size: 11px;
+    white-space: nowrap;
+  }
+  .install-pill.installed { color: var(--accent); border-color: var(--accent); }
+  .install-pill.offline { color: var(--muted); }
+  /* Nickname pill — sits far-left in the header-right group. Shows the
+     user's own sharing handle with a hash-derived background tint so
+     they see the same color friends will see on their chips. Empty
+     state uses a dashed-border CTA look. */
+  .nickname-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px 3px 12px;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text); font-size: 12px; font-weight: 500;
+    cursor: pointer; white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  }
+  .nickname-pill:hover { border-color: var(--accent); }
+  /* Empty state is a CTA — users won't see any other visible hint
+     that they need a nickname before sharing, so make it pop. Solid
+     accent fill + soft glow + gentle breathe animation. */
+  .nickname-pill.empty {
+    background: var(--accent); color: #fff;
+    border-color: var(--accent); font-weight: 600;
+    box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.22);
+    animation: nickname-breathe 2.4s ease-in-out infinite;
+  }
+  .nickname-pill.empty:hover {
+    filter: brightness(1.08); transform: scale(1.03);
+    animation-play-state: paused;
+  }
+  .nickname-pill.empty .nickname-pill-edit { display: none; }
+  @keyframes nickname-breathe {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.22); }
+    50%      { box-shadow: 0 0 0 6px rgba(194, 65, 12, 0.12); }
+  }
+  .nickname-pill-edit {
+    font-size: 10px; color: var(--muted); opacity: 0.7;
+  }
+  .nickname-pill:hover .nickname-pill-edit { opacity: 1; color: var(--accent); }
+  .nickname-card { max-width: 420px; }
+  .nickname-actions {
+    display: flex; gap: 8px; margin-top: 12px;
+  }
+  /* Lightweight refresh button next to the offline pill — subtle at
+     rest, accent on hover. Matches install-pill silhouette (circle)
+     but smaller + icon-only so it reads as "action" not "status". */
+  .refresh-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; padding: 0;
+    background: var(--card); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .refresh-btn:hover,
+  .refresh-btn:focus-visible {
+    color: var(--accent); border-color: var(--accent);
+    background: var(--accent-soft); outline: none;
+  }
+  .refresh-btn:disabled {
+    cursor: not-allowed;
+    animation: refresh-spin 1s linear infinite;
+  }
+  .refresh-btn.offline { color: var(--muted); border-style: dashed; }
+  @keyframes refresh-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .refresh-icon { flex: 0 0 auto; }
+  .install-modal-card { max-width: 460px; }
+  .install-steps { margin: 6px 0 10px 18px; padding: 0; line-height: 1.6; }
+  .install-steps li { margin-bottom: 4px; }
   .tagcloud { padding: 10px 24px 14px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px; background: var(--bg); max-height: 140px; overflow-y: auto; transition: max-height 0.2s; }
   .tagcloud.expanded { max-height: 400px; }
   .tag {
@@ -147,7 +271,10 @@
   .camp {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
     padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
   }
+  /* Brief highlight when arriving here via "open camp card" nav */
+  .camp.camp-flash { box-shadow: 0 0 0 3px var(--accent); border-color: var(--accent); }
   .camp .camp-head {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 8px;
@@ -235,20 +362,36 @@
   mark { background: var(--mark-bg); color: var(--mark-text); padding: 0 1px; border-radius: 2px; }
   .camp .meta .canonical { color: var(--muted); }
   .camp .meta .canonical:hover { color: var(--accent); }
-  /* "About & disclaimer" button in the header */
+  /* "About & disclaimer" button in the header. Visually prominent at
+     rest so users notice it without needing the first-visit pulse:
+     accent border + soft ambient glow + accent text. The `.pulse`
+     class still fires 3 emphatic rings on the first two visits
+     (infoPulse counter in App.tsx) on top of the ambient glow. */
   .info-btn {
-    width: 28px; height: 28px; padding: 0;
-    border: 1px solid var(--border); background: var(--card); color: var(--text);
-    border-radius: 999px; cursor: pointer; font-size: 15px; font-weight: 600;
+    width: 30px; height: 30px; padding: 0;
+    border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+    border-radius: 999px; cursor: pointer; font-size: 16px; font-weight: 700;
     line-height: 1; display: inline-flex; align-items: center; justify-content: center;
     font-family: Georgia, "Times New Roman", serif; font-style: italic;
+    /* Ambient glow uses rgba of the standard accent (#c2410c) so it
+       renders consistently across themes without needing a per-theme
+       variable. Alpha kept low to avoid hotspotting. */
+    box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.18);
+    transition: box-shadow 0.2s, background 0.2s, transform 0.1s;
+    -webkit-tap-highlight-color: transparent;
   }
-  .info-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .info-btn:hover,
+  .info-btn:focus-visible {
+    background: var(--accent); color: #fff;
+    box-shadow: 0 0 0 4px rgba(194, 65, 12, 0.35);
+    outline: none;
+    transform: scale(1.05);
+  }
   .info-btn.pulse { animation: info-pulse 1.4s ease-out 3; }
   @keyframes info-pulse {
     0%   { box-shadow: 0 0 0 0 var(--accent); }
-    60%  { box-shadow: 0 0 0 10px transparent; }
-    100% { box-shadow: 0 0 0 0 transparent; }
+    60%  { box-shadow: 0 0 0 12px transparent; }
+    100% { box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.18); }
   }
   /* Modal (shared — info-modal, could host others later) */
   .modal {
@@ -270,6 +413,49 @@
     position: sticky; top: 0; background: var(--card);
   }
   .modal-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  /* Tabbed info modal — the About panel is long-form disclaimer +
+     actions, the Guide panel is a 5-section how-to. Tabs live in
+     the modal chrome (above the body) so scroll state resets when
+     the user switches. */
+  .info-tabs {
+    display: flex; gap: 4px;
+    padding: 0 16px; margin-top: -1px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 50px;  /* below .modal-head */
+    background: var(--card);
+    z-index: 1;
+  }
+  .info-tab {
+    padding: 8px 14px; font-size: 13px; font-weight: 500;
+    background: transparent; color: var(--muted);
+    border: 1px solid transparent; border-bottom: 0;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    position: relative; bottom: -1px;
+  }
+  .info-tab:hover { color: var(--text); }
+  .info-tab.active {
+    color: var(--accent); background: var(--bg);
+    border-color: var(--border);
+  }
+  /* Guide-tab styling — compact section list with subtle numbered
+     headings so the 5 sections scan quickly. */
+  .guide-intro { font-size: 13px; color: var(--muted); margin: 4px 0 14px; }
+  .guide-section { margin-bottom: 14px; }
+  .guide-section h3 {
+    margin: 0 0 4px;
+    font-size: 13px; font-weight: 600; color: var(--accent);
+  }
+  .guide-section p {
+    margin: 4px 0; font-size: 13px; line-height: 1.55;
+  }
+  .guide-list {
+    margin: 4px 0 6px; padding-left: 18px;
+    font-size: 13px; line-height: 1.55;
+  }
+  .guide-list li { margin: 2px 0; }
+  .guide-subtle { color: var(--muted); font-size: 12px !important; }
   .modal-close {
     width: 30px; height: 30px; padding: 0; border: 0;
     background: transparent; color: var(--muted); cursor: pointer;
@@ -290,6 +476,45 @@
     cursor: pointer; font-size: 12px; margin-left: 4px; white-space: nowrap;
   }
   .modal-body .danger-btn:hover { border-color: #c2410c; color: #c2410c; }
+  /* Dedicated "Actions" section at the foot of the modal. Buttons
+     here are big targets with a two-line label so the consequence is
+     visible before the user clicks. Horizontal-rule heading separates
+     them from the prose above. */
+  .modal-body .modal-section {
+    margin: 18px 0 8px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .modal-body .modal-actions {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .modal-body .action-btn {
+    display: flex; flex-direction: column; align-items: flex-start;
+    gap: 3px;
+    padding: 10px 14px; border-radius: 8px;
+    background: var(--chip-bg); border: 1px solid var(--border);
+    color: var(--text); cursor: pointer; text-align: left;
+    font: inherit; width: 100%;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .modal-body .action-btn:hover {
+    border-color: var(--accent); background: var(--accent-soft);
+  }
+  .modal-body .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .modal-body .action-btn .action-label {
+    font-size: 14px; font-weight: 600;
+  }
+  .modal-body .action-btn .action-desc {
+    font-size: 12px; color: var(--muted); line-height: 1.4;
+  }
+  /* Destructive variant — red accent on hover, matches the existing
+     #c2410c used for .fav-clear:hover and the gate-card .err color. */
+  .modal-body .action-btn.danger:hover {
+    border-color: #c2410c; background: transparent;
+  }
+  .modal-body .action-btn.danger:hover .action-label { color: #c2410c; }
   footer.site-footer {
     padding: 24px 24px 40px; margin-top: 8px; border-top: 1px solid var(--border);
     color: var(--muted); font-size: 12px; line-height: 1.55;
@@ -327,11 +552,625 @@
   .gate-card .err { color: #c2410c; font-size: 12px; margin-top: 10px; min-height: 1em; }
   .gate-hidden { display: none !important; }
   .main-hidden > header, .main-hidden > #tagcloud, .main-hidden > main, .main-hidden > footer.site-footer { visibility: hidden; }
+  /* === Tabs (Camps | Schedule | Map) ================================= */
+  .tabs { display: flex; gap: 4px; margin: 10px 0 0; padding: 0; border-bottom: 1px solid var(--border); }
+  .tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; font-size: 14px; font-weight: 500;
+    background: transparent; color: var(--muted);
+    border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0;
+    cursor: pointer; position: relative; bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); background: var(--card); border-color: var(--border); }
+  .tab-icon { font-size: 16px; line-height: 1; }
+  .tab-badge {
+    background: var(--accent); color: #fff; font-size: 11px; font-weight: 600;
+    padding: 1px 6px; border-radius: 999px; margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* === Import banner ================================================== */
+  .import-banner {
+    margin: 10px 0 0; padding: 12px 14px;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .import-banner-body { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .import-banner-body p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+  .import-conflict { margin-top: 6px !important; }
+  .import-rename { width: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .import-rename label { font-size: 13px; color: var(--text); }
+  .import-banner-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .primary-btn {
+    padding: 8px 14px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 500;
+  }
+  .primary-btn:hover { filter: brightness(1.05); }
+  .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .subtle-btn {
+    padding: 8px 12px; border: 1px solid var(--border); background: var(--card);
+    color: var(--text); border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .subtle-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* === Share button + modal =========================================== */
+  .share-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border: 1px solid var(--border);
+    background: var(--chip-bg); color: var(--text);
+    border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .share-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .share-icon { flex: 0 0 auto; }
+  .share-input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 15px; background: var(--bg); color: var(--text);
+    margin-top: 4px;
+  }
+  .share-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .share-url {
+    width: 100%; padding: 8px 10px; font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); resize: vertical; word-break: break-all;
+  }
+
+  /* === "Faved by" chips + nav link ==================================== */
+  .fav-by { font-size: 11px; color: var(--muted); margin-top: -2px; }
+  .fav-by-chip {
+    display: inline-block; padding: 1px 7px; margin: 0 2px;
+    background: var(--chip-bg); border-radius: 999px; font-size: 11px; color: var(--text);
+  }
+  .fav-by-chip.mine { background: #f59e0b; color: #1a1a1a; }
+  .ev-friends { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px; }
+  .nav-link {
+    font-size: 12px; color: var(--accent); background: transparent; border: 0;
+    padding: 0; cursor: pointer; text-decoration: none;
+  }
+  .nav-link:hover { text-decoration: underline; }
+  /* "Set as my camp" toggle — uses the teal --my-camp palette so the
+     button color matches the pin that appears on the map. Separate
+     from --accent (stars / general CTA) and --meet (rendezvous). */
+  .my-camp-btn {
+    font-size: 11px; font-weight: 600;
+    background: var(--my-camp-soft); color: var(--my-camp);
+    border: 1px solid var(--my-camp);
+    border-radius: 999px; padding: 2px 10px; cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s, background 0.15s, filter 0.15s;
+  }
+  .my-camp-btn:hover {
+    background: var(--my-camp); color: #fff;
+  }
+  .my-camp-btn.active {
+    color: #fff; background: var(--my-camp); border-color: var(--my-camp);
+  }
+  .my-camp-btn.active:hover { filter: brightness(1.08); }
+
+  /* === Schedule view ================================================== */
+  .schedule-wrap { padding: 16px 24px 64px; }
+  .schedule-notice {
+    padding: 10px 14px; margin-bottom: 14px;
+    background: var(--accent-soft); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 13px; color: var(--text); line-height: 1.5;
+  }
+  /* Filter toggle row above the schedule notice. "Now" + "Near me"
+     are independent toggles that AND together. Keep the pills visually
+     linked (same silhouette) but use different accent colors so they
+     read as distinct states. */
+  .schedule-filters {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 8px;
+  }
+  .sched-filter-btn {
+    padding: 6px 12px; font-size: 13px; font-weight: 500;
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    cursor: pointer; white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  .sched-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .sched-filter-btn.active {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .sched-filter-btn.near.active {
+    background: var(--my-camp); border-color: var(--my-camp);
+  }
+  .sched-filter-clear {
+    padding: 4px 10px; font-size: 12px;
+  }
+  .sched-filter-hint {
+    font-size: 11px; color: var(--muted); font-style: italic;
+    padding: 2px 6px;
+  }
+  .sched-filter-hint.err { color: #c2410c; }
+  .schedule-grid {
+    display: grid; grid-template-columns: repeat(7, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .schedule-accordion { display: none; }
+  .sched-day {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 10px 14px;
+  }
+  .sched-day-head {
+    margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.03em;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sched-day-count {
+    background: var(--chip-bg); color: var(--text); font-size: 11px;
+    padding: 1px 7px; border-radius: 999px; font-variant-numeric: tabular-nums;
+  }
+  .sched-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  .sched-row { border-left: 2px solid var(--accent-soft); padding: 4px 0 4px 8px; }
+  .sched-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 500; }
+  .sched-dash { opacity: 0.5; padding: 0 2px; }
+  .sched-evname { font-weight: 600; font-size: 13px; color: var(--text); text-decoration: none; display: inline-block; margin-top: 2px; }
+  .sched-evname:hover { color: var(--accent); }
+  .sched-meta { font-size: 12px; color: var(--muted); }
+  .sched-meta a { color: var(--accent); text-decoration: none; }
+  .sched-campname {
+    background: transparent; border: 0; padding: 0; margin: 0;
+    color: var(--accent); cursor: pointer; font: inherit;
+    text-decoration: none;
+  }
+  .sched-campname:hover { text-decoration: underline; }
+  .sched-desc { margin: 3px 0 0; font-size: 12px; color: var(--text); }
+  .sched-chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+  .sched-chip {
+    font-size: 10px; font-weight: 500;
+    padding: 1px 5px; border-radius: 999px;
+  }
+  /* "You" chip — star-gold, same as the fav star button. */
+  .sched-chip.mine { background: #f59e0b; color: #1a1a1a; }
+  /* Friend chip — inline style (from friendChipStyle()) overrides
+     background/boxShadow with a hue derived from the nickname. */
+  .sched-chip.friend { background: var(--chip-bg); color: var(--text); }
+  /* Per-day hide: small × / ↩ button tucked on the right of the event
+     name. The row itself fades out when rendered in the "hidden"
+     disclosure so the restore action reads as "bring this back". */
+  .sched-row-head {
+    display: flex; align-items: flex-start; gap: 6px;
+    justify-content: space-between;
+  }
+  .sched-hide-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; padding: 2px 4px; line-height: 1;
+    cursor: pointer; color: var(--muted);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sched-hide-btn:hover { color: var(--accent); }
+  .eye-icon { flex: 0 0 auto; display: inline-block; vertical-align: middle; }
+  /* Wrapper around an inline <EyeIcon /> inside the notice copy so it
+     sits next to text without changing baseline. The padding nudges
+     it into line with the glyph x-height. */
+  .schedule-notice-icon {
+    display: inline-flex; vertical-align: text-bottom;
+    padding: 0 1px; color: var(--accent);
+  }
+  /* Inline star glyph in the schedule notice. Matches the star used
+     on the fav buttons (☆ when not yet starred) — gold fill so the
+     affordance reads the same way in the copy as on actual buttons. */
+  .schedule-notice-star {
+    color: #f59e0b; font-weight: 600; font-size: 14px;
+    padding: 0 1px;
+  }
+  .sched-row.hidden { opacity: 0.55; }
+  .sched-hidden {
+    margin-top: 10px; padding-top: 6px;
+    border-top: 1px dashed var(--border);
+  }
+  .sched-hidden > summary {
+    font-size: 11px; color: var(--muted);
+    cursor: pointer; list-style: none;
+    padding: 2px 0;
+  }
+  .sched-hidden > summary:hover { color: var(--text); }
+  .schedule-hidden-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px; margin-bottom: 12px;
+    background: var(--chip-bg); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 12px; color: var(--muted);
+  }
+  .sched-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+  .sched-unscheduled {
+    margin-top: 20px; padding: 12px; background: var(--card);
+    border: 1px dashed var(--border); border-radius: 10px;
+  }
+
+  /* === Map view ======================================================= */
+  .map-wrap { padding: 16px 24px 64px; }
+  .map-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .map-title { margin: 0; font-size: 18px; font-weight: 600; }
+  .map-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+  .map-sub code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--chip-bg); padding: 1px 4px; border-radius: 3px; }
+  .map-actions { display: flex; align-items: center; gap: 8px; }
+  .map-gps { font-size: 12px; color: var(--muted); }
+  .map-gps-err { font-size: 12px; color: #c2410c; }
+  .brc-svg {
+    /* Aspect ratio mirrors the SVG viewBox (12000 × 9300). The SVG is
+       cropped vertically because the city only occupies the lower
+       half of the clock face — no point reserving a square box for
+       empty deep-playa above. */
+    width: 100%; max-width: 900px; aspect-ratio: 12 / 9.3; display: block;
+    margin: 0 auto; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 12px;
+  }
+  .brc-playa { fill: var(--chip-bg); opacity: 0.4; }
+  /* Base grid — thicker + more opaque than before so the clock ×
+     letter mesh reads as a coordinate grid instead of decoration. */
+  .brc-street { stroke: var(--muted); stroke-width: 22; opacity: 0.75; fill: none; }
+  .brc-street.esplanade { stroke-width: 32; opacity: 0.95; }
+  .brc-street.radial { stroke-width: 16; opacity: 0.55; }
+  .brc-street.axis { stroke: var(--accent); stroke-width: 10; opacity: 0.35; stroke-dasharray: 40 40; }
+  /* Intersection highlight — fires when a camp is selected so the
+     user can trace the address back to the grid. Purely decorative:
+     pointer-events off so the halo doesn't steal clicks meant for
+     the pin underneath or the SVG background. */
+  .brc-highlight { pointer-events: none; }
+  .brc-highlight-radial {
+    stroke: var(--accent); stroke-width: 22;
+    opacity: 0.85; stroke-linecap: round;
+  }
+  .brc-highlight-ring {
+    stroke: var(--accent); stroke-width: 28;
+    opacity: 0.85; fill: none; stroke-linecap: round;
+  }
+  .brc-highlight-halo {
+    fill: var(--accent); opacity: 0.22;
+    animation: brc-halo-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes brc-halo-pulse {
+    0%, 100% { opacity: 0.18; }
+    50%      { opacity: 0.38; }
+  }
+  .brc-man { fill: var(--accent); stroke: var(--text); stroke-width: 8; }
+  .brc-label { font-size: 180px; fill: var(--muted); font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+  .brc-label.man-label { fill: var(--accent); font-weight: 600; font-size: 230px; }
+  /* Selected-camp address readout — prominent, above the Man label.
+     `paint-order: stroke` with a --bg stroke gives a "knockout"
+     outline so the label reads cleanly over any grid lines that
+     happen to sit behind it. */
+  .brc-label.brc-address-label {
+    fill: var(--accent); font-size: 340px; font-weight: 700;
+    paint-order: stroke;
+    stroke: var(--bg); stroke-width: 70;
+    stroke-linejoin: round; stroke-linecap: round;
+    letter-spacing: -4px;
+  }
+  /* Street-letter labels sit just outside each arc at the 10:00
+     radial, so they always overlap one grid line. A --bg stroke
+     knocks the line out behind each letter for legibility. */
+  .brc-label.street-label {
+    font-size: 140px; font-weight: 600;
+    paint-order: stroke;
+    stroke: var(--bg); stroke-width: 50;
+    stroke-linejoin: round;
+  }
+  .brc-label.hour-label { font-size: 180px; font-weight: 600; }
+  .brc-pin { cursor: pointer; }
+  .brc-pin-outer { fill: #f59e0b; opacity: 0.35; }
+  .brc-pin-inner { fill: #f59e0b; stroke: #1a1a1a; stroke-width: 8; }
+  .brc-pin.friend .brc-pin-outer { fill: var(--accent); opacity: 0.25; }
+  .brc-pin.friend .brc-pin-inner { fill: var(--accent); }
+  .brc-pin.active .brc-pin-outer { opacity: 0.7; r: 130; }
+  .brc-pin.active .brc-pin-inner { stroke-width: 14; }
+  .brc-bearing { stroke: var(--accent); stroke-width: 14; stroke-dasharray: 60 40; opacity: 0.9; }
+  .brc-user-halo { fill: #3b82f6; opacity: 0.25; }
+  .brc-user-dot { fill: #3b82f6; stroke: #fff; stroke-width: 10; }
+
+  .map-list { margin-top: 14px; }
+  .map-list h4 { margin: 0 0 8px; font-size: 14px; }
+  .map-list ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+  .map-pin-row {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 8px;
+    padding: 8px 10px; cursor: pointer; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--border);
+    align-items: center;
+  }
+  .map-pin-row:hover { border-color: var(--accent); }
+  .map-pin-row.active { background: var(--accent-soft); border-color: var(--accent); }
+  .map-pin-dot { font-size: 14px; color: var(--accent); }
+  .map-pin-dot.mine { color: #f59e0b; }
+  .map-pin-name { font-size: 13px; font-weight: 500; }
+  .map-pin-addr { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .map-target-box {
+    padding: 10px 14px; margin-bottom: 10px;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: 8px;
+  }
+  .map-target-name { font-size: 14px; font-weight: 600; }
+  .map-target-addr { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .map-target-nav { font-size: 13px; margin-top: 6px; }
+  .map-target-eta {
+    font-size: 12px; color: var(--muted); margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .map-target-events { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .map-target-events-head { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .map-target-events ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+  .map-target-events li { font-size: 12px; line-height: 1.5; }
+  .map-target-events a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .map-target-events a:hover { text-decoration: underline; }
+  .map-ev-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .map-target-links { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .map-ext-link { font-size: 13px; color: var(--accent); text-decoration: none; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 6px; }
+  .map-ext-link:hover { background: var(--accent); color: #fff; }
+  /* === Rendezvous layer palette =====================================
+     Three purpose-specific colors so the map reads at a glance:
+       --accent   (orange)  — favorites / starred / general CTA
+       --my-camp  (teal)    — "this is where I sleep"
+       --meet     (violet)  — "this is where I plan to be"
+     Each has a -soft pair (light tint) and each theme overrides to
+     keep contrast readable on dark backgrounds. */
+  :root {
+    --my-camp: #0d9488;         /* teal-600 */
+    --my-camp-soft: #ccfbf1;    /* teal-50 */
+    --meet: #7c3aed;
+    --meet-soft: #ede9fe;
+  }
+  :root[data-theme="dusk"],
+  :root[data-theme="night"],
+  :root[data-theme="eclipse"] {
+    --my-camp: #2dd4bf;         /* teal-400 — bright on dark */
+    --my-camp-soft: #134e4a;    /* teal-900 */
+    --meet: #a78bfa;
+    --meet-soft: #2d1b57;
+  }
+  /* Panel above the map that surfaces the rendezvous features — was
+     buried under the SVG before, now the first thing a user sees on
+     the Map tab. */
+  .map-rendezvous-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px 12px;
+    margin-bottom: 14px;
+  }
+  .map-rendezvous-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px;
+  }
+  .map-rendezvous-head h4 { margin: 6px 0 6px; font-size: 14px; }
+  .map-add-spot {
+    padding: 4px 10px; font-size: 12px;
+  }
+  .map-rendezvous-hint {
+    font-size: 12px; color: var(--muted); margin: 4px 0;
+    font-style: italic;
+  }
+  .map-my-camp-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; background: var(--my-camp-soft);
+    border: 1px solid var(--my-camp); border-radius: 8px;
+    font-size: 13px; margin-bottom: 6px;
+    cursor: pointer;
+    transition: filter 0.12s;
+  }
+  .map-my-camp-row:hover { filter: brightness(1.03); }
+  .map-my-camp-row.active {
+    box-shadow: 0 0 0 2px var(--my-camp);
+  }
+  .map-my-camp-icon { font-size: 18px; }
+  .map-my-camp-name { font-weight: 600; color: var(--my-camp); }
+  .map-meet-list { list-style: none; padding: 0; margin: 0; }
+  .map-meet-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 6px 8px; border-bottom: 1px dashed var(--border);
+    font-size: 12px;
+  }
+  .map-meet-row.clickable { cursor: pointer; border-radius: 6px; }
+  .map-meet-row.clickable:hover { background: var(--meet-soft); }
+  .map-meet-row.clickable.active {
+    background: var(--meet-soft);
+    box-shadow: inset 0 0 0 2px var(--meet);
+  }
+  .map-meet-row:last-child { border-bottom: 0; }
+  .map-meet-diamond {
+    flex: 0 0 auto; font-size: 14px; line-height: 1.4;
+    color: var(--meet);
+  }
+  .map-meet-diamond.mine { color: var(--meet); }
+  .map-meet-body { flex: 1; min-width: 0; }
+  .map-meet-label { font-weight: 500; color: var(--text); }
+  /* Dedicated delete button for meet-spot rows. Reuses the same
+     icon-only layout as sched-hide-btn but flips to a red hover so
+     it reads as destructive instead of "dismiss this" (which the
+     plain ✕ used to look like). */
+  .meet-delete-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0;
+    padding: 6px; line-height: 1;
+    cursor: pointer; color: var(--muted);
+    border-radius: 6px;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.15s, background 0.15s;
+  }
+  .meet-delete-btn:hover,
+  .meet-delete-btn:focus-visible {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.08);
+    outline: none;
+  }
+  .trash-icon { display: block; flex: 0 0 auto; }
+  /* Spot-selected target box uses the same shape as the camp one but
+     violet-accented so it reads as a different kind of selection. */
+  .map-target-box.spot {
+    border-color: var(--meet);
+    background: var(--meet-soft);
+  }
+  /* === Rendezvous SVG markers on the map itself ==================== */
+  /* My camp — teal tent, noticeably larger than the star-gold camp
+     pins so it reads as "this is MY home" at a glance. Path size +
+     halo radius bump handled inline via the updated `d=` + `r=`. */
+  .brc-my-camp { cursor: pointer; }
+  .brc-my-camp-halo { fill: var(--my-camp); opacity: 0.22; }
+  .brc-my-camp-body {
+    fill: var(--my-camp); stroke: #fff; stroke-width: 8;
+    stroke-linejoin: round;
+  }
+  .brc-friend-camp { cursor: pointer; }
+  .brc-friend-camp-halo {
+    fill: hsl(var(--friend-hue, 20), 65%, 50%); opacity: 0.18;
+  }
+  .brc-friend-camp-body {
+    fill: hsl(var(--friend-hue, 20), 65%, 50%);
+    stroke: #fff; stroke-width: 5;
+    stroke-linejoin: round;
+  }
+  .brc-meet { cursor: pointer; }
+  .brc-meet .brc-meet-body {
+    fill: var(--meet); opacity: 0.88;
+    stroke: #fff; stroke-width: 8;
+  }
+  .brc-meet.friend .brc-meet-body {
+    fill: hsl(var(--friend-hue, 20), 65%, 50%); opacity: 0.88;
+    stroke: #fff; stroke-width: 7;
+  }
+  .brc-meet.active .brc-meet-body {
+    opacity: 1;
+    stroke-width: 14;
+  }
+  /* Points of interest — year-stable landmarks (Center Camp, Playa
+     Info). Intentionally BIG: these are the two most-pointed-at
+     places in BRC, so their pins should be unmissable orientation
+     anchors. Distinct color per kind + a thicker white stroke so
+     they pop against arcs and the starred-camp gold. */
+  .brc-poi-halo { fill: var(--muted); opacity: 0.22; }
+  .brc-poi-dot {
+    fill: var(--muted); stroke: #fff; stroke-width: 10;
+  }
+  .brc-poi-center-camp .brc-poi-halo { fill: #dc2626; opacity: 0.28; }
+  .brc-poi-center-camp .brc-poi-dot  { fill: #dc2626; }
+  .brc-poi-playa-info  .brc-poi-halo { fill: #0369a1; opacity: 0.28; }
+  .brc-poi-playa-info  .brc-poi-dot  { fill: #0369a1; }
+  /* Sidebar equivalent — small circle marker in the list row. */
+  .map-poi-dot {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 999px;
+    background: var(--muted);
+    margin-top: 4px;
+  }
+  .map-poi-center-camp { background: #dc2626; }
+  .map-poi-playa-info  { background: #0369a1; }
+  /* Violet variant of the address highlight — fires when a meet spot
+     is the selected item instead of a camp. */
+  .brc-highlight.spot .brc-highlight-radial,
+  .brc-highlight.spot .brc-highlight-ring {
+    stroke: var(--meet);
+  }
+  .brc-highlight.spot .brc-highlight-halo { fill: var(--meet); }
+  /* Small author/label above the big address text when a spot is
+     selected — gives context ("Coffee meetup · 9:00 & Esplanade"
+     reads as one unit). */
+  .brc-label.brc-address-title {
+    fill: var(--meet); font-size: 200px; font-weight: 600;
+    paint-order: stroke;
+    stroke: var(--bg); stroke-width: 50;
+    stroke-linejoin: round;
+  }
+  /* Share-modal manifest list (what's going in the link) */
+  .share-manifest {
+    list-style: none; padding: 0; margin: 10px 0;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .share-manifest li {
+    padding: 6px 10px; background: var(--chip-bg);
+    border-radius: 6px; font-size: 13px;
+  }
+  /* Meet-spot editor form */
+  .meet-spot-card { max-width: 460px; }
+  .meet-spot-form {
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .meet-spot-form label {
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .meet-spot-label { font-size: 13px; font-weight: 500; }
+  .meet-spot-hint {
+    color: var(--muted); font-weight: 400; font-size: 12px;
+  }
+  .meet-spot-err {
+    color: #c2410c; font-size: 12px; margin-top: 2px;
+  }
+  .meet-spot-ok {
+    color: var(--accent); font-size: 12px; margin-top: 2px;
+  }
+  .share-input.invalid { border-color: #c2410c; }
+  .meet-spot-actions {
+    display: flex; gap: 8px; margin-top: 6px;
+  }
+  /* "Legend" button on the map view. Deliberately different from the
+     header's round `i` info button — text pill instead of an icon
+     glyph — so two help affordances don't compete visually on the
+     same screen. Matches the version-pill silhouette used elsewhere
+     in the header. */
+  .map-legend-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px;
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--muted); border-radius: 999px;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .map-legend-btn:hover,
+  .map-legend-btn:focus-visible {
+    border-color: var(--accent); color: var(--accent);
+    outline: none;
+  }
+  /* `?` glyph inside the pill — sits in a small circle so it reads
+     as a help marker without competing with the header's `i` tile. */
+  .map-legend-q {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 999px;
+    background: var(--chip-bg); color: var(--text);
+    font-weight: 700; font-size: 11px; line-height: 1;
+  }
+  .map-legend-btn:hover .map-legend-q {
+    background: var(--accent); color: #fff;
+  }
+
+  @media (max-width: 800px) {
+    .schedule-grid { display: none; }
+    .schedule-accordion { display: block; }
+    .schedule-accordion details {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 8px 12px; margin-bottom: 8px;
+    }
+    .schedule-accordion summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 0; display: flex; justify-content: space-between; align-items: center; }
+    .schedule-accordion summary::-webkit-details-marker { display: none; }
+  }
+
   @media (max-width: 600px) {
     .site-chrome { padding: 14px 14px 10px; }
     .tagcloud { padding: 10px 14px; }
     main { padding: 12px 14px 48px; }
     footer.site-footer { padding: 20px 14px 32px; }
+    .schedule-wrap { padding: 12px 14px 48px; }
+    .map-wrap { padding: 12px 14px 48px; }
+    .tabs { gap: 2px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    /* Bumped from padding:8px to hit Apple's 44px minimum tap target. */
+    .tab { padding: 12px 14px; font-size: 14px; }
+  }
+
+  /* Touch devices (phones, touch laptops) — bump small controls to 40+px
+     so thumbs can reliably tap them. Separate from max-width: 600px
+     because some tablets + iPads have wider viewports but still lack a
+     mouse. Rules land after the 600px block so they cascade-win where
+     they overlap. */
+  @media (pointer: coarse) {
+    .theme-btn      { width: 40px; height: 40px; font-size: 18px; }
+    .info-btn       { width: 40px; height: 40px; font-size: 17px; }
+    .modal-close    { width: 44px; height: 44px; font-size: 20px; }
+    .ev-fav         { width: 36px; height: 36px; font-size: 18px; }
+    /* Expand the hide button's hit area without changing the visible
+       icon size — padding is the tap-target box, icon is 16px inside. */
+    .sched-hide-btn { padding: 10px; }
   }
 </style>
 <script>

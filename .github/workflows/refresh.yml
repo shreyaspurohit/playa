@@ -1,7 +1,7 @@
 name: Refresh camps directory
 
-# Repo is public; scraped camp data is NOT committed (see .gitignore).
-# Every run scrapes fresh on the ephemeral runner, builds the site, and
+# Repo is public; fetched camp data is NOT committed (see .gitignore).
+# Every run fetches fresh on the ephemeral runner, builds the site, and
 # deploys via actions/upload-pages-artifact — data never lands in git.
 
 on:
@@ -96,7 +96,7 @@ jobs:
         run: npm run build
         working-directory: client
 
-      - name: Scrape + build site
+      - name: Fetch + build site
         env:
           # Pulled from repo secrets. Blank → plaintext build with the
           # placeholder email. Set both before the first real deploy.

@@ -2,15 +2,17 @@
 // directory.burningman.org canonical page and has its own fav star.
 import type { Event } from '../types';
 import { highlight } from '../utils/highlight';
+import { friendChipStyle } from '../utils/friendColor';
 
 interface Props {
   event: Event;
   query: string;
   isFav: boolean;
+  friends: string[];          // friend nicknames who fav'd this event
   onToggleFav: (id: string) => void;
 }
 
-export function EventItem({ event, query, isFav, onToggleFav }: Props) {
+export function EventItem({ event, query, isFav, friends, onToggleFav }: Props) {
   const evUrl = `https://directory.burningman.org/events/${encodeURIComponent(event.id)}/`;
   const when = event.display_time || event.time || '';
   return (
@@ -38,6 +40,13 @@ export function EventItem({ event, query, isFav, onToggleFav }: Props) {
         </button>
       </div>
       {when && <span class="evtime">{when}</span>}
+      {friends.length > 0 && (
+        <div class="ev-friends">
+          {friends.map((n) => (
+            <span key={n} class="fav-by-chip" style={friendChipStyle(n)}>★ {n}</span>
+          ))}
+        </div>
+      )}
       {event.description && (
         <p class="evdesc">{highlight(event.description, query)}</p>
       )}

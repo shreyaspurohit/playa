@@ -1,14 +1,17 @@
-// Top of page: title, version pill, report bug link, info button,
-// theme switcher. Keyed to the version + scrape metadata the Python
-// builder injected as <meta name="bm-*"> tags.
+// Top of page: title, version pill, PWA install + offline-ready
+// indicators, report bug link, info button, theme switcher. Keyed
+// to the version + fetch metadata the Python builder injected as
+// <meta name="bm-*"> tags.
 import { THEMES } from '../hooks/useTheme';
+import { InstallPrompt } from './InstallPrompt';
+import { NicknamePill } from './NicknamePill';
 
 interface Props {
   total: number;
   matching: number;
   filterNote: string;
-  scrapedDate: string;
-  scrapedAt: string;
+  fetchedDate: string;
+  fetchedAt: string;
   version: string;
   currentTheme: string;
   onThemeChange: (name: string) => void;
@@ -17,20 +20,24 @@ interface Props {
 }
 
 export function Header({
-  total, matching, filterNote, scrapedDate, scrapedAt, version,
+  total, matching, filterNote, fetchedDate, fetchedAt, version,
   currentTheme, onThemeChange, onInfoClick, infoPulse,
 }: Props) {
   return (
     <header>
       <div class="topline">
-        <h1>Burning Man Camps</h1>
-        <div class="topline-right">
+        <div class="titleblock">
+          <h1>Playa Camps</h1>
           <span
             class="version"
-            title={`Directory last scraped ${scrapedAt} UTC`}
+            title={`Directory last fetched ${fetchedAt} UTC`}
           >
-            Updated {scrapedDate} · {version}
+            Updated {fetchedDate} · {version}
           </span>
+        </div>
+        <div class="topline-right">
+          <NicknamePill />
+          <InstallPrompt />
           <a
             class="report-link"
             href="https://github.com/shreyaspurohit/playa/issues"

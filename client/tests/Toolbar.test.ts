@@ -30,6 +30,7 @@ function mountToolbar(over: Partial<Parameters<typeof Toolbar>[0]> = {}) {
     favEventN: 0,
     onToggleFavFilter: () => {},
     onUnfavoriteAll: () => {},
+    onShare: () => {},
     focusKey: 0,
     ...over,
   };

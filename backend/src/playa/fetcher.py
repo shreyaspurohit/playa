@@ -1,4 +1,4 @@
-"""HTTP scraper — fetch a listing page + its detail pages.
+"""HTTP fetcher — pull a listing page + its detail pages.
 
 Network I/O lives here (and nowhere else). Retries + backoff built in;
 per-camp sleep keeps us polite. Caller handles parallelism (see `cli.py`).
@@ -17,7 +17,7 @@ from .models import Camp
 from .parsers import DetailParser, ListingParser
 
 
-class Scraper:
+class Fetcher:
     def __init__(self, config: Config):
         self.config = config
 
@@ -34,8 +34,8 @@ class Scraper:
                 time.sleep(self.config.fetch_backoff * (attempt + 1))
         raise RuntimeError(f"failed to fetch {url}: {last_err}")
 
-    def scrape_page(self, page: int) -> list[Camp]:
-        """Fetch listing page N + each camp's detail page, return Camp list.
+    def fetch_page(self, page: int) -> list[Camp]:
+        """Pull listing page N + each camp's detail page, return Camp list.
 
         Detail-fetch failures fall back to listing-page data so one bad
         camp doesn't abort the whole page.
@@ -77,9 +77,9 @@ class Scraper:
             time.sleep(self.config.per_camp_sleep)
         return camps
 
-    def scrape_page_to_file(self, page: int) -> Path:
-        """Scrape one page and write data/pages/page_NN.json. Returns path."""
-        camps = self.scrape_page(page)
+    def fetch_page_to_file(self, page: int) -> Path:
+        """Pull one page and write data/pages/page_NN.json. Returns path."""
+        camps = self.fetch_page(page)
         self.config.pages_dir.mkdir(parents=True, exist_ok=True)
         out = self.config.pages_dir / f"page_{page:02d}.json"
         out.write_text(json.dumps(

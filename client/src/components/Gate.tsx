@@ -58,7 +58,7 @@ export function Gate({ enc, onUnlock }: Props) {
   return (
     <div class="gate">
       <div class="gate-card">
-        <h2>Burning Man Camps — private</h2>
+        <h2>Playa Camps — private</h2>
         <p>
           This is a personal, non-commercial index of the public Playa Info
           directory, shared with friends. Enter the password you were given

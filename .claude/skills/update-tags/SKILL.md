@@ -1,6 +1,6 @@
 ---
 name: update-tags
-description: Audit current tag coverage against newly-scraped camps and propose additions to the TAGS taxonomy in playa/tagger.py. Use when a fresh scrape is in data/pages/ and the untagged rate or tag-per-camp count looks low, or when the user says "update the tags", "the new camps aren't being tagged", or "find new tag themes".
+description: Audit current tag coverage against newly-fetched camps and propose additions to the TAGS taxonomy in playa/tagger.py. Use when a fresh fetch is in data/pages/ and the untagged rate or tag-per-camp count looks low, or when the user says "update the tags", "the new camps aren't being tagged", or "find new tag themes".
 ---
 
 # update-tags
@@ -12,7 +12,7 @@ before editing `playa/tagger.py` or `tests/test_tagger.py`.
 
 ## When to run
 
-- Fresh data landed in `data/pages/` (either local `make scrape` or a
+- Fresh data landed in `data/pages/` (either local `make fetch` or a
   cron run that pulled in new camps).
 - The user wants to see if the taxonomy is keeping up.
 - A specific camp is coming back untagged and they want to know why.

@@ -40,15 +40,15 @@ class WriteMetaTests(unittest.TestCase):
     def test_timestamp_format(self):
         (self.config.pages_dir / "page_01.json").write_text("[]")
         meta = self._run()
-        self.assertRegex(meta["scraped_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-        self.assertRegex(meta["scraped_date"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(meta["fetched_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertRegex(meta["fetched_date"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertRegex(meta["version"], r"^v\d{4}\.\d{2}\.\d{2}$")
 
     def test_version_matches_date(self):
         (self.config.pages_dir / "page_01.json").write_text("[]")
         meta = self._run()
         self.assertEqual(meta["version"],
-                         "v" + meta["scraped_date"].replace("-", "."))
+                         "v" + meta["fetched_date"].replace("-", "."))
 
     def test_handles_missing_events_field(self):
         (self.config.pages_dir / "page_01.json").write_text(json.dumps([

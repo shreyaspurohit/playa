@@ -1,6 +1,6 @@
 # bm-camps
 
-Scraper + single-file static site for the Burning Man theme-camp directory
+Directory fetcher + single-file static site for the Burning Man theme-camp directory
 (`https://directory.burningman.org/camps/`). Goal: public-code, private-data
 GitHub Pages deploy with password gate at `playa.purohit.dev`, for
 personal/friends use only — **not** a general-public site. See "ToS risk +
@@ -8,16 +8,16 @@ mitigations" below for the reasoning.
 
 ## Public repo, private data
 
-**The repo is public. The scraped camp data is not in the repo.** This is
+**The repo is public. The fetched camp data is not in the repo.** This is
 the core architectural decision — see `.gitignore` for the list of paths
 that are never committed:
 
-- `data/pages/*.json` — raw scraped per-camp payloads (owned by camps per §6)
+- `data/pages/*.json` — raw fetched per-camp payloads (owned by camps per §6)
 - `data/meta.json`, `data/camps.csv`, `data/camps_tagged.csv` — derived
 - `site/index.html` — the compiled site (even encrypted, keeps it out of
   GitHub code search and permanent git history)
 
-Every CI run scrapes fresh on the ephemeral GH Actions runner, builds the
+Every CI run fetches fresh on the ephemeral GH Actions runner, builds the
 site from scratch, uploads it as a Pages artifact, and the runner
 evaporates. Nothing camp-specific ever hits git.
 
@@ -44,12 +44,12 @@ relevant clauses:
    to the Playa Info Directory will be investigated…"*
 
 The Privacy Policy and Community Guidelines do not add anything relevant.
-None of the three explicitly prohibits scraping or automated access.
+None of the three explicitly prohibits fetching or automated access.
 
 Mitigations baked into this project (so we can point to them if challenged):
 
 - **Public code, private data.** The repo is public for portability / as a
-  portfolio piece, but `.gitignore` keeps every byte of scraped camp
+  portfolio piece, but `.gitignore` keeps every byte of fetched camp
   content out of git and out of GitHub code search. The live site is the
   *only* place the data exists in reachable form, and it's password-gated.
 - **Password gate.** If `SITE_PASSWORD` is set at build time the JSON data
@@ -65,7 +65,7 @@ Mitigations baked into this project (so we can point to them if challenged):
   page for that camp, so there's a clear path to the authoritative copy.
 - **Takedown workflow.** Footer / about-modal mailto opens a pre-filled
   request to `CONTACT_EMAIL`. Reported camp IDs get appended to
-  `data/denylist.txt` and are filtered out at the next scrape+build. Since
+  `data/denylist.txt` and are filtered out at the next fetch+build. Since
   raw data isn't committed, takedowns are genuine removals (no git
   history to unwind). Reversing a takedown is removing the id from
   `denylist.txt`.
@@ -82,13 +82,13 @@ takedown and move on. Don't push back against a removal request.
 
 Two-stage build. The **client** (TypeScript + Preact + htm) lives in
 `client/` and is bundled by esbuild into one minified IIFE.
-The **server-side scraper/builder** (Python) scrapes the directory,
+The **server-side fetcher/builder** (Python) pulls the directory,
 assembles the HTML template, and injects the bundle + data payload.
 
 ```
 npm run build             → client/dist/bundle.js   (~34 KB minified)
-python -m playa scrape <N>   → data/pages/page_NN.json
-python -m playa scrape-all   → all 30 pages in parallel (ThreadPoolExecutor)
+python -m playa fetch <N>   → data/pages/page_NN.json
+python -m playa fetch-all   → all 30 pages in parallel (ThreadPoolExecutor)
 python -m playa meta         → data/meta.json
 python -m playa merge        → data/camps.csv
 python -m playa tag          → data/camps_tagged.csv
@@ -96,7 +96,7 @@ python -m playa build        → site/index.html            (injects bundle)
 python -m playa all          → nightly pipeline (bundle must already exist)
 ```
 
-`make scrape`, `make rebuild`, `make build` all include the bundle step
+`make fetch`, `make rebuild`, `make build` all include the bundle step
 as a dependency, so you don't need to think about it day to day.
 
 **Python side:** stdlib only + `openssl` CLI for the encrypted payload.
@@ -117,8 +117,8 @@ Python module. Dev deps restored via `npm ci`.
   each namespaces its regexes next to the `parse()` classmethod. Also
   exposes `_clean()` helper (HTML entity decode + tag strip + whitespace
   collapse).
-- `scraper.py` — `Scraper(config)`. Only class that touches the network.
-  `fetch()` with retries + backoff, `scrape_page()` / `scrape_page_to_file()`.
+- `fetcher.py` — `Fetcher(config)`. Only class that touches the network.
+  `fetch()` with retries + backoff, `fetch_page()` / `fetch_page_to_file()`.
 - `tagger.py` — `TAGS` dict (taxonomy of ~120 tags) + `Tagger(taxonomy)`
   class. `tag(text)`, `tag_camp(camp)`, `haystack(camp)` helpers.
 - `timeparser.py` — normalizes raw event time strings into a structured
@@ -137,9 +137,9 @@ Python module. Dev deps restored via `npm ci`.
   subcommand; `cmd_all()` stitches them together for nightly runs.
 - `__main__.py` — enables `python -m playa`.
 
-Classes are used where state + behavior cohere (Scraper holds
-Config+HTTP settings, Tagger holds compiled regexes, SiteBuilder holds
-template + config). `write_meta` / `merge_csv` are plain functions —
+Classes are used where state + behavior cohere (`Fetcher` holds
+Config+HTTP settings, `Tagger` holds compiled regexes, `SiteBuilder`
+holds template + config). `write_meta` / `merge_csv` are plain functions —
 wrapping them in classes would have been pure ceremony.
 
 ## Build-time config (env vars)
@@ -149,8 +149,8 @@ wrapping them in classes would have been pure ceremony.
 | `SITE_PASSWORD`  | *(unset)*              | If set, encrypt the JSON payload at build time      |
 | `CONTACT_EMAIL`  | `bm-camps@example.com` | Address used in footer `mailto:` takedown link      |
 | `PBKDF2_ITER`    | `200000`               | PBKDF2 iteration count                              |
-| `PAGES`          | `30`                   | Listing pages to scrape (used by `scrape_all.sh`)   |
-| `PARALLEL`       | `5`                    | Parallelism for scrape (used by `scrape_all.sh`)    |
+| `PAGES`          | `30`                   | Listing pages to fetch (used by `fetch_all.sh`)   |
+| `PARALLEL`       | `5`                    | Parallelism for fetch (used by `fetch_all.sh`)    |
 
 Local dev: leave `SITE_PASSWORD` unset to produce a plaintext build for
 quick preview. CI sets both via repo secrets.
@@ -164,11 +164,11 @@ make bootstrap        # pip install -e ./backend  +  npm ci in client/
 
 Then:
 ```bash
-make scrape           # or: playa all   (or: python3 -m playa all)
+make fetch           # or: playa all   (or: python3 -m playa all)
 # env overrides: PAGES=30 PARALLEL=5 SITE_PASSWORD=… CONTACT_EMAIL=…
 ```
 
-Cleans `data/pages/`, scrapes in parallel (Python `ThreadPoolExecutor`,
+Cleans `data/pages/`, fetches in parallel (Python `ThreadPoolExecutor`,
 no more xargs shell loop), writes `data/meta.json`, then merges + tags
 + builds the site.
 
@@ -191,9 +191,9 @@ bm-camps/                       ← repo root (the folder name stays as-is)
 │   ├── dist/                   ← gitignored; esbuild output
 │   ├── node_modules/           ← gitignored
 │   ├── package.json, tsconfig.json, esbuild.config.mjs
-├── data/                       ← scrape artifacts (mostly gitignored)
+├── data/                       ← fetch artifacts (mostly gitignored)
 ├── site/                       ← published artifacts; index.html gitignored
-├── scripts/scrape_all.sh
+├── scripts/fetch_all.sh
 ├── .github/workflows/refresh.yml
 ├── .claude/skills/update-tags/
 ├── CLAUDE.md, LICENSE, Makefile, README.md
@@ -204,7 +204,7 @@ bm-camps/                       ← repo root (the folder name stays as-is)
 **Why src-layout**: forcing `pip install -e ./backend` before imports
 catches bugs where code happens to work via cwd coincidence. It's the
 PEP 517/518-recommended shape. Downside: one extra bootstrap step
-(`make bootstrap` handles it, and `make test-py` / `make scrape` etc.
+(`make bootstrap` handles it, and `make test-py` / `make fetch` etc.
 also ensure the install is in place via the `install-backend` target).
 
 **Why `playa`?** The package name matches the domain (`playa.purohit.dev`)
@@ -213,11 +213,11 @@ historical artifact and renaming would break anyone who's cloned it.
 
 **Top-level files**:
 - `Makefile` — targets: `make bootstrap` (one-time), `make test`,
-  `make scrape`, `make rebuild`, `make build`, etc. Targets that use
+  `make fetch`, `make rebuild`, `make build`, etc. Targets that use
   the Python package list `install-backend` as a dep.
-- `scripts/scrape_all.sh` — thin compat shim that execs
+- `scripts/fetch_all.sh` — thin compat shim that execs
   `python3 -m playa all`. Kept so muscle-memory
-  `bash scripts/scrape_all.sh` still works.
+  `bash scripts/fetch_all.sh` still works.
 - `renovate.json` — Renovate bot config (see "Dependency updates"
   section below).
 
@@ -225,12 +225,12 @@ Python tests live at `backend/tests/` (one file per `playa` module:
 `test_parsers.py`, `test_tagger.py`, `test_timeparser.py`,
 `test_meta.py`, `test_merger.py`, `test_builder.py`). JS tests live at
 `client/tests/`.
-- `data/` — scrape artifacts. **Gitignored in full except `denylist.txt`**
+- `data/` — fetch artifacts. **Gitignored in full except `denylist.txt`**
   (public-repo / private-data stance, see top of file).
-  - `pages/page_NN.json` — raw per-page scrape. Each camp dict maps 1:1
+  - `pages/page_NN.json` — raw per-page fetch. Each camp dict maps 1:1
     to `Camp.to_dict()`: `{id, name, location, description, website,
     url, events: [{id, name, description, time}], tags: []}`.
-  - `meta.json` — scrape timestamp + counts; drives the "Updated …" badge.
+  - `meta.json` — fetch timestamp + counts; drives the "Updated …" badge.
   - `denylist.txt` — one camp id per line (`#` comments allowed).
     Filtered out of the site at build. Takedown requests land here.
   - `camps.csv` — merged CSV (tags blank).
@@ -264,7 +264,7 @@ project code is stdlib-only; JS project restores deps via
 its local filesystem, `actions/upload-pages-artifact@v3` tars up
 `site/` and uploads it as the `github-pages` artifact,
 `actions/deploy-pages@v4` takes that artifact and serves it from
-Pages. At no point does the scraped data touch git. Verified against
+Pages. At no point does the fetched data touch git. Verified against
 the official docs for both actions.
 
 **Triggering a build on demand**: Actions → "Refresh camps directory"
@@ -300,29 +300,29 @@ All regexes live at the top of `fetch_page.py`.
 ## Rerun from scratch
 
 ```bash
-make scrape     # or: python -m playa all
+make fetch     # or: python -m playa all
 ```
 
 **Page count can change** — check the pagination block at the bottom of
 any listing page (`<nav aria-label="Page pagination">`) and set
-`PAGES=N python -m playa all`. At last scrape: 30 pages, 1458 camps,
+`PAGES=N python -m playa all`. At last fetch: 30 pages, 1458 camps,
 583 with website, 4167 events, 1271 tagged (~87%).
 
 Individual steps if you need them:
 
 ```bash
-python -m playa scrape-all   # just the scrape (parallel threads)
+python -m playa fetch-all   # just the fetch (parallel threads)
 python -m playa meta         # just data/meta.json
 python -m playa merge        # just data/camps.csv
 python -m playa tag          # just data/camps_tagged.csv
 python -m playa build        # just site/index.html
-python -m playa scrape 5     # single page (debug)
+python -m playa fetch 5     # single page (debug)
 ```
 
-## Retag / rebuild site without re-scraping
+## Retag / rebuild site without re-fetching
 
 Changing `TAGS` in `tagger.py` or the HTML template does **not** require
-re-scraping:
+re-fetching:
 
 ```bash
 make rebuild    # or: python -m playa {meta,merge,tag,build}
@@ -338,7 +338,7 @@ Each entry is `"tag_name": [regex, regex, …]`.
 Claude Code in this repo). It walks through: baseline snapshot → find
 thinly-tagged camps → cluster into proposed patterns → validate with
 `\b` boundaries + grep sanity checks → show diff → apply on approval
-→ run tests + rebuild → report delta. Good for after a fresh scrape
+→ run tests + rebuild → report delta. Good for after a fresh fetch
 when the untagged count drifts up.
 
 **Pattern rules:**
@@ -363,7 +363,7 @@ when the untagged count drifts up.
    ```
 3. Run `make test` — make sure you haven't broken word-boundary invariants.
 4. Run `make rebuild` to regenerate `camps_tagged.csv` and
-   `site/index.html` without re-scraping.
+   `site/index.html` without re-fetching.
 5. Check the `top 30 tags` summary that the `tag` command prints — if
    your new tag isn't hitting as expected, your regex is probably too strict.
 
@@ -509,8 +509,8 @@ contained the controls; post-migration the wrapper makes it explicit.
    `__DATA_SCRIPT__`, placeholder `<script>__BUNDLE__</script>`.
 3. `SiteBuilder._read_bundle()` reads the bundle and substitutes it in.
    A defensive guard rejects bundles that contain a literal
-   `</script>` (would break the HTML embed). Scrape metadata is
-   injected as `<meta name="bm-version">`, `<meta name="bm-scraped-date">`,
+   `</script>` (would break the HTML embed). Fetch metadata is
+   injected as `<meta name="bm-version">`, `<meta name="bm-fetched-date">`,
    etc., and the client reads those on startup.
 4. Data is still embedded via `<script id="camps-data">` (plaintext) or
    `<script id="camps-data-encrypted">` (encrypted envelope). The client
@@ -582,7 +582,7 @@ honestly not worth it.
 ## Event time parsing
 
 Raw event times from `directory.burningman.org` come in two main shapes
-(~99.98% of 4167 events in the last scrape):
+(~99.98% of 4167 events in the last fetch):
 
   1. `Begins Tue (8/27) at 10:00 AM, Ends 11:15 AM`  — single-occurrence
   2. `Begins Thu (8/29) at 9:00 PM, Ends Fri at 2:00 AM`  — spans midnight
@@ -607,9 +607,9 @@ Raw event times from `directory.burningman.org` come in two main shapes
     ```
 
 **Year is never hardcoded.** `derive_week_map()` scans every
-single-occurrence parse in the scrape and builds `{day_abbrev: "M/D"}`
+single-occurrence parse in the fetch and builds `{day_abbrev: "M/D"}`
 from the `(M/D)` tuples the directory itself posted. When burn rolls
-over to the next year, the map self-adjusts on the next nightly scrape.
+over to the next year, the map self-adjusts on the next nightly fetch.
 Recurring events (which have no date) then get their `(starts M/D)`
 annotation from the earliest day in their day-list, looked up in that
 map.
@@ -659,7 +659,7 @@ samples and extend `_BEGINS_RE`/`_FROM_RE` or add a third regex.
 
 - 0.2s sleep between detail fetches; 3 retries with backoff (see
   `Config.per_camp_sleep` + `fetch_retries` + `fetch_backoff`). Keep it polite.
-- `Scraper` falls back to listing-page data if a detail fetch fails, so
+- `Fetcher` falls back to listing-page data if a detail fetch fails, so
   one bad camp doesn't abort a whole page.
 - Some camps have `location: "None Listed"` or `description: "-"` — kept
   as-is; they just end up untagged.
@@ -667,7 +667,7 @@ samples and extend `_BEGINS_RE`/`_FROM_RE` or add a third regex.
   `art` doesn't match `heart`/`party`. The ~13% untagged are mostly
   one-line joke camps or blank descriptions — rarely worth chasing.
 - Dependency graph: `config` is a leaf; `models` depends on nothing;
-  `parsers` ← `models`; `scraper` ← `config, models, parsers`;
+  `parsers` ← `models`; `fetcher` ← `config, models, parsers`;
   `tagger` ← `models`; `timeparser` is a leaf (pure functions on
   strings); `builder` ← `config, models, tagger, timeparser`;
   `meta` / `merger` ← `config`; `cli` ← everything. No cycles.
@@ -685,7 +685,7 @@ before the `build` job touches anything.
 
 - `tests/test_parsers.py` — `_clean()`, `ListingParser.parse()`,
   `DetailParser.parse()`. Fixture HTML inlined; the network-touching
-  `Scraper.fetch()` is deliberately not exercised (would make CI flaky).
+  `Fetcher.fetch()` is deliberately not exercised (would make CI flaky).
 - `tests/test_tagger.py` — core taxonomy invariants: `\b` boundaries
   (`art` ≠ `heart`), case-insensitivity, multi-tag firing, a floor of
   ~100 tags so accidental deletions are caught, `Tagger.haystack()`
@@ -696,7 +696,7 @@ before the `build` job touches anything.
   comma-list), and the year-free display guarantee.
 - `tests/test_merger.py` — column order, dedupe by id, alphabetical
   sort, handling of legacy JSONs that predate the `website` field.
-- `tests/test_meta.py` — scraped_at format (ISO-8601 UTC),
+- `tests/test_meta.py` — `fetched_at` format (ISO-8601 UTC),
   version/date coupling, zero-page fallback, event counting.
 - `tests/test_builder.py` — **OpenSSL encryption round-trip** (encrypt
   with Python → decrypt with `openssl enc -d`), denylist filtering +
@@ -737,8 +737,8 @@ Takedown workflow:
 
 1. Friend-of-camp emails the `CONTACT_EMAIL` via the footer link.
 2. You add their camp id to `data/denylist.txt` and push.
-3. Next cron run (or manual dispatch) scrapes and builds fresh; the
-   denylisted id is filtered out of the site. Because scraped data is
+3. Next cron run (or manual dispatch) fetches and builds fresh; the
+   denylisted id is filtered out of the site. Because fetched data is
    never committed, this is a genuine removal — no lingering data in
    git history, no GitHub code-search hits. Reversing a takedown just
    means removing the id from `denylist.txt` and pushing.
@@ -768,13 +768,316 @@ Behavior, in short:
 Change the schedule / cadence in `renovate.json` if it needs to be
 quieter or louder.
 
+## Share / import (friends' favorites)
+
+- **`📤 Share`** button in the toolbar actions pane. Only visible when
+  the user has ≥1 starred camp or event. Opens `ShareModal`:
+  1. Prompts for a nickname (stored in `bm-nickname`) so recipients
+     see whose list it is.
+  2. Encodes `{name, campIds, eventIds}` as base64url-of-JSON and
+     builds `https://playa.purohit.dev/#share=<encoded>`.
+  3. Copies URL to clipboard; falls back to an inline `<textarea>` if
+     the Clipboard API is blocked.
+- **Import banner** appears at the top whenever the URL carries a
+  `#share=…`. Shows sender name + counts. One-click import merges
+  (union) into `localStorage['bm-shared']` under their nickname —
+  separate from the user's own `bm-favs` / `bm-fav-events`. The
+  banner is dismissible; either action strips `#share=` from the URL
+  so refresh doesn't re-prompt.
+- **Friends live in `useFriends`** (`hooks/useFriends.ts`). The fav
+  filter and map/schedule views include friends' stars alongside
+  yours. Camps display a "faved by: you, alice, bob" chip row when
+  friends have starred them; events show a per-friend chip in their
+  row. The user's own stars are always represented by the ★ button
+  state — no chip for "you" unless friends have also starred.
+- **Fragment-only**: the share payload never leaves the device. GitHub
+  Pages servers only see the path; everything after `#` is
+  client-side. The "Clear all local data" button in the About modal
+  wipes `bm-favs`, `bm-fav-events`, `bm-nickname`, `bm-shared`, and
+  the password cache.
+
+## Schedule view (calendar)
+
+- **Tab**: `📅 Schedule` in the top-of-page tab bar (`components/TabBar.tsx`,
+  hash-routed via `useHashRoute` → `#schedule`).
+- **Source**: starred events (both yours + any friend's), bucketed by
+  the day(s) they occur on. Data comes from `event.parsed_time`, added
+  server-side by `SiteBuilder._enrich_event_times` — each event carries
+  its kind (`single` / `recurring`), days list, start/end 24-h times,
+  and (for singles) a start date like `"8/27"` pulled from the
+  year-agnostic `derive_week_map`.
+- **Layout**: desktop = 7 columns Mon–Sun (CSS grid); mobile =
+  collapsible `<details>` accordion per day (≤800px). Non-empty days
+  are expanded by default.
+- **Recurring events** appear on every day they recur (e.g., a
+  "Mon–Fri" event shows 5 times).
+- **Unscheduled**: events whose `parsed_time` is null land in a
+  dashed-border section at the bottom — the raw `time` string still
+  renders so nothing is lost.
+- **Explicit-only**: starring a camp does NOT auto-include its events.
+  A top-of-view notice spells this out. This matches the user's
+  intent: a camp fav means "I want to visit this camp," an event fav
+  means "I'll be at this exact thing at this exact time."
+
+## Map view (Black Rock City)
+
+Static SVG rendered from code — **zero external network calls**,
+works offline after first load. Fits the privacy stance.
+
+### Files
+
+- `client/src/map/data.ts` — **year-specific** constants: Golden Spike
+  lat/lng, 12:00 compass bearing, street letters / themed names /
+  radii in feet, radial clock positions, fence pentagon. Updated
+  annually by the `/update-map` Claude skill; see the file's header
+  for the refresh procedure.
+- `client/src/map/address.ts` — pure functions:
+  `parseAddress("7:30 & F")`, `clockToCompass(hr)`,
+  `destinationPoint(lat, lng, bearingDeg, distFt)`, `haversineMeters`,
+  `bearingDeg`, `addressToLatLng`, `addressToSvgFeet`,
+  `latLngToSvgFeet`. No state, pure math.
+- `client/src/components/MapView.tsx` — SVG renderer. Draws the
+  concentric streets (as big arcs from 2:00 → 10:00 the long way
+  around the back of the city, so the 6:00 opening is empty), radial
+  streets, the Man, labels, starred camps as pins, and a "you are
+  here" dot + bearing line when GPS is granted.
+- `client/src/hooks/useGeolocation.ts` — wraps
+  `navigator.geolocation.watchPosition`. Opt-in — no permission
+  prompt until the user clicks "Use my GPS".
+
+### Geometry quick-reference (2026)
+
+```
+Golden Spike (the Man)   40.783242, -119.207871
+True N aligns with       BRC 4:30 axis
+Therefore BRC 12:00 bears 225° (SW); 6:00 → 45° (NE)
+Esplanade radius         2500 ft
+Block depths: Esp→A = 400, A→E = 250, E→F = 450 (mid-city plaza),
+              F→I = 250, I→J = 150, J→K = 150
+Streets: Esplanade + Ararat(A) Bodhi(B) Chomolungma(C) Delphi(D)
+         Eternal(E) Fulcrum(F) Great Oak(G) Heiau(H) Iroko(I)
+         Jiba(J) Kundalini(K)
+```
+
+The **SVG convention** is 12:00 at positive-y (up) with the viewBox
+centered on the Man. The `addressToSvgFeet` output is in raw feet; the
+component sets a ±6000ft viewBox so K street (5400ft) fits with ~10%
+margin. Clock-hour rotation: `theta = (hour / 12) * 2π` clockwise from
+"up" — so 3:00 is (+x, 0), 6:00 is (0, +y), 9:00 is (−x, 0).
+
+### GPS → SVG
+
+`latLngToSvgFeet` computes compass bearing + great-circle distance
+from the Man, subtracts `twelveBearingDeg` to get the "hour-angle"
+(degrees clockwise from BRC 12:00), then projects to the same unit
+system. Round-trip with `addressToSvgFeet(addressToLatLng(addr))`
+agrees to within ~20 ft (spherical trig vs flat polar).
+
+### External map link
+
+Each camp with a resolvable address gets an **"Open in Google Maps ↗"**
+link (plain `https://www.google.com/maps?q=LAT,LNG` — no API key,
+works on any platform). Handy for getting *to the playa*; the built-in
+map is for *on the playa* where no tile server is reachable.
+
+### `/update-map` skill
+
+`.claude/skills/update-map/SKILL.md` — run yearly (or when the user
+says "new year's plan is out"). It walks through pulling the Golden
+Spike coords from `innovate.burningman.org`, the block depths from the
+measurements PDF, and the themed street names from the city-plan page;
+then does targeted edits to `client/src/map/data.ts` + bumps the
+"Last refreshed" comment. Only rendering code stays hands-off.
+
+## Official BM APIs + datasets (migration path)
+
+Researched 2026-04-22. Burning Man publishes camp/event/art data through
+two channels that we could lean on instead of (or alongside) the HTML
+fetch. The fetch stays as the only pre-burn source for the *current*
+year, but both channels reduce our fragility and open up new features.
+
+### Channel 1 — JSON archive (no key, post-burn historical)
+
+`https://bm-innovate.s3.amazonaws.com/archive/<YEAR>/` hosts three flat
+JSON files per year: `camps.json`, `events.json`, `art.json`. Verified
+2026-04-22: all three resolve with HTTP 200 for 2025 (last modified
+2026-03-05). Years published: **2015–2025** (gaps in 2020–2021, no burn).
+2026 lands here after the 2026 burn.
+
+Schema is richer than what we fetch. Sample camp record:
+```json
+{"uid": "a1XVI000008yf262AA", "name": "…", "year": 2025, "url": null,
+ "contact_email": "…", "hometown": "…", "description": "…",
+ "landmark": "…",
+ "location": {"frontage": "D", "intersection": "3:15",
+              "intersection_type": "&", "dimensions": "…", ...}}
+```
+
+Advantages over HTML fetch:
+- Structured `location` object (no regex, no `None Listed` strings)
+- Stable `uid` (Salesforce-style) — our current fetch uses the
+  numeric directory id
+- `contact_email`, `hometown`, `landmark` — fields we don't surface today
+- Licensed under the Terms of Service at
+  `https://innovate.burningman.org/terms-of-service-for-burning-man-apis-and-datasets/`
+  (review before publishing; stance is friendlier than directory ToS)
+
+Advantage we lose: *it's last year's data.* Unusable for pre-burn
+planning in the current year.
+
+### Channel 2 — `api.burningman.org` (keyed, live-ish)
+
+Official live API. Requires an API key (request at the endpoint). Per
+the 2025 schedule on `innovate.burningman.org/apis-page/`:
+
+| Data          | Developer release | Public release |
+|---------------|-------------------|----------------|
+| Camp locs     | Aug 4, 12am PDT   | Aug 17, 12am PDT |
+| Art locs      | Aug 4, 12am PDT   | Aug 24, 12am PDT |
+
+Release-timing restriction: *developers must not release art locations
+to users until gates open.* We'd need to respect that if we auto-build
+nightly during burn week.
+
+Endpoint paths, response formats, and rate limits are **not documented
+publicly** — available only after API-key request. Treat as unverified
+until we pull a key and confirm.
+
+### Channel 3 — GIS data (no key, city geometry)
+
+`https://github.com/burningmantech/innovate-GIS-data` ships KMZ +
+GeoJSON for street outlines, centerlines, plazas, city blocks, DMZ,
+trash fence, portable toilets, and points of interest. The 2026 Golden
+Spike + general city plan is separately published at
+`https://innovate.burningman.org/dataset/2026-golden-spike-and-general-city-map-data/`
+(KML + GeoJSON, released 2026-04-16).
+
+This is the authoritative source for everything hand-coded in
+`client/src/map/data.ts`. The `/update-map` skill already pulls from
+`innovate.burningman.org` by hand; switching it to parse the GeoJSON
+would eliminate most of the annual copy-paste work.
+
+### Migration strategy
+
+**Keep HTML fetch as the primary source** for the current-year use
+case until the live API is opened to us and we've confirmed its shape.
+The fetch is fragile but it's the only channel that gives us pre-burn
+data without key friction, and we already have the infrastructure.
+
+**Layer the archive JSON in as a secondary source** for historical /
+year-over-year features (already listed as a future extension). A new
+`playa.archive` module could fetch `camps.json` + `events.json` for a
+given year and produce the same `Camp`/`Event` dataclasses our current
+pipeline uses. No merge logic needed for single-year builds; only
+matters if we add diffing.
+
+**Request an API key** off-season (anytime before Aug 1) so the live
+API is available as a fallback. Don't switch to it as primary until:
+(1) the key is granted, (2) endpoints + schemas are documented, (3)
+we've verified it returns pre-burn camp data (not just art locations).
+The camp directory at `directory.burningman.org` is populated *weeks*
+before Aug 4 developer access, so the API may never fully supersede
+the fetch for our "plan your burn before gates open" use case.
+
+**Migrate `map/data.ts` to GeoJSON first.** It's the lowest-risk
+integration: pure geometry, one-shot annual refresh, no ToS mitigations
+needed (the GeoJSON is explicitly licensed open). Would replace the
+hand-edited constants (street radii, clock bearings, themed street
+names) with a parsed GeoJSON build step in the `/update-map` skill.
+
+### Compliance checklist — MUST do before switching to `api.burningman.org` / `bm-innovate.s3.amazonaws.com/archive/`
+
+Source: <https://innovate.burningman.org/terms-of-service-for-burning-man-apis-and-datasets/>
+
+Once we pull any camp/event/art data from those endpoints, the
+Innovate ToS applies in addition to (or instead of) the
+directory.burningman.org ToS. These items are gate-items for the
+switch-over; none are optional.
+
+- [ ] **§4 disclaimer**: keep the required verbatim string —
+      *"This app is not affiliated, endorsed, or verified by Burning
+      Man Project."* — in the footer + About modal (already shipping
+      as of the rename to "Playa Camps"). Must appear "in a prominent
+      location within your App and on any webpage from which your App
+      may be downloaded."
+- [ ] **§6.2 location embargo**: when pulling from the live API, strip
+      per-camp `location` fields out of the payload until 12:01 am on
+      the Sunday of the week before the burn (camp locations), and
+      strip per-art locations until gate-open on Day 1 (art). Wire
+      the dates into `Config` next to `burn_start` / `burn_end` and
+      gate the data in `SiteBuilder.load_camps` based on
+      `datetime.now(tz=ZoneInfo("America/Los_Angeles"))`.
+- [ ] **§7.2 trademark**: app name must not contain "Burning Man",
+      "Black Rock City", "Decompression", or "Playa Events". Current
+      name is "Playa Camps" — OK. If renaming again, check this rule.
+- [ ] **§5.3 republishing**: the expected reading (per project owner)
+      is "don't distribute as if we are the provider" — using the
+      data *in our app* is fine, as long as the §4 disclaimer is
+      present and we don't mirror it as a standalone dataset.
+- [ ] **§5.5 modification**: the auto-generated tags and the
+      calendar-date canonicalization are both transformations on
+      Event Data. The About modal already calls both out explicitly
+      — *"tags are keyword-matched by this app — not from Burning
+      Man Project"* + *"calendar dates come from a configured
+      burn-week window"*. Keep those labels current if the pipeline
+      adds more transforms.
+- [ ] **§2.3 permissions transparency**: the GPS/location copy in
+      the About modal already covers this. If we ever add camera
+      or push access, extend that paragraph.
+- [ ] **§9 revocation**: `docs/revocation-plan.md` has the runbook.
+      The `SITE_PASSWORD` rotation path preserves the showcase
+      value; the §5 "destroy all copies" path is only needed if the
+      takedown explicitly targets data.
+- [ ] **MIN_CAMPS rail**: `SiteBuilder.build()` refuses to produce
+      `site/index.html` when fewer than 500 camps loaded. Don't
+      override `MIN_CAMPS=0` in CI — the rail is specifically there
+      so a broken fetch / empty API response doesn't overwrite the
+      last-good deploy.
+
+### Concrete next steps (when someone picks this up)
+
+1. Write `backend/src/playa/archive.py` — fetches
+   `bm-innovate.s3.amazonaws.com/archive/<year>/{camps,events}.json`,
+   returns `list[Camp]` matching `models.Camp.from_dict()`. Good unit
+   of work — pure network + mapping, no HTML.
+2. Add `python -m playa fetch --source=archive --year=2025` switch,
+   keep `directory` (HTML) as the default.
+3. Once `archive.py` is landed, a "year dropdown" in the UI becomes a
+   ~50-line client change (another `camps-data-<year>` payload).
+4. `/update-map` skill: swap the hand-copy steps for `curl` + jq on
+   the GeoJSON files. Keep the verification pass — the GeoJSON is
+   authoritative for geometry, not for themed-street naming (those
+   still come from the theme-year announcement).
+5. Request `api.burningman.org` key (Calm/personal email). Document
+   the schema here once the welcome packet lands. **Do not** hardcode
+   endpoint paths from memory or from this CLAUDE.md — verify by
+   hitting the real API first. (See user CLAUDE.md "VERIFY BEFORE
+   STATING".)
+
+### What to preserve across any migration
+
+- **The public-code / private-data stance.** Even archive JSON is
+  subject to the API ToS; don't commit payloads to git even though
+  the source license is friendlier than the directory ToS.
+- **Denylist + takedown workflow.** Denylist is keyed on the directory
+  numeric id today. The archive JSON uses `uid` (SFDC-style). Any
+  migration needs to either keep both ids in `Camp`, or do a one-time
+  mapping pass so existing `denylist.txt` entries don't silently stop
+  matching.
+- **Coverage / parse-rate metric.** `_enrich_event_times` prints a
+  coverage percentage at build time. If the archive ships structured
+  start/end timestamps, we can skip `timeparser.py` for archive-sourced
+  events and parse-coverage becomes 100% — but leave the parser around
+  for the HTML path.
+
 ## Likely future extensions
 
 - Per-tag landing pages or tag co-occurrence view.
 - Pull organizer URLs / social links from `/events/{id}/` pages (not yet
-  scraped — only camp pages are fetched).
+  fetched — only camp pages are fetched).
 - "Search events only" toggle in the UI.
 - Year-over-year diffing if the user wants to track camp changes across
-  burns — current scrape is a single snapshot.
+  burns — current fetch is a single snapshot. Now easy: `playa.archive`
+  (see "Official BM APIs + datasets" above) gives us 2015–2025 for free.
 - Replace the shared-password gate with Cloudflare Access (free for ≤50
   users) if you want per-friend access control + audit log.

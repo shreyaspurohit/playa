@@ -8,12 +8,14 @@ import base64
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from playa.builder import SiteBuilder
 from playa.config import Config
@@ -116,9 +118,9 @@ class LoadMetaTests(unittest.TestCase, _TmpConfigMixin):
 
     def test_prefers_meta_file_when_present(self):
         self.config.meta_file.write_text(json.dumps({
-            "scraped_date": "2026-01-01",
+            "fetched_date": "2026-01-01",
             "version": "v2026.01.01",
-            "scraped_at": "2026-01-01T00:00:00Z",
+            "fetched_at": "2026-01-01T00:00:00Z",
         }))
         meta = self.builder.load_meta()
         self.assertEqual(meta["version"], "v2026.01.01")
@@ -127,7 +129,7 @@ class LoadMetaTests(unittest.TestCase, _TmpConfigMixin):
         (self.config.pages_dir / "page_01.json").write_text("[]")
         meta = self.builder.load_meta()
         self.assertTrue(meta["version"].startswith("v"))
-        self.assertRegex(meta["scraped_date"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(meta["fetched_date"], r"^\d{4}-\d{2}-\d{2}$")
 
     def test_empty_default_when_nothing(self):
         meta = self.builder.load_meta()
@@ -209,7 +211,7 @@ class LoadCampsTests(unittest.TestCase, _TmpConfigMixin):
 
 
 class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
-    """Smoke test: a minimal scrape → site/index.html plaintext build."""
+    """Smoke test: a minimal fetch → site/index.html plaintext build."""
 
     def test_produces_valid_html(self):
         """Smoke test for the Preact-era build. The template now ships a
@@ -230,7 +232,10 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir.joinpath("bundle.js").write_text(
             '"use strict";(()=>{/* stub — real bundle built by esbuild in CI/make */})();'
         )
-        with contextlib.redirect_stdout(io.StringIO()):
+        # site/ already exists (from _make_config) so the SW can land there.
+        # Smoke test has 1 camp, well below the production min-camps rail.
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
             SiteBuilder(self.config).build()
         html = self.config.site_html.read_text()
         # The Preact mount point.
@@ -240,7 +245,7 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         self.assertIn('Demo Camp', html)
         # Meta tags consumed by the client at startup.
         self.assertIn('name="bm-version"', html)
-        self.assertIn('name="bm-scraped-date"', html)
+        self.assertIn('name="bm-fetched-date"', html)
         self.assertIn('name="bm-contact-email"', html)
         # Stub bundle was embedded.
         self.assertIn('"use strict";(()=>{', html)
@@ -252,10 +257,32 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         tell the user how to fix it rather than producing broken HTML."""
         self.config = self._make_config()
         (self.config.pages_dir / "page_01.json").write_text("[]")
-        with self.assertRaises(RuntimeError) as ctx:
+        with self.assertRaises(RuntimeError) as ctx, \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
             SiteBuilder(self.config).build()
         self.assertIn("client bundle missing", str(ctx.exception))
         self.assertIn("make bundle", str(ctx.exception))
+
+    def test_build_refuses_degraded_fetch(self):
+        """A near-empty fetch shouldn't overwrite a healthy live deploy.
+        build() must raise with an actionable message so CI aborts before
+        the `upload-pages-artifact` step runs."""
+        self.config = self._make_config()
+        (self.config.pages_dir / "page_01.json").write_text(json.dumps([{
+            "id": "1", "name": "Only Camp", "location": "", "description": "",
+            "website": "", "events": [],
+        }]))
+        # Stub bundle so we don't trip the other guard first.
+        bundle_dir = self.config.root / "client" / "dist"
+        bundle_dir.mkdir(parents=True)
+        bundle_dir.joinpath("bundle.js").write_text('(()=>{})()')
+        # MIN_CAMPS not overridden → defaults to 500 → 1 camp fails hard.
+        with self.assertRaises(RuntimeError) as ctx, \
+                contextlib.redirect_stdout(io.StringIO()):
+            SiteBuilder(self.config).build()
+        msg = str(ctx.exception)
+        self.assertIn("refusing to build", msg)
+        self.assertIn("MIN_CAMPS", msg)
 
 
 if __name__ == "__main__":

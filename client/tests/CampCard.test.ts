@@ -29,7 +29,7 @@ function baseCamp(over: Partial<Camp> = {}): Camp {
     tags: ['yoga', 'food'],
     events: [
       { id: 'e1', name: 'Morning Vinyasa', description: 'daily yoga',
-        time: 'From 7 to 8', display_time: 'Mon–Fri · 7:00 AM – 8:00 AM' },
+        time: 'From 7 to 8', display_time: 'Mon–Fri · 7:00 AM – 8:00 AM', parsed_time: null },
     ],
     ...over,
   };
@@ -42,9 +42,15 @@ function mountCard(props: Partial<Parameters<typeof CampCard>[0]> = {}) {
     queryLower: '',
     isFav: false,
     isFavEvent: () => false,
+    friendsFavingCamp: [] as string[],
+    friendsFavingEvent: (_: string) => [] as string[],
     onToggleFav: () => {},
     onToggleFavEvent: () => {},
     onTagClick: () => {},
+    onNavigate: () => {},
+    isMyCamp: false,
+    myCampSet: false,
+    onSetMyCamp: () => {},
     ...props,
   };
   render(h(CampCard, full), mount);
@@ -132,8 +138,24 @@ describe('<CampCard>', () => {
   test('event time falls back to raw time when display_time is empty', () => {
     mountCard({ camp: baseCamp({
       events: [{ id: 'e1', name: 'Raw', description: '', time: 'whenever',
-                  display_time: '' }],
+                  display_time: '', parsed_time: null }],
     })});
     assert.match(mount.innerHTML, /whenever/);
+  });
+
+  test('shows "set as my camp" when no home camp is chosen', () => {
+    mountCard({ isMyCamp: false, myCampSet: false });
+    assert.match(mount.innerHTML, /set as my camp/);
+  });
+
+  test('hides "set as my camp" on other cards once a home camp is chosen', () => {
+    mountCard({ isMyCamp: false, myCampSet: true });
+    assert.doesNotMatch(mount.innerHTML, /set as my camp/);
+    assert.doesNotMatch(mount.innerHTML, /my camp/);
+  });
+
+  test('keeps the pill on the chosen home camp as an unset control', () => {
+    mountCard({ isMyCamp: true, myCampSet: true });
+    assert.match(mount.innerHTML, />🏕 my camp</);
   });
 });

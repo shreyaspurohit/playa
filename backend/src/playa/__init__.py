@@ -1,8 +1,8 @@
-"""playa — Burning Man theme-camp directory scraper + static site builder.
+"""playa — Burning Man theme-camp directory fetcher + static site builder.
 
 Entry points:
-    python -m playa scrape <page>     # one listing page + its detail pages
-    python -m playa scrape-all        # every page (parallel)
+    python -m playa fetch <page>      # one listing page + its detail pages
+    python -m playa fetch-all         # every page (parallel)
     python -m playa meta              # write data/meta.json
     python -m playa merge             # write data/camps.csv
     python -m playa tag               # write data/camps_tagged.csv
@@ -10,14 +10,14 @@ Entry points:
     python -m playa all               # full pipeline, end-to-end
 
 Library entry points:
-    from playa import Config, Scraper, Tagger, SiteBuilder, Camp, Event
+    from playa import Config, Fetcher, Tagger, SiteBuilder, Camp, Event
 """
 from .config import Config
 from .models import Camp, Event
-from .scraper import Scraper
+from .fetcher import Fetcher
 from .tagger import Tagger, TAGS
 from .builder import SiteBuilder
 
 __all__ = [
-    "Config", "Scraper", "Tagger", "SiteBuilder", "Camp", "Event", "TAGS",
+    "Config", "Fetcher", "Tagger", "SiteBuilder", "Camp", "Event", "TAGS",
 ]
