@@ -13,14 +13,6 @@ on:
 permissions:
   contents: read
 
-# Opt JS actions into Node 24 runtime. Needed for actions/upload-pages-artifact@v3
-# and actions/deploy-pages@v4 which are GitHub's latest majors but still declare
-# Node 20 in action.yml as of Apr 2026. When those ship a new major with
-# runs.using: node24 natively, this env var becomes redundant and can be dropped.
-# See: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 concurrency:
   group: refresh-camps
   cancel-in-progress: true
@@ -36,9 +28,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
@@ -71,9 +63,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
@@ -107,11 +99,14 @@ jobs:
       # Uploads site/ (index.html + CNAME + robots.txt + .nojekyll) from
       # the runner filesystem as the github-pages artifact. Also visible
       # in the Actions run UI if you need to inspect the built HTML.
+      # include-hidden-files preserves site/.nojekyll (v4+ strips dotfiles
+      # by default) — without it, Pages will try to Jekyll-process the site.
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site/
+          include-hidden-files: true
 
   deploy:
     needs: build
@@ -126,4 +121,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
