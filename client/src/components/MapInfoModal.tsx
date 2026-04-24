@@ -81,10 +81,31 @@ export function MapInfoModal({ open, onClose }: Props) {
             <strong>Orientation:</strong> for {BRC.year}, True North runs along
             the <code>4:30</code> axis, so <code>12:00</code> points SW
             (bearing {BRC.twelveBearingDeg}&deg;) and <code>6:00</code> points NE.
-            If you grant GPS, a <strong>dot</strong> shows where you are and
-            a <strong>line</strong> draws from you to the selected camp &mdash;
-            with distance in meters + compass bearing, so you can walk or bike
-            straight to it.
+          </p>
+
+          <p>
+            <strong>Lines on the map</strong> &mdash; two kinds:
+          </p>
+          <ul>
+            <li>
+              <strong>Solid orange line</strong> from the Man out to the
+              selected pin: visualizes that camp&rsquo;s address as a radial
+              + ring, so you can read the grid coordinates at a glance.
+              Drawn for every selection.
+            </li>
+            <li>
+              <strong>Dashed orange line</strong> from your <strong>GPS dot</strong>{' '}
+              to the selected pin: the route bearing. Only appears when GPS
+              is granted and a pin is selected. Distance, compass bearing,
+              and walk/bike ETA show in the sidebar so you can head there
+              directly.
+            </li>
+          </ul>
+          <p class="footnote">
+            If the dashed line enters from the edge of the map, your GPS fix
+            is outside the visible area &mdash; could be a stale fix, a
+            low-accuracy reading indoors, or a desktop browser reporting an
+            ISP-based location instead of the burn site.
           </p>
         </div>
       </div>

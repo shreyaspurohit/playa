@@ -63,7 +63,7 @@ export const POIS: BrcPOI[] = [
     name: 'Center Camp',
     kind: 'center-camp',
     address: '6:00 & Esplanade',
-    description: 'Café, community hub, ice. The 6:00 axis is named for it.',
+    description: 'Café, community hub, ice.',
   },
   {
     name: 'Playa Info',

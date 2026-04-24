@@ -1067,11 +1067,16 @@ function Svg({
         );
       })()}
 
-      {/* Bearing line from user to target */}
-      {userSvg && target && (
+      {/* Bearing line from user to whatever is currently selected —
+          a camp pin (`target`) OR a meet spot / POI / friend spot
+          (`activeSpot`). Both selection paths are mutually exclusive
+          on the parent (clearing one clears the other), so this picks
+          whichever is active. */}
+      {userSvg && (target || activeSpot) && (
         <line
           x1={userSvg.x} y1={userSvg.y}
-          x2={target.x} y2={target.y}
+          x2={target ? target.x : activeSpot!.x}
+          y2={target ? target.y : activeSpot!.y}
           class="brc-bearing"
         />
       )}
