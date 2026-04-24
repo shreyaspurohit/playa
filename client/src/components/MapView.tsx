@@ -79,6 +79,7 @@ export function MapView({
   const [selectedSpot, setSelectedSpot] = useState<
     | { source: 'mine'; idx: number }
     | { source: 'friend'; name: string; idx: number }
+    | { source: 'poi'; kind: string; name: string }
     | null
   >(null);
 
@@ -154,18 +155,32 @@ export function MapView({
       if (!m) return null;
       return {
         label: m.spot.label, address: m.spot.address, when: m.spot.when,
-        x: m.x, y: m.y, author: null as string | null,
+        description: undefined as string | undefined,
+        x: m.x, y: m.y, author: null as string | null, isPoi: false,
       };
     }
-    const f = friendMeetPins.find(
-      (p) => p.name === selectedSpot.name && p.idx === selectedSpot.idx,
+    if (selectedSpot.source === 'friend') {
+      const f = friendMeetPins.find(
+        (p) => p.name === selectedSpot.name && p.idx === selectedSpot.idx,
+      );
+      if (!f) return null;
+      return {
+        label: f.spot.label, address: f.spot.address, when: f.spot.when,
+        description: undefined as string | undefined,
+        x: f.x, y: f.y, author: f.name, isPoi: false,
+      };
+    }
+    // POI — look up by kind + name so we pull the fresh address + desc.
+    const hit = poiPins.find(
+      ({ poi }) => poi.kind === selectedSpot.kind && poi.name === selectedSpot.name,
     );
-    if (!f) return null;
+    if (!hit) return null;
     return {
-      label: f.spot.label, address: f.spot.address, when: f.spot.when,
-      x: f.x, y: f.y, author: f.name,
+      label: hit.poi.name, address: hit.poi.address, when: undefined,
+      description: hit.poi.description,
+      x: hit.x, y: hit.y, author: null as string | null, isPoi: true,
     };
-  }, [selectedSpot, myMeetPins, friendMeetPins]);
+  }, [selectedSpot, myMeetPins, friendMeetPins, poiPins]);
 
   // Unified "clear any selection" — the SVG backdrop + Clear buttons
   // both need to drop camp AND spot highlights.
@@ -317,14 +332,18 @@ export function MapView({
               >+ Add</button>
             </div>
             {activeSpot && (
-              <div class="map-target-box spot">
+              <div class={'map-target-box spot' + (activeSpot.isPoi ? ' poi' : '')}>
                 <div class="map-target-name">
-                  ◆ {activeSpot.author ? `${activeSpot.author}: ` : ''}{activeSpot.label}
+                  {activeSpot.isPoi ? '📍' : '◆'}{' '}
+                  {activeSpot.author ? `${activeSpot.author}: ` : ''}{activeSpot.label}
                 </div>
                 <div class="map-target-addr">
                   {activeSpot.address}
                   {activeSpot.when && <> · <strong>{activeSpot.when}</strong></>}
                 </div>
+                {activeSpot.description && (
+                  <div class="map-target-desc">{activeSpot.description}</div>
+                )}
                 {spotInfo && (
                   <>
                     <div class="map-target-nav">
@@ -407,18 +426,31 @@ export function MapView({
               <>
                 <div class="map-rendezvous-head"><h4>Landmarks</h4></div>
                 <ul class="map-meet-list">
-                  {poiPins.map(({ poi }) => (
-                    <li key={`poi-${poi.kind}-${poi.name}`} class="map-meet-row">
-                      <span class={`map-poi-dot map-poi-${poi.kind}`} aria-hidden="true" />
-                      <div class="map-meet-body">
-                        <div class="map-meet-label">{poi.name}</div>
-                        <div class="map-pin-addr">
-                          {poi.address}
-                          {poi.description && <> · {poi.description}</>}
+                  {poiPins.map(({ poi }) => {
+                    const active =
+                      selectedSpot?.source === 'poi'
+                      && selectedSpot.kind === poi.kind
+                      && selectedSpot.name === poi.name;
+                    return (
+                      <li
+                        key={`poi-${poi.kind}-${poi.name}`}
+                        class={'map-meet-row clickable' + (active ? ' active' : '')}
+                        onClick={() => {
+                          setTargetId(null);
+                          setSelectedSpot({ source: 'poi', kind: poi.kind, name: poi.name });
+                        }}
+                      >
+                        <span class={`map-poi-dot map-poi-${poi.kind}`} aria-hidden="true" />
+                        <div class="map-meet-body">
+                          <div class="map-meet-label">{poi.name}</div>
+                          <div class="map-pin-addr">
+                            {poi.address}
+                            {poi.description && <> · {poi.description}</>}
+                          </div>
                         </div>
-                      </div>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               </>
             )}
@@ -634,17 +666,22 @@ function Svg({
   selectedSpot:
     | { source: 'mine'; idx: number }
     | { source: 'friend'; name: string; idx: number }
+    | { source: 'poi'; kind: string; name: string }
     | null;
   setSelectedSpot: (sel:
     | { source: 'mine'; idx: number }
     | { source: 'friend'; name: string; idx: number }
+    | { source: 'poi'; kind: string; name: string }
     | null
   ) => void;
   /** Pre-resolved details for the currently-selected spot: display
-   *  label, author (null if yours), x/y in SVG space. */
+   *  label, author (null if yours), x/y in SVG space. POIs carry a
+   *  description instead of a `when`, and `isPoi` flips the styling. */
   activeSpot: {
     label: string; address: string; when?: string;
+    description?: string;
     x: number; y: number; author: string | null;
+    isPoi: boolean;
   } | null;
   /** parseAddress() output for activeSpot's address — used to draw the
    *  accent radial + ring highlight identical to camp selections. */
@@ -727,8 +764,12 @@ function Svg({
       )}
       {!target && activeSpot && activeSpotAddress && (
         <>
+          {/* Title sits well above the address so the big 340px address
+              letters + smaller 200px title don't collide. The previous
+              y=-620 / y=-460 pair left only ~160 of vertical room, less
+              than the address ascender itself. */}
           <text
-            x={0} y={-620}
+            x={0} y={-920}
             class="brc-label brc-address-title"
             text-anchor="middle"
           >
@@ -831,17 +872,31 @@ function Svg({
           reference points" read as anchors of the map. Drawn before
           the user-authored pins so a starred camp at the same spot
           wouldn't be covered over. */}
-      {poiPins.map(({ poi, x, y }) => (
-        <g
-          key={`poi-${poi.kind}-${poi.name}`}
-          class={`brc-poi brc-poi-${poi.kind}`}
-          transform={`translate(${x} ${y})`}
-        >
-          <circle r={120} class="brc-poi-halo" />
-          <circle r={60} class="brc-poi-dot" />
-          <title>{poi.name}{poi.description ? ` — ${poi.description}` : ''}</title>
-        </g>
-      ))}
+      {poiPins.map(({ poi, x, y }) => {
+        const active =
+          selectedSpot?.source === 'poi'
+          && selectedSpot.kind === poi.kind
+          && selectedSpot.name === poi.name;
+        return (
+          <g
+            key={`poi-${poi.kind}-${poi.name}`}
+            class={`brc-poi brc-poi-${poi.kind}` + (active ? ' active' : '')}
+            transform={`translate(${x} ${y})`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedSpot({ source: 'poi', kind: poi.kind, name: poi.name });
+            }}
+          >
+            {/* Transparent hit-catcher (same r=150 pattern as camp pins).
+                The visible halo is r=120 which is borderline tappable on
+                a phone; 150 keeps us safely above finger-target minima. */}
+            <circle r={150} class="brc-pin-hit" />
+            <circle r={120} class="brc-poi-halo" />
+            <circle r={60} class="brc-poi-dot" />
+            <title>{poi.name}{poi.description ? ` — ${poi.description}` : ''}</title>
+          </g>
+        );
+      })}
 
       {/* Pins */}
       {pins.map((p) => (
@@ -856,6 +911,12 @@ function Svg({
             onSelectPin(p.camp.id);
           }}
         >
+          {/* Invisible hit-catcher. The visible pin is tiny (r=35 dot,
+              r=70 halo) which is fine on desktop but below the ~44px
+              fat-finger minimum on a phone — Firefox Mobile was
+              swallowing taps before they reached the <g>. r=150 matches
+              the POI + my-camp footprint so all pins tap the same. */}
+          <circle r={150} class="brc-pin-hit" />
           <circle r={70} class="brc-pin-outer" />
           <circle r={35} class="brc-pin-inner" />
           <title>{p.camp.name}{p.camp.location ? ` — ${p.camp.location}` : ''}</title>

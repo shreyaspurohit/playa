@@ -854,6 +854,11 @@
   }
   .brc-label.hour-label { font-size: 180px; font-weight: 600; }
   .brc-pin { cursor: pointer; }
+  /* Transparent hit-catcher circle. Fill must be non-`none` for SVG to
+     count clicks/taps inside; `transparent` keeps it invisible while
+     still opaque to hit-testing. Fixes tiny-target tap failures on
+     mobile (Firefox especially). */
+  .brc-pin-hit { fill: transparent; }
   .brc-pin-outer { fill: #f59e0b; opacity: 0.35; }
   .brc-pin-inner { fill: #f59e0b; stroke: #1a1a1a; stroke-width: 8; }
   .brc-pin.friend .brc-pin-outer { fill: var(--accent); opacity: 0.25; }
@@ -1002,6 +1007,16 @@
     border-color: var(--meet);
     background: var(--meet-soft);
   }
+  /* POI-selected target box drops the violet accent — POIs are static
+     landmarks, not a user rendezvous, so neutral colors feel right. */
+  .map-target-box.spot.poi {
+    border-color: var(--border);
+    background: var(--chip-bg);
+  }
+  .map-target-desc {
+    font-size: 12px; color: var(--muted);
+    margin-top: 4px; line-height: 1.4;
+  }
   /* === Rendezvous SVG markers on the map itself ==================== */
   /* My camp — teal tent, noticeably larger than the star-gold camp
      pins so it reads as "this is MY home" at a glance. Path size +
@@ -1039,6 +1054,9 @@
      places in BRC, so their pins should be unmissable orientation
      anchors. Distinct color per kind + a thicker white stroke so
      they pop against arcs and the starred-camp gold. */
+  .brc-poi { cursor: pointer; }
+  .brc-poi.active .brc-poi-halo { opacity: 0.5; }
+  .brc-poi.active .brc-poi-dot { stroke: var(--bg); stroke-width: 8; }
   .brc-poi-halo { fill: var(--muted); opacity: 0.22; }
   .brc-poi-dot {
     fill: var(--muted); stroke: #fff; stroke-width: 10;
