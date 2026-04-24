@@ -75,23 +75,31 @@ export async function forceRefresh(): Promise<RefreshOutcome> {
 
   try {
     if ('serviceWorker' in navigator) {
+      // Always trigger an update check so the browser fetches a
+      // newer sw.js if one is at origin. The new SW's install
+      // handler (in builder.py) uses cache: 'reload' per-URL, so a
+      // fresh deploy is precached with origin-fresh bytes, bypassing
+      // any HTTP-cache window that GH Pages may be serving inside.
+      // This was the missing piece: previously, the old SW would
+      // refresh its OWN cache via REFRESH_SHELL, but the new SW
+      // could activate during reload and serve from its own cache
+      // populated by addAll() with HTTP-cache-stale bytes.
+      const reg = await navigator.serviceWorker.getRegistration();
+      const updatePromise = reg?.update().catch(() => {});
       const sw = navigator.serviceWorker.controller;
       if (sw) {
-        // Controlled page: ask the SW to re-fetch its shell entries.
-        // We await the ack (or the timeout) so the reload below has a
-        // reasonable chance of seeing fresh content in cache. If the
-        // fetch failed the SW leaves the old entry in place, so the
-        // reload will still find something to serve.
+        // Controlled page: also ask the existing SW to re-fetch its
+        // shell entries — covers the case where no new sw.js exists
+        // (just a rebuild without a version change is unusual but
+        // possible) and minimizes the time-to-fresh-cache on the
+        // current SW.
         const ack = waitForShellRefresh(SW_REFRESH_TIMEOUT_MS);
         sw.postMessage('REFRESH_SHELL');
         await ack;
-      } else {
-        // No controller (hard-refreshed tab, first visit, or an older
-        // SW that predates the message handler). Trigger the standard
-        // SW update path so a new sw.js gets fetched + installed.
-        const reg = await navigator.serviceWorker.getRegistration();
-        await reg?.update();
       }
+      // Wait for the update check to settle too — installs the new
+      // SW (and runs its precache) before we reload.
+      await updatePromise;
     }
   } catch {
     // Any failure here is non-fatal: the cache is untouched, the SW
