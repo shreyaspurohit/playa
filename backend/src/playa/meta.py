@@ -31,7 +31,10 @@ def write_meta(config: Config) -> Path:
     meta = {
         "fetched_at":   now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "fetched_date": pacific.strftime("%Y-%m-%d"),
-        "version":      "v" + pacific.strftime("%Y.%m.%d"),
+        # Version includes HHMM (Pacific) so multiple deploys on the same
+        # day get distinct, monotonically-increasing strings — the client
+        # uses lexicographic compare to decide "newer" without parsing.
+        "version":      "v" + pacific.strftime("%Y.%m.%d.%H%M"),
         "camps":        camps,
         "events":       events,
         "pages":        len(pages),

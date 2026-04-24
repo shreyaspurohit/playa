@@ -574,6 +574,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* === Update banner — "new version available" ======================= */
+  .update-banner {
+    margin: 10px 0 0; padding: 10px 14px;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap;
+  }
+  .update-banner-msg { font-size: 13px; color: var(--text); }
+  .update-banner-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
   /* === Import banner ================================================== */
   .import-banner {
     margin: 10px 0 0; padding: 12px 14px;

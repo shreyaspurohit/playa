@@ -19,6 +19,7 @@ data/logs/
 # they're config + PWA shell assets, not data.
 site/index.html
 site/sw.js
+site/version.txt
 
 # === BRC map data from /update-map skill — never commit ===
 # The skill downloads measurements PDF / city plan PDF / GeoJSON /

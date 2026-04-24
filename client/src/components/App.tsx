@@ -19,6 +19,8 @@ import { Footer } from './Footer';
 import { Gate } from './Gate';
 import { Header } from './Header';
 import { ImportBanner } from './ImportBanner';
+import { UpdateBanner } from './UpdateBanner';
+import { useVersionCheck } from '../hooks/useVersionCheck';
 import { InfoModal } from './InfoModal';
 import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
@@ -56,6 +58,7 @@ export function App() {
   const meta = useMemo(readMeta, []);
   const { theme, setTheme } = useTheme();
   const { view, goto } = useHashRoute();
+  const { updateAvailable, latest: latestVersion } = useVersionCheck();
 
   const [camps, setCamps] = useState<Camp[] | null>(null);
   const [encEnvelope, setEncEnvelope] = useState<Payload | null>(null);
@@ -371,6 +374,7 @@ export function App() {
           infoPulse={infoPulse}
         />
         <TabBar view={view} onGoto={goto} scheduleBadge={scheduleBadge} />
+        {updateAvailable && <UpdateBanner latest={latestVersion} />}
         {incomingShare && (
           <ImportBanner
             payload={incomingShare}

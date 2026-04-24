@@ -89,7 +89,7 @@ class SiteBuilder:
         return {
             "fetched_at":   dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "fetched_date": dt_pt.strftime("%Y-%m-%d"),   # Pacific for display
-            "version":      "v" + dt_pt.strftime("%Y.%m.%d"),
+            "version":      "v" + dt_pt.strftime("%Y.%m.%d.%H%M"),
         }
 
     def load_camps(self) -> list[Camp]:
@@ -295,6 +295,10 @@ class SiteBuilder:
             "  if (req.method !== 'GET') return;\n"
             "  const url = new URL(req.url);\n"
             "  if (url.origin !== self.location.origin) return;\n"
+            "  // version.txt is the polling endpoint the client uses to\n"
+            "  // detect a new deploy. Bypass the SW so polls always go\n"
+            "  // to origin instead of serving the just-cached copy.\n"
+            "  if (url.pathname.endsWith('/version.txt')) return;\n"
             "  // Cache-first for the precache shell + anything same-origin;\n"
             "  // falls back to network and caches the response on the way by.\n"
             "  e.respondWith((async () => {\n"
@@ -377,6 +381,15 @@ class SiteBuilder:
         # Service worker so the site is usable offline after first load.
         # Version stamp pins a cache key — rebuilds evict old caches.
         sw_path = self._write_service_worker(meta.get("version", "v0.0.0"))
+
+        # Tiny version pin file, polled by the client every ~15 min to
+        # detect new deploys. Excluded from the SW's fetch handler
+        # (see _write_service_worker) so polling always reaches origin
+        # rather than serving the cached, just-loaded copy.
+        version_path = self.config.site_dir / "version.txt"
+        version_path.write_text(
+            meta.get("version", "v0.0.0") + "\n", encoding="utf-8",
+        )
 
         total_events = sum(len(c.events) for c in camps)
         with_web = sum(1 for c in camps if c.website)
