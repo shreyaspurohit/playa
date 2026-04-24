@@ -789,7 +789,29 @@
   .map-title { margin: 0; font-size: 18px; font-weight: 600; }
   .map-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
   .map-sub code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--chip-bg); padding: 1px 4px; border-radius: 3px; }
-  .map-actions { display: flex; align-items: center; gap: 8px; }
+  .map-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .map-zoom-ctl {
+    display: inline-flex; align-items: center; gap: 0;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--chip-bg); padding: 2px;
+  }
+  .map-zoom-btn, .map-zoom-reset {
+    width: 30px; height: 30px; padding: 0;
+    border: 0; background: transparent; color: var(--text);
+    font-size: 18px; font-weight: 600; line-height: 1;
+    cursor: pointer; border-radius: 999px;
+  }
+  .map-zoom-btn:hover:not([disabled]),
+  .map-zoom-reset:hover {
+    background: var(--bg);
+  }
+  .map-zoom-btn[disabled] { opacity: 0.35; cursor: not-allowed; }
+  .map-zoom-level {
+    font-size: 11px; color: var(--muted);
+    min-width: 36px; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .map-zoom-reset { font-size: 15px; }
   .map-gps { font-size: 12px; color: var(--muted); }
   .map-gps-err { font-size: 12px; color: #c2410c; }
   .brc-svg {
@@ -801,6 +823,11 @@
     margin: 0 auto; background: var(--bg);
     border: 1px solid var(--border); border-radius: 12px;
   }
+  /* Pan affordances — only when zoomed in. `touch-action: none` lets
+     pointer-drag handlers intercept horizontal + vertical finger
+     scrolls instead of the browser consuming them as page scroll. */
+  .brc-svg.pannable { cursor: grab; touch-action: none; }
+  .brc-svg.pannable:active { cursor: grabbing; }
   .brc-playa { fill: var(--chip-bg); opacity: 0.4; }
   /* Base grid — thicker + more opaque than before so the clock ×
      letter mesh reads as a coordinate grid instead of decoration. */
@@ -1023,19 +1050,23 @@
      halo radius bump handled inline via the updated `d=` + `r=`. */
   .brc-my-camp { cursor: pointer; }
   .brc-my-camp-halo { fill: var(--my-camp); opacity: 0.22; }
+  .brc-my-camp.active .brc-my-camp-halo { opacity: 0.45; }
   .brc-my-camp-body {
     fill: var(--my-camp); stroke: #fff; stroke-width: 8;
     stroke-linejoin: round;
   }
+  .brc-my-camp.active .brc-my-camp-body { stroke-width: 12; }
   .brc-friend-camp { cursor: pointer; }
   .brc-friend-camp-halo {
     fill: hsl(var(--friend-hue, 20), 65%, 50%); opacity: 0.18;
   }
+  .brc-friend-camp.active .brc-friend-camp-halo { opacity: 0.4; }
   .brc-friend-camp-body {
     fill: hsl(var(--friend-hue, 20), 65%, 50%);
     stroke: #fff; stroke-width: 5;
     stroke-linejoin: round;
   }
+  .brc-friend-camp.active .brc-friend-camp-body { stroke-width: 9; }
   .brc-meet { cursor: pointer; }
   .brc-meet .brc-meet-body {
     fill: var(--meet); opacity: 0.88;
@@ -1182,13 +1213,25 @@
      mouse. Rules land after the 600px block so they cascade-win where
      they overlap. */
   @media (pointer: coarse) {
-    .theme-btn      { width: 40px; height: 40px; font-size: 18px; }
+    /* Tablet / touch-laptop size. Phones (max-width: 600px) override
+       this to 26×26 below — theme is set-once, doesn't need a 44pt
+       tap target at phone scale. */
+    .theme-btn      { width: 36px; height: 36px; font-size: 16px; }
     .info-btn       { width: 40px; height: 40px; font-size: 17px; }
     .modal-close    { width: 44px; height: 44px; font-size: 20px; }
     .ev-fav         { width: 36px; height: 36px; font-size: 18px; }
     /* Expand the hide button's hit area without changing the visible
        icon size — padding is the tap-target box, icon is 16px inside. */
     .sched-hide-btn { padding: 10px; }
+  }
+
+  /* Phone override for the theme pill — has to come AFTER the coarse-
+     pointer block above so it wins source-order when both conditions
+     match (which is every phone). Set-once control; 26px stays
+     comfortably tappable at this scale. */
+  @media (max-width: 600px) {
+    .themes { gap: 0; padding: 2px; }
+    .theme-btn { width: 26px; height: 26px; font-size: 13px; }
   }
 </style>
 <script>

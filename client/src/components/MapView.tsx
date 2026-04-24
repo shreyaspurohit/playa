@@ -7,7 +7,7 @@
 //   - SVG viewBox spans ±6000 ft centered on the Man
 //   - 12:00 points up. Clockwise as you'd read a real clock.
 //   - Lat/lng → ft via haversine + compass rotation (see utils/address).
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Camp, MeetSpot } from '../types';
 import type { BrcPOI } from '../map/data';
 import { BRC, POIS } from '../map/data';
@@ -60,6 +60,16 @@ const VIEWBOX_RADIUS = 6000; // ft — ~50% buffer past K street (left/right/bot
 // open playa. Crop the viewBox so the top margin is just enough for
 // the 2:00 + 10:00 hour labels (at y≈-2875) with breathing room.
 const VIEWBOX_TOP_MARGIN = 3300;
+/** Default viewBox geometry (pre-zoom). Width/height derived from
+ *  VIEWBOX_RADIUS + VIEWBOX_TOP_MARGIN; center is the midpoint of that
+ *  box, which sits 1350 ft south of the Man because the view is
+ *  asymmetrically cropped (more room below for the city). */
+const DEFAULT_VB_WIDTH = VIEWBOX_RADIUS * 2;
+const DEFAULT_VB_HEIGHT = VIEWBOX_RADIUS + VIEWBOX_TOP_MARGIN;
+const DEFAULT_CENTER = { x: 0, y: (DEFAULT_VB_HEIGHT / 2) - VIEWBOX_TOP_MARGIN };
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 1.5;
 
 export function MapView({
   camps, favCampIds, friendFavCampIds,
@@ -73,6 +83,30 @@ export function MapView({
 
   const [infoOpen, setInfoOpen] = useState(false);
   const [addingSpot, setAddingSpot] = useState(false);
+  // Zoom state. `zoom` multiplies the rendered scale (1 = fit whole city,
+  // ~4 = close-up). `center` is the (x, y) in SVG feet the viewBox is
+  // centered on — moves when the user selects a pin/spot while zoomed in
+  // so the selection stays in frame.
+  const [zoom, setZoom] = useState(1);
+  const [center, setCenter] = useState(DEFAULT_CENTER);
+  const zoomIn = useCallback(
+    () => setZoom((z) => Math.min(ZOOM_MAX, z * ZOOM_STEP)),
+    [],
+  );
+  const zoomOut = useCallback(
+    () => setZoom((z) => {
+      const next = Math.max(ZOOM_MIN, z / ZOOM_STEP);
+      // Re-anchor to the full-city view once we're back to 1x so the
+      // user doesn't land on an off-center frame.
+      if (next === ZOOM_MIN) setCenter(DEFAULT_CENTER);
+      return next;
+    }),
+    [],
+  );
+  const resetZoom = useCallback(
+    () => { setZoom(1); setCenter(DEFAULT_CENTER); },
+    [],
+  );
   // Selected meet spot (mine or a friend's). Mutually exclusive with
   // `targetId` (the camp-selection path). Whichever the user last
   // clicked is the one whose details show near the Man.
@@ -206,7 +240,35 @@ export function MapView({
       }>;
   }, [camps, favCampIds, friendFavCampIds]);
 
-  const target = targetId ? pins.find((p) => p.camp.id === targetId) ?? null : null;
+  // Target resolution. Falls through three sources in priority order —
+  // starred pins, my home camp, friends' home camps — so selecting any
+  // tent on the map (not just starred dots) shows the camp details.
+  // `author` and `kind` drive the "Your camp — X" / "Alice's camp: X"
+  // prefix on the big label near the Man.
+  const target = useMemo((): {
+    camp: Camp; x: number; y: number;
+    author: string | null;
+    kind: 'fav' | 'mine' | 'friend';
+  } | null => {
+    if (!targetId) return null;
+    const p = pins.find((x) => x.camp.id === targetId);
+    if (p) return { camp: p.camp, x: p.x, y: p.y, author: null, kind: 'fav' };
+    if (myCampPin && myCampPin.camp.id === targetId) {
+      return { camp: myCampPin.camp, x: myCampPin.x, y: myCampPin.y, author: null, kind: 'mine' };
+    }
+    const f = friendCampPins.find((fp) => fp.camp.id === targetId);
+    if (f) return { camp: f.camp, x: f.x, y: f.y, author: f.name, kind: 'friend' };
+    return null;
+  }, [targetId, pins, myCampPin, friendCampPins]);
+
+  // When the user picks a pin / spot / POI while zoomed in, pan the
+  // viewBox over so the selection is visible. At 1x the whole city is
+  // already visible so there's nothing to pan toward.
+  useEffect(() => {
+    if (zoom <= 1) return;
+    if (target) setCenter({ x: target.x, y: target.y });
+    else if (activeSpot) setCenter({ x: activeSpot.x, y: activeSpot.y });
+  }, [target, activeSpot, zoom]);
 
   // User GPS → SVG coordinates (only when we have a fix)
   const userSvg = geo.status === 'ready'
@@ -269,6 +331,36 @@ export function MapView({
           </p>
         </div>
         <div class="map-actions">
+          <div class="map-zoom-ctl" role="group" aria-label="Map zoom">
+            <button
+              type="button"
+              class="map-zoom-btn"
+              aria-label="Zoom out"
+              title="Zoom out"
+              onClick={zoomOut}
+              disabled={zoom <= ZOOM_MIN}
+            >−</button>
+            <span class="map-zoom-level" aria-live="polite">
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              type="button"
+              class="map-zoom-btn"
+              aria-label="Zoom in"
+              title="Zoom in"
+              onClick={zoomIn}
+              disabled={zoom >= ZOOM_MAX}
+            >+</button>
+            {zoom > 1 && (
+              <button
+                type="button"
+                class="map-zoom-reset"
+                aria-label="Reset zoom"
+                title="Reset zoom"
+                onClick={resetZoom}
+              >⤾</button>
+            )}
+          </div>
           <button
             type="button"
             class="map-legend-btn"
@@ -522,13 +614,21 @@ export function MapView({
             activeSpot={activeSpot}
             activeSpotAddress={activeSpot ? parseAddress(activeSpot.address) : null}
             poiPins={poiPins}
+            zoom={zoom}
+            center={center}
+            setCenter={setCenter}
           />
           {/* Pin list + navigation details */}
           <div class="map-list">
             <h4>Starred camps</h4>
             {target && (
               <div class="map-target-box">
-                <div class="map-target-name">→ {target.camp.name}</div>
+                <div class="map-target-name">
+                  →{' '}
+                  {target.kind === 'mine' ? <>Your camp — <strong>{target.camp.name}</strong></>
+                    : target.kind === 'friend' ? <>{target.author}'s camp — <strong>{target.camp.name}</strong></>
+                    : target.camp.name}
+                </div>
                 <div class="map-target-addr">{target.camp.location}</div>
                 {targetInfo ? (
                   <>
@@ -642,10 +742,14 @@ function Svg({
   pins, target, targetAddress, userSvg, onSelectPin, onClearSelection,
   myCampPin, myMeetPins, friendCampPins, friendMeetPins,
   selectedSpot, setSelectedSpot, activeSpot, activeSpotAddress,
-  poiPins,
+  poiPins, zoom, center, setCenter,
 }: {
   pins: Array<{ camp: Camp; x: number; y: number; mine: boolean; friends: string[] }>;
-  target: { camp: Camp; x: number; y: number } | null;
+  target: {
+    camp: Camp; x: number; y: number;
+    author: string | null;
+    kind: 'fav' | 'mine' | 'friend';
+  } | null;
   /** Parsed address for the selected camp — both the polar numerics
    *  (for drawing the highlighted radial + ring arc) and the display
    *  strings (for the large address readout next to the Man). Null
@@ -693,25 +797,110 @@ function Svg({
    *  from map/data.ts, resolved into SVG space. Rendered as distinct
    *  non-selectable markers beneath the camp + meet pins. */
   poiPins: Array<{ poi: BrcPOI; x: number; y: number }>;
+  /** Zoom multiplier (1 = fit whole city). Width/height of the viewBox
+   *  scale inversely with this. */
+  zoom: number;
+  /** SVG-space point the viewBox is centered on — moves on selection
+   *  when zoom > 1 so the picked pin stays in frame. */
+  center: { x: number; y: number };
+  /** Setter for pan — wired to pointer drag events below. */
+  setCenter: (c: { x: number; y: number }) => void;
 }) {
-  const vb = VIEWBOX_RADIUS;
-  const top = VIEWBOX_TOP_MARGIN;
   // Radial streets we draw: 2:00 through 10:00. The arc is NOT a full
   // circle — the 6:00 side is open to the playa.
   const radialHours = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+  // viewBox derived from zoom + center. At zoom=1 this reproduces the
+  // original `-6000 -3300 12000 9300` frame exactly (DEFAULT_CENTER is
+  // the midpoint of that frame).
+  const vbW = DEFAULT_VB_WIDTH / zoom;
+  const vbH = DEFAULT_VB_HEIGHT / zoom;
+  const vbX = center.x - vbW / 2;
+  const vbY = center.y - vbH / 2;
+
+  // Pan via pointer events. Single path handles mouse + touch + pen via
+  // the Pointer Events API. `drag` holds the drag-start anchor (pointer
+  // screen position + viewBox center at press) so each move computes an
+  // absolute delta — avoids jitter from accumulated per-move math.
+  //
+  // We DELAY calling setPointerCapture until the pointer crosses a real
+  // movement threshold. Capturing on pointerdown rewires subsequent
+  // `click` events to the SVG (the capture target) rather than to the
+  // actual child pin that was tapped — which silently breaks all pin
+  // selection while zoomed. Only claim the pointer once we know the
+  // user is dragging, not tapping.
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const drag = useRef<null | {
+    pointerId: number;
+    startClientX: number; startClientY: number;
+    startCenterX: number; startCenterY: number;
+    captured: boolean;
+  }>(null);
+  const didMove = useRef(false);
+  // Movement threshold in screen pixels. Below this, treat the gesture
+  // as a tap (click propagates to whatever child was hit). Above it,
+  // claim pointer capture + start panning.
+  const PAN_THRESHOLD_PX = 6;
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (zoom <= 1) return; // nothing to pan to at 1x — whole city is shown
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    drag.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX, startClientY: e.clientY,
+      startCenterX: center.x, startCenterY: center.y,
+      captured: false,
+    };
+    didMove.current = false;
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    const d = drag.current;
+    if (!d || d.pointerId !== e.pointerId || !svgRef.current) return;
+    const pxDelta = Math.abs(e.clientX - d.startClientX)
+      + Math.abs(e.clientY - d.startClientY);
+    if (!d.captured) {
+      if (pxDelta < PAN_THRESHOLD_PX) return; // still within tap slop
+      svgRef.current.setPointerCapture(e.pointerId);
+      d.captured = true;
+      didMove.current = true;
+    }
+    // Convert pixel delta → SVG units. Same scale factor both axes
+    // because preserveAspectRatio is xMidYMid meet (uniform scaling).
+    const rect = svgRef.current.getBoundingClientRect();
+    const scale = vbW / rect.width;
+    const dx = (e.clientX - d.startClientX) * scale;
+    const dy = (e.clientY - d.startClientY) * scale;
+    // Drag right → center moves left so content follows the finger.
+    setCenter({ x: d.startCenterX - dx, y: d.startCenterY - dy });
+  };
+  const onPointerEnd = (e: PointerEvent) => {
+    const d = drag.current;
+    if (d && d.pointerId === e.pointerId) {
+      if (d.captured) svgRef.current?.releasePointerCapture(e.pointerId);
+      drag.current = null;
+    }
+  };
+  const onSvgClick = () => {
+    if (didMove.current) { didMove.current = false; return; }
+    onClearSelection();
+  };
 
   return (
     <svg
-      class="brc-svg"
-      viewBox={`${-vb} ${-top} ${vb * 2} ${vb + top}`}
+      ref={svgRef}
+      class={'brc-svg' + (zoom > 1 ? ' pannable' : '')}
+      viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
       preserveAspectRatio="xMidYMid meet"
       aria-label="Black Rock City map"
-      onClick={onClearSelection}
+      onClick={onSvgClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
     >
       {/* background — "open playa" fill. Sized generously and clipped
           to viewBox automatically; the top half gets cropped away
           along with the unused empty space. */}
-      <circle cx={0} cy={0} r={vb * 0.98} class="brc-playa" />
+      <circle cx={0} cy={0} r={VIEWBOX_RADIUS * 0.98} class="brc-playa" />
       {/* Concentric letter streets, 2:00 → 10:00 through 6:00 (the
           city side). Polyline approximation — SVG's A-command flags
           for large-arc/sweep disambiguation render counter-intuitively
@@ -754,13 +943,28 @@ function Svg({
           6:00 axis line running downward. Also handles meet spots —
           whichever of {camp, spot} is the active selection renders. */}
       {target && targetAddress && (
-        <text
-          x={0} y={-460}
-          class="brc-label brc-address-label"
-          text-anchor="middle"
-        >
-          {targetAddress.clock} &amp; {targetAddress.street}
-        </text>
+        <>
+          {/* Camp name above the big address — mirrors the meet-spot /
+              POI layout so all selections read the same. Prefixes the
+              name with a possessive when it's a home camp ("Your
+              camp — X" / "Alice's camp — X"). */}
+          <text
+            x={0} y={-920}
+            class="brc-label brc-address-title"
+            text-anchor="middle"
+          >
+            {target.kind === 'mine' ? `Your camp — ${target.camp.name}`
+              : target.kind === 'friend' ? `${target.author}'s camp — ${target.camp.name}`
+              : target.camp.name}
+          </text>
+          <text
+            x={0} y={-460}
+            class="brc-label brc-address-label"
+            text-anchor="middle"
+          >
+            {targetAddress.clock} &amp; {targetAddress.street}
+          </text>
+        </>
       )}
       {!target && activeSpot && activeSpotAddress && (
         <>
@@ -930,10 +1134,14 @@ function Svg({
           orange used elsewhere. */}
       {myCampPin && (
         <g
-          class="brc-my-camp"
+          class={'brc-my-camp' + (target?.camp.id === myCampPin.camp.id ? ' active' : '')}
           transform={`translate(${myCampPin.x} ${myCampPin.y})`}
           onClick={(e) => { e.stopPropagation(); onSelectPin(myCampPin.camp.id); }}
         >
+          {/* Transparent hit-catcher — the halo (r=140) + tent body
+              (~75px wide) map to only ~4px on a phone, below fat-finger
+              minima. Same pattern as camp pins + POIs. */}
+          <circle r={180} class="brc-pin-hit" />
           <circle r={140} class="brc-my-camp-halo" />
           {/* Tent triangle ~150 viewBox units wide, 125 tall.
               Roughly 2x the camp-pin circle footprint. */}
@@ -945,11 +1153,12 @@ function Svg({
       {friendCampPins.map((fp) => (
         <g
           key={`friend-camp-${fp.name}-${fp.camp.id}`}
-          class="brc-friend-camp"
+          class={'brc-friend-camp' + (target?.camp.id === fp.camp.id ? ' active' : '')}
           transform={`translate(${fp.x} ${fp.y})`}
           onClick={(e) => { e.stopPropagation(); onSelectPin(fp.camp.id); }}
           style={friendHueStyle(fp.name)}
         >
+          <circle r={150} class="brc-pin-hit" />
           <circle r={80} class="brc-friend-camp-halo" />
           <path d="M -45 32 L 0 -40 L 45 32 Z" class="brc-friend-camp-body" />
           <title>{fp.name}'s camp — {fp.camp.name}</title>
