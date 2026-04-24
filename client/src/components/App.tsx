@@ -82,6 +82,11 @@ export function App() {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [showAllTags, setShowAllTags] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
+  // "Has a website" filter — narrows to ~40% of camps that posted a
+  // URL on the directory. Useful for picking camps in advance: web
+  // pages tend to mean a camp organized enough to publish hours,
+  // ticketing, or contact info.
+  const [webOnly, setWebOnly] = useState(false);
   const [focusKey, setFocusKey] = useState(0);
 
   const campFavs = useFavorites(LS.favs);
@@ -263,11 +268,12 @@ export function App() {
         const friend = friends.anyFriendFavCamp(c.id) || campHasFriendFavEvent(c);
         if (!mine && !friend) return false;
       }
+      if (webOnly && !(c.website && c.website.trim())) return false;
       for (const t of activeTags) if (!c.tags.includes(t)) return false;
       if (queryLower && haystackOf(c).indexOf(queryLower) === -1) return false;
       return true;
     },
-    [favOnly, campFavs, campHasFavEvent, friends, campHasFriendFavEvent,
+    [favOnly, webOnly, campFavs, campHasFavEvent, friends, campHasFriendFavEvent,
      activeTags, queryLower],
   );
 
@@ -286,6 +292,13 @@ export function App() {
     return n;
   }, [camps, campFavs, campHasFavEvent, friends, campHasFriendFavEvent]);
 
+  const webMatchCount = useMemo(() => {
+    if (!camps) return 0;
+    let n = 0;
+    for (const c of camps) if (c.website && c.website.trim()) n++;
+    return n;
+  }, [camps]);
+
   // Only your own starred events. Friends' events still show on the
   // calendar, but a "48 things on your calendar (of which 30 are yours)"
   // tab badge is just noise — the user wants a count of their own plans.
@@ -301,7 +314,7 @@ export function App() {
   }, []);
 
   const onClear = useCallback(() => {
-    setQuery(''); setActiveTags(new Set()); setFavOnly(false);
+    setQuery(''); setActiveTags(new Set()); setFavOnly(false); setWebOnly(false);
     setFocusKey((k) => k + 1);
   }, []);
 
@@ -376,6 +389,9 @@ export function App() {
             favCampN={campFavs.size}
             favEventN={eventFavs.size}
             onToggleFavFilter={() => setFavOnly((v) => !v)}
+            webOnly={webOnly}
+            webCount={webMatchCount}
+            onToggleWebFilter={() => setWebOnly((v) => !v)}
             onUnfavoriteAll={onUnfavoriteAll}
             onShare={() => setShareOpen(true)}
             focusKey={focusKey}

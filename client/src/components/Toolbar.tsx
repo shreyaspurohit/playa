@@ -10,6 +10,9 @@ interface Props {
   favCampN: number;
   favEventN: number;
   onToggleFavFilter: () => void;
+  webOnly: boolean;
+  webCount: number;          // number of camps with a website
+  onToggleWebFilter: () => void;
   onUnfavoriteAll: () => void;
   onShare: () => void;
   focusKey: number;          // increment to force-focus the search box
@@ -17,8 +20,9 @@ interface Props {
 
 export function Toolbar({
   query, onQueryChange, onClear,
-  favOnly, favCount, favCampN, favEventN,
-  onToggleFavFilter, onUnfavoriteAll, onShare, focusKey,
+  favOnly, favCount, favCampN, favEventN, onToggleFavFilter,
+  webOnly, webCount, onToggleWebFilter,
+  onUnfavoriteAll, onShare, focusKey,
 }: Props) {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const favFilterRef = useRef<HTMLButtonElement | null>(null);
@@ -75,6 +79,15 @@ export function Toolbar({
             onClick={handleFilterClick}
           >
             {favFilterLabel} Favorites <span class="count">({favCount})</span>
+          </button>
+          <button
+            class={'fav-filter' + (webOnly ? ' active' : '')}
+            type="button"
+            aria-pressed={webOnly ? 'true' : 'false'}
+            title={`${webCount} camps published a website on the directory`}
+            onClick={onToggleWebFilter}
+          >
+            With website ↗ <span class="count">({webCount})</span>
           </button>
         </div>
         <div class="actions">

@@ -29,6 +29,9 @@ function mountToolbar(over: Partial<Parameters<typeof Toolbar>[0]> = {}) {
     favCampN: 0,
     favEventN: 0,
     onToggleFavFilter: () => {},
+    webOnly: false,
+    webCount: 0,
+    onToggleWebFilter: () => {},
     onUnfavoriteAll: () => {},
     onShare: () => {},
     focusKey: 0,
@@ -100,5 +103,26 @@ describe('<Toolbar>', () => {
     });
     (el.querySelector('#fav-filter') as HTMLButtonElement).click();
     assert.equal(fired, false);
+  });
+
+  test('renders the "With website" filter with its count', () => {
+    const el = mountToolbar({ webCount: 583 });
+    assert.match(el.innerHTML, /With website ↗ <span class="count">\(583\)<\/span>/);
+  });
+
+  test('"With website" toggle reflects active state via aria-pressed', () => {
+    const inactive = mountToolbar({ webOnly: false });
+    assert.match(inactive.innerHTML, /aria-pressed="false"[^>]*>With website/);
+    const active = mountToolbar({ webOnly: true });
+    assert.match(active.innerHTML, /aria-pressed="true"[^>]*>With website/);
+  });
+
+  test('clicking "With website" calls onToggleWebFilter', () => {
+    let fired = false;
+    const el = mountToolbar({ onToggleWebFilter: () => { fired = true; } });
+    const btns = el.querySelectorAll('.fav-filter');
+    // Second `.fav-filter` is the Has-site button (Favorites is first).
+    (btns[1] as HTMLButtonElement).click();
+    assert.ok(fired);
   });
 });
