@@ -924,7 +924,15 @@
   .map-pin-row.active { background: var(--accent-soft); border-color: var(--accent); }
   .map-pin-dot { font-size: 14px; color: var(--accent); }
   .map-pin-dot.mine { color: #f59e0b; }
+  .map-pin-mid {
+    display: flex; flex-wrap: wrap; align-items: center;
+    column-gap: 6px; row-gap: 3px; min-width: 0;
+  }
   .map-pin-name { font-size: 13px; font-weight: 500; }
+  .map-pin-friends {
+    display: inline-flex; flex-wrap: wrap; gap: 3px;
+    font-size: 11px;
+  }
   .map-pin-addr { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .map-target-box {
     padding: 10px 14px; margin-bottom: 10px;
@@ -944,6 +952,17 @@
   .map-target-events li { font-size: 12px; line-height: 1.5; }
   .map-target-events a { color: var(--accent); text-decoration: none; font-weight: 500; }
   .map-target-events a:hover { text-decoration: underline; }
+  /* "Starred by you, alice, bob" rows under the camp target box and
+     each starred event. Reuses .fav-by-chip from the camp cards so
+     the chips read the same in both contexts. */
+  .map-target-faved {
+    margin-top: 6px; font-size: 12px; color: var(--muted);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  }
+  .map-ev-faved {
+    margin-left: 6px;
+    display: inline-flex; flex-wrap: wrap; gap: 3px; vertical-align: middle;
+  }
   .map-ev-time { color: var(--muted); font-variant-numeric: tabular-nums; }
   .map-target-links { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .map-ext-link { font-size: 13px; color: var(--accent); text-decoration: none; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 6px; }
@@ -1082,6 +1101,18 @@
     stroke-linejoin: round;
   }
   .brc-friend-camp.active .brc-friend-camp-body { stroke-width: 9; }
+  /* Friend nickname label drawn under the tent / meet-spot diamond so
+     who-owns-what reads at a glance without tapping. Uses the same
+     friend hue as the marker itself + a --bg knockout stroke to keep
+     the text legible over grid lines. */
+  .brc-friend-label {
+    fill: hsl(var(--friend-hue, 20), 65%, 45%);
+    font-size: 220px; font-weight: 600;
+    paint-order: stroke;
+    stroke: var(--bg); stroke-width: 40;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
   .brc-meet { cursor: pointer; }
   .brc-meet .brc-meet-body {
     fill: var(--meet); opacity: 0.88;

@@ -29,11 +29,12 @@ def write_meta(config: Config) -> Path:
     now_utc = datetime.now(timezone.utc)
     pacific = now_utc.astimezone(PACIFIC)
     meta = {
-        "fetched_at":   now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "fetched_date": pacific.strftime("%Y-%m-%d"),
-        # Version includes HHMM (Pacific) so multiple deploys on the same
-        # day get distinct, monotonically-increasing strings — the client
-        # uses lexicographic compare to decide "newer" without parsing.
+        "fetched_at":   now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),  # UTC (machine-readable)
+        "fetched_date": pacific.strftime("%Y-%m-%d"),             # Pacific (display)
+        # Version: vYYYY.MM.DD.HHMM in **Pacific**, same TZ as
+        # fetched_date so the date prefix matches and the lex-order
+        # monotonicity the update banner relies on never crosses a
+        # midnight boundary that's offset from the displayed date.
         "version":      "v" + pacific.strftime("%Y.%m.%d.%H%M"),
         "camps":        camps,
         "events":       events,

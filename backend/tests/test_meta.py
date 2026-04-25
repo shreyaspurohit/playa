@@ -55,6 +55,37 @@ class WriteMetaTests(unittest.TestCase):
         self.assertTrue(meta["version"].startswith(date_prefix + "."),
                         f"{meta['version']!r} should start with {date_prefix + '.'!r}")
 
+    def test_version_hhmm_is_pacific_not_utc(self):
+        """Both fetched_date and version's HHMM must be Pacific. UTC drift
+        would silently move version-day boundaries 7-8 hours off from
+        fetched_date, breaking lex-order monotonicity for the client's
+        update banner."""
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        (self.config.pages_dir / "page_01.json").write_text("[]")
+        meta = self._run()
+        version = meta["version"]
+        fetched_date = meta["fetched_date"]
+        # Parse "vYYYY.MM.DD.HHMM" → both halves.
+        body = version[1:]  # strip leading 'v'
+        version_date = body.rsplit(".", 1)[0].replace(".", "-")
+        version_hhmm = body.rsplit(".", 1)[1]
+        # Date half: same Pacific date as fetched_date.
+        self.assertEqual(version_date, fetched_date)
+        # HHMM half: same Pacific HH:MM as "now" in Pacific (allowing a
+        # one-minute slop for the boundary case where the test crosses
+        # the minute mark between write_meta() and this assertion).
+        now_pacific = datetime.now(timezone.utc).astimezone(
+            ZoneInfo("America/Los_Angeles"))
+        expected = now_pacific.strftime("%H%M")
+        # Generate the next minute too, to avoid a flaky test if write_meta
+        # ran in minute N but this line evaluates in minute N+1.
+        prev = ((int(expected[:2]) * 60 + int(expected[2:])) - 1) % (24 * 60)
+        prev_str = f"{prev // 60:02d}{prev % 60:02d}"
+        self.assertIn(version_hhmm, {expected, prev_str},
+                      f"version HHMM {version_hhmm!r} not pacific "
+                      f"(now {expected!r}, prev minute {prev_str!r})")
+
     def test_handles_missing_events_field(self):
         (self.config.pages_dir / "page_01.json").write_text(json.dumps([
             {"id": "1", "name": "A"},  # no events key

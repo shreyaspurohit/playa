@@ -250,15 +250,31 @@ export function MapView({
     camp: Camp; x: number; y: number;
     author: string | null;
     kind: 'fav' | 'mine' | 'friend';
+    /** Names of friends who starred this camp (for kind='fav'). Empty
+     *  for 'mine' / 'friend' kinds — those have a single 'author'. */
+    friends: string[];
   } | null => {
     if (!targetId) return null;
     const p = pins.find((x) => x.camp.id === targetId);
-    if (p) return { camp: p.camp, x: p.x, y: p.y, author: null, kind: 'fav' };
+    if (p) {
+      return {
+        camp: p.camp, x: p.x, y: p.y,
+        author: null, kind: 'fav', friends: p.friends,
+      };
+    }
     if (myCampPin && myCampPin.camp.id === targetId) {
-      return { camp: myCampPin.camp, x: myCampPin.x, y: myCampPin.y, author: null, kind: 'mine' };
+      return {
+        camp: myCampPin.camp, x: myCampPin.x, y: myCampPin.y,
+        author: null, kind: 'mine', friends: [],
+      };
     }
     const f = friendCampPins.find((fp) => fp.camp.id === targetId);
-    if (f) return { camp: f.camp, x: f.x, y: f.y, author: f.name, kind: 'friend' };
+    if (f) {
+      return {
+        camp: f.camp, x: f.x, y: f.y,
+        author: f.name, kind: 'friend', friends: [],
+      };
+    }
     return null;
   }, [targetId, pins, myCampPin, friendCampPins]);
 
@@ -559,11 +575,15 @@ export function MapView({
                     >
                       <span class="map-meet-diamond friend-tent" aria-hidden="true" style={friendChipStyle(fp.name)}><TentIcon size={16} /></span>
                       <div class="map-meet-body">
+                        {/* Primary line: camp name + friend chip — same
+                            shape as the Starred camps list (name first,
+                            chip after) so the two lists scan identically. */}
                         <div class="map-meet-label">
+                          {fp.camp.name}
+                          {' '}
                           <span class="fav-by-chip" style={friendChipStyle(fp.name)}>{fp.name}</span>
-                          {' · camp'}
                         </div>
-                        <div class="map-pin-addr">{fp.camp.name} — {fp.camp.location}</div>
+                        <div class="map-pin-addr">{fp.camp.location}</div>
                       </div>
                     </li>
                   ))}
@@ -584,8 +604,9 @@ export function MapView({
                         <span class="map-meet-diamond" aria-hidden="true">◆</span>
                         <div class="map-meet-body">
                           <div class="map-meet-label">
+                            {fm.spot.label}
+                            {' '}
                             <span class="fav-by-chip" style={friendChipStyle(fm.name)}>{fm.name}</span>
-                            {' · '}{fm.spot.label}
                           </div>
                           <div class="map-pin-addr">
                             {fm.spot.address}{fm.spot.when ? ` · ${fm.spot.when}` : ''}
@@ -614,6 +635,21 @@ export function MapView({
                     : target.camp.name}
                 </div>
                 <div class="map-target-addr">{target.camp.location}</div>
+                {target.kind === 'fav' && (favCampIds.has(target.camp.id) || target.friends.length > 0) && (
+                  <div class="map-target-faved">
+                    Starred by{' '}
+                    {favCampIds.has(target.camp.id) && (
+                      <span class="fav-by-chip mine">you</span>
+                    )}
+                    {target.friends.map((n) => (
+                      <span
+                        key={`f-${n}`}
+                        class="fav-by-chip"
+                        style={friendChipStyle(n)}
+                      >{n}</span>
+                    ))}
+                  </div>
+                )}
                 {targetInfo ? (
                   <>
                     <div class="map-target-nav">
@@ -646,18 +682,36 @@ export function MapView({
                   return (
                     <div class="map-target-events">
                       <div class="map-target-events-head">
-                        Your starred events at this camp
+                        Starred events at this camp
                       </div>
                       <ul>
-                        {starred.map((e) => (
-                          <li key={e.id}>
-                            <a
-                              href={`https://directory.burningman.org/events/${encodeURIComponent(e.id)}/`}
-                              target="_blank" rel="noopener"
-                            >{e.name}</a>
-                            {e.display_time && <span class="map-ev-time"> · {e.display_time}</span>}
-                          </li>
-                        ))}
+                        {starred.map((e) => {
+                          const eventFriends = friendFavEventIds(e.id);
+                          const youStarred = favEventIds.has(e.id);
+                          return (
+                            <li key={e.id}>
+                              <a
+                                href={`https://directory.burningman.org/events/${encodeURIComponent(e.id)}/`}
+                                target="_blank" rel="noopener"
+                              >{e.name}</a>
+                              {e.display_time && <span class="map-ev-time"> · {e.display_time}</span>}
+                              {(youStarred || eventFriends.length > 0) && (
+                                <span class="map-ev-faved">
+                                  {youStarred && (
+                                    <span class="fav-by-chip mine">you</span>
+                                  )}
+                                  {eventFriends.map((n) => (
+                                    <span
+                                      key={`f-${n}`}
+                                      class="fav-by-chip"
+                                      style={friendChipStyle(n)}
+                                    >{n}</span>
+                                  ))}
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   );
@@ -695,7 +749,20 @@ export function MapView({
                   onClick={() => { setSelectedSpot(null); setTargetId(p.camp.id); }}
                 >
                   <span class={'map-pin-dot' + (p.mine ? ' mine' : '')}>★</span>
-                  <span class="map-pin-name">{p.camp.name}</span>
+                  <span class="map-pin-mid">
+                    <span class="map-pin-name">{p.camp.name}</span>
+                    {p.friends.length > 0 && (
+                      <span class="map-pin-friends">
+                        {p.friends.map((n) => (
+                          <span
+                            key={`f-${n}`}
+                            class="fav-by-chip"
+                            style={friendChipStyle(n)}
+                          >{n}</span>
+                        ))}
+                      </span>
+                    )}
+                  </span>
                   <span class="map-pin-addr">{p.camp.location}</span>
                 </li>
               ))}
@@ -1119,17 +1186,11 @@ function Svg({
           class={'brc-pin' + (target?.camp.id === p.camp.id ? ' active' : '') + (p.mine ? ' mine' : ' friend')}
           transform={`translate(${p.x} ${p.y})`}
           onClick={(e) => {
-            // Stop the click from bubbling to the SVG's clear handler,
-            // so picking a pin doesn't immediately deselect it.
             e.stopPropagation();
             onSelectPin(p.camp.id);
           }}
         >
-          {/* Invisible hit-catcher. The visible pin is tiny (r=35 dot,
-              r=70 halo) which is fine on desktop but below the ~44px
-              fat-finger minimum on a phone — Firefox Mobile was
-              swallowing taps before they reached the <g>. r=150 matches
-              the POI + my-camp footprint so all pins tap the same. */}
+          {/* Invisible hit-catcher — see comment on `brc-pin-hit`. */}
           <circle r={150} class="brc-pin-hit" />
           <circle r={70} class="brc-pin-outer" />
           <circle r={35} class="brc-pin-inner" />
@@ -1159,7 +1220,9 @@ function Svg({
           <title>Your home camp — {myCampPin.camp.name}</title>
         </g>
       )}
-      {/* Friends' home camps — tent shape in each friend's hue. */}
+      {/* Friends' home camps — tent shape in each friend's hue. The
+          nickname renders directly below the tent so a glance at the
+          map is enough to know whose camp is whose, no tap needed. */}
       {friendCampPins.map((fp) => (
         <g
           key={`friend-camp-${fp.name}-${fp.camp.id}`}
@@ -1171,6 +1234,7 @@ function Svg({
           <circle r={150} class="brc-pin-hit" />
           <circle r={80} class="brc-friend-camp-halo" />
           <path d="M -45 32 L 0 -40 L 45 32 Z" class="brc-friend-camp-body" />
+          <text x={0} y={130} class="brc-friend-label" text-anchor="middle">{fp.name}</text>
           <title>{fp.name}'s camp — {fp.camp.name}</title>
         </g>
       ))}
@@ -1200,7 +1264,9 @@ function Svg({
         );
       })}
       {/* Friends' meet spots — same diamond shape, tinted with friend
-          hue so Alice's plans read differently from Bob's. */}
+          hue so Alice's plans read differently from Bob's. Rotation is
+          nested on the inner <g> so the nickname label stays upright
+          instead of riding the 45° tilt with the diamond. */}
       {friendMeetPins.map((fm) => {
         const active =
           selectedSpot?.source === 'friend'
@@ -1210,14 +1276,17 @@ function Svg({
           <g
             key={`fr-spot-${fm.name}-${fm.idx}`}
             class={'brc-meet friend' + (active ? ' active' : '')}
-            transform={`translate(${fm.x} ${fm.y}) rotate(45)`}
+            transform={`translate(${fm.x} ${fm.y})`}
             style={friendHueStyle(fm.name)}
             onClick={(e) => {
               e.stopPropagation();
               setSelectedSpot({ source: 'friend', name: fm.name, idx: fm.idx });
             }}
           >
-            <rect x={-42} y={-42} width={84} height={84} class="brc-meet-body" />
+            <g transform="rotate(45)">
+              <rect x={-42} y={-42} width={84} height={84} class="brc-meet-body" />
+            </g>
+            <text x={0} y={105} class="brc-friend-label" text-anchor="middle">{fm.name}</text>
             <title>{fm.name}: {fm.spot.label} — {fm.spot.address}{fm.spot.when ? ` · ${fm.spot.when}` : ''}</title>
           </g>
         );
@@ -1250,6 +1319,7 @@ function friendHueStyle(name: string): Record<string, string> {
   const hue = match ? match[1] : '20';
   return { '--friend-hue': hue } as Record<string, string>;
 }
+
 
 /** Polyline approximation of an arc at `radius` between two clock
  *  hours, sampled at `steps` evenly-spaced hours. Monotonic in the

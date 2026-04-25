@@ -7,17 +7,22 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { LS, SS } from '../types';
 import { removeKey } from '../utils/storage';
 import { forceRefresh } from '../utils/refresh';
+import { buildSnapshot, downloadSnapshot } from '../utils/exportImport';
 
 interface Props {
   open: boolean;
   fetchedDate: string;
   contactEmail: string;
+  /** File-import handler. Lives in App.tsx because picking, parsing,
+   *  and dispatching needs access to the friends API + own nickname.
+   *  This component just renders the button and calls the prop. */
+  onImport: () => void;
   onClose: () => void;
 }
 
 type Tab = 'guide' | 'about';
 
-export function InfoModal({ open, fetchedDate, contactEmail, onClose }: Props) {
+export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>('about');
   const [refreshState, setRefreshState] = useState<'idle' | 'checking' | 'offline'>('idle');
@@ -35,6 +40,10 @@ export function InfoModal({ open, fetchedDate, contactEmail, onClose }: Props) {
     setRefreshState('checking');
     const outcome = await forceRefresh();
     if (outcome === 'offline') setRefreshState('offline');
+  }
+
+  function handleExport() {
+    downloadSnapshot(buildSnapshot());
   }
 
   const refreshLabel =
@@ -122,6 +131,8 @@ export function InfoModal({ open, fetchedDate, contactEmail, onClose }: Props) {
               fetchedDate={fetchedDate}
               takedownHref={takedownHref}
               onForceRefresh={handleForceRefresh}
+              onExport={handleExport}
+              onImport={onImport}
               onClearAll={handleClearAll}
               refreshState={refreshState}
               refreshLabel={refreshLabel}
@@ -208,23 +219,56 @@ function GuideTab() {
         <h3>4. Plan rendezvous with friends</h3>
         <p>
           Set a <strong>nickname</strong> in the header pill so friends
-          see who's sharing. On a camp card tap <strong>🏕 set as my
-          camp</strong> to mark your home (shows up as a big teal
-          tent on the map). On the Map tab hit <strong>+ Add</strong>{' '}
-          to drop a meet spot, e.g.,{' '}
+          see who's sharing. On a camp card tap <strong>set as my
+          camp</strong> to mark your home (shows up as a big teal tent
+          on the map). On the Map tab hit <strong>+ Add</strong> to
+          drop a meet spot, e.g.,{' '}
           <em>"Coffee at 9:00 &amp; C, Tue morning"</em>.
-        </p>
-        <p>
-          Tap <strong>📤 Share</strong> in the Camps toolbar to copy a
-          link. Whoever opens it can import your starred list, your
-          home camp, and your meet spots. Their pins appear on your
-          map in a distinct color &mdash; tap one to see whose it is.
-          Everything rides in the URL fragment; nothing is uploaded.
         </p>
       </section>
 
       <section class="guide-section">
-        <h3>5. Install &amp; offline</h3>
+        <h3>5. Share &amp; sync across devices</h3>
+        <p>
+          Three ways to move your plans around &mdash; pick the one
+          that fits the situation. All three round-trip the same
+          payload: starred camps, starred events, your home camp,
+          your meet spots.
+        </p>
+        <ul class="guide-list">
+          <li>
+            <strong>Share</strong> &mdash; copies a URL with your plans
+            in the fragment (<code>#share=&hellip;</code>). Send via
+            iMessage / Signal / email. Whoever opens it gets a banner
+            offering to import your plans as the friend named after
+            your nickname. Nothing leaves your browser; the URL
+            <em> is</em> the data.
+          </li>
+          <li>
+            <strong>Export</strong> &mdash; downloads a full JSON
+            snapshot (nickname, camps, events, my camp, meet spots,
+            hidden days, all imported friends). Use this for moving
+            from phone to laptop, or sending a friend the whole
+            thing over WiFi / AirDrop / email.
+          </li>
+          <li>
+            <strong>Import</strong> &mdash; opens a JSON file and
+            either restores your own state (when the nickname matches
+            yours) or imports the file as a friend (when it doesn't).
+            Re-importing the same person always prompts: replace
+            with the latest snapshot, or ignore. Latest wins, so
+            stale lists never linger.
+          </li>
+        </ul>
+        <p class="guide-subtle">
+          Friends' pins, camps, and meet spots are tagged with their
+          nickname in lists + on the map sidebar so you can see
+          whose plans intersect yours at a glance.
+        </p>
+      </section>
+
+      <section class="guide-section">
+        <h3>6. Install &amp; offline</h3>
         <p>
           Tap <strong>Install app</strong> in the header (Chrome /
           Android / Edge), or on iPhone open this page in Safari &rarr;{' '}
@@ -247,11 +291,14 @@ function GuideTab() {
 
 function AboutTab({
   fetchedDate, takedownHref,
-  onForceRefresh, onClearAll, refreshState, refreshLabel,
+  onForceRefresh, onExport, onImport, onClearAll,
+  refreshState, refreshLabel,
 }: {
   fetchedDate: string;
   takedownHref: string;
   onForceRefresh: () => void;
+  onExport: () => void;
+  onImport: () => void;
   onClearAll: () => void;
   refreshState: 'idle' | 'checking' | 'offline';
   refreshLabel: string;
@@ -364,6 +411,30 @@ function AboutTab({
           <span class="action-desc">
             Pull the latest build from the server. Safe offline —
             your cached copy stays intact if anything fails.
+          </span>
+        </button>
+        <button
+          class="action-btn"
+          type="button"
+          onClick={onExport}
+          title="Download every camp, event, meet spot, hidden day, friend import, and your nickname as one JSON file. Pair with Import on another device for full transfer."
+        >
+          <span class="action-label">Export to file</span>
+          <span class="action-desc">
+            Save your nickname, camps, events, meet spots, hidden
+            days, and imported friends to a JSON file.
+          </span>
+        </button>
+        <button
+          class="action-btn"
+          type="button"
+          onClick={onImport}
+          title="Read a Playa Camps export. If the nickname matches yours, restores the snapshot. If it's from someone else, asks before overwriting."
+        >
+          <span class="action-label">Import from file</span>
+          <span class="action-desc">
+            Restore a snapshot. Use this to move state between
+            devices — your phone, laptop, etc.
           </span>
         </button>
         <button

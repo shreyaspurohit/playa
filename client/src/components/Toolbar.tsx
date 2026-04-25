@@ -15,6 +15,11 @@ interface Props {
   onToggleWebFilter: () => void;
   onUnfavoriteAll: () => void;
   onShare: () => void;
+  /** Cross-device transfer. Export downloads a JSON snapshot of the
+   *  user's local state; Import opens a file picker to restore one
+   *  (or import a friend's, if the nickname differs). */
+  onExport: () => void;
+  onImport: () => void;
   focusKey: number;          // increment to force-focus the search box
 }
 
@@ -22,7 +27,7 @@ export function Toolbar({
   query, onQueryChange, onClear,
   favOnly, favCount, favCampN, favEventN, onToggleFavFilter,
   webOnly, webCount, onToggleWebFilter,
-  onUnfavoriteAll, onShare, focusKey,
+  onUnfavoriteAll, onShare, onExport, onImport, focusKey,
 }: Props) {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const favFilterRef = useRef<HTMLButtonElement | null>(null);
@@ -114,6 +119,24 @@ export function Toolbar({
               {' '}Share
             </button>
           )}
+          {hasAnything && (
+            <button
+              class="share-btn"
+              type="button"
+              title="Download a JSON snapshot — restore on another device with Import"
+              onClick={onExport}
+            >
+              <span aria-hidden="true">⬇</span>{' '}Export
+            </button>
+          )}
+          <button
+            class="share-btn"
+            type="button"
+            title="Restore a JSON snapshot — pick a file you exported, or one a friend sent over"
+            onClick={onImport}
+          >
+            <span aria-hidden="true">⬆</span>{' '}Import
+          </button>
           <button
             class={'fav-clear' + (showUnfav ? '' : ' hidden')}
             type="button"

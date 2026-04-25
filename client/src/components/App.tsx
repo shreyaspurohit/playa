@@ -9,6 +9,9 @@ import type { Payload } from '../data';
 import { readString, writeString } from '../utils/storage';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
 import type { SharePayload } from '../utils/share';
+import {
+  applySnapshot, buildSnapshot, downloadSnapshot, pickSnapshotFile,
+} from '../utils/exportImport';
 import { useFavorites } from '../hooks/useFavorites';
 import { useFriends } from '../hooks/useFriends';
 import { useMeetSpots } from '../hooks/useMeetSpots';
@@ -19,8 +22,10 @@ import { Footer } from './Footer';
 import { Gate } from './Gate';
 import { Header } from './Header';
 import { ImportBanner } from './ImportBanner';
+import { SnapshotImportBanner } from './SnapshotImportBanner';
 import { UpdateBanner } from './UpdateBanner';
 import { useVersionCheck } from '../hooks/useVersionCheck';
+import type { Snapshot } from '../utils/exportImport';
 import { InfoModal } from './InfoModal';
 import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
@@ -210,6 +215,83 @@ export function App() {
     clearShareFromUrl();
   }, []);
 
+  /**
+   * "This share is from me, on another device" path. Writes the
+   * share's payload into the user's OWN LS keys (favs / fav-events /
+   * my-camp / meet-spots) and reloads — picks up where the other
+   * device left off. Doesn't touch nickname (already matches) or
+   * keys that share links don't carry (hiddenDays, friends).
+   * For full state transfer including those, use the JSON Export.
+   */
+  const onImportAsSelf = useCallback(() => {
+    if (!incomingShare) return;
+    writeString(LS.favs, JSON.stringify(incomingShare.campIds));
+    writeString(LS.favEvents, JSON.stringify(incomingShare.eventIds));
+    writeString(LS.myCampId, incomingShare.myCampId ?? '');
+    writeString(
+      LS.meetSpots,
+      JSON.stringify(incomingShare.meetSpots ?? []),
+    );
+    clearShareFromUrl();
+    location.reload();
+  }, [incomingShare]);
+
+  /**
+   * Snapshot import flow. Picking the file is browser-native, but
+   * the decision (self-restore vs friend-import vs cancel) goes to
+   * a banner so the UX matches share-link imports — the user used
+   * to see a `confirm()` here which felt out of place.
+   *
+   * `incomingSnapshot` is the pending pick; the banner stays mounted
+   * until the user picks an action OR dismisses, mirroring how
+   * `incomingShare` drives ImportBanner.
+   */
+  const onExportSnapshot = useCallback(() => {
+    downloadSnapshot(buildSnapshot());
+  }, []);
+
+  const [incomingSnapshot, setIncomingSnapshot] = useState<Snapshot | null>(null);
+
+  const onImportSnapshot = useCallback(async () => {
+    const snap = await pickSnapshotFile();
+    if (!snap) {
+      alert("Couldn't read that file. Make sure it's a Playa Camps export.");
+      return;
+    }
+    setIncomingSnapshot(snap);
+  }, []);
+
+  const onApplySnapshotSelf = useCallback(() => {
+    if (!incomingSnapshot) return;
+    applySnapshot(incomingSnapshot);
+    setIncomingSnapshot(null);
+    location.reload();
+  }, [incomingSnapshot]);
+
+  const onImportSnapshotAsFriend = useCallback(() => {
+    if (!incomingSnapshot) return;
+    if (!incomingSnapshot.nickname) {
+      alert("This snapshot has no nickname — can't import as a friend.");
+      return;
+    }
+    friends.importFriend(
+      incomingSnapshot.nickname,
+      {
+        campIds: incomingSnapshot.campFavs,
+        eventIds: incomingSnapshot.eventFavs,
+        myCampId: incomingSnapshot.myCampId || undefined,
+        meetSpots:
+          incomingSnapshot.meetSpots.length > 0
+            ? incomingSnapshot.meetSpots
+            : undefined,
+      },
+      'overwrite',
+    );
+    setIncomingSnapshot(null);
+  }, [incomingSnapshot, friends]);
+
+  const onDismissSnapshot = useCallback(() => setIncomingSnapshot(null), []);
+
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoPulse, setInfoPulse] = useState(() => {
     const n = parseInt(readString(LS.infoSeen, '0'), 10) || 0;
@@ -379,8 +461,24 @@ export function App() {
           <ImportBanner
             payload={incomingShare}
             existing={friends.friends[incomingShare.name]}
+            ownNickname={readString(LS.nickname, '').trim()}
             onImport={onImportFriend}
+            onImportAsSelf={onImportAsSelf}
             onDismiss={onDismissImport}
+          />
+        )}
+        {incomingSnapshot && (
+          <SnapshotImportBanner
+            snapshot={incomingSnapshot}
+            ownNickname={readString(LS.nickname, '').trim()}
+            existing={
+              incomingSnapshot.nickname
+                ? friends.friends[incomingSnapshot.nickname]
+                : undefined
+            }
+            onApplySelf={onApplySnapshotSelf}
+            onImportAsFriend={onImportSnapshotAsFriend}
+            onDismiss={onDismissSnapshot}
           />
         )}
         {view === 'camps' && (
@@ -398,6 +496,8 @@ export function App() {
             onToggleWebFilter={() => setWebOnly((v) => !v)}
             onUnfavoriteAll={onUnfavoriteAll}
             onShare={() => setShareOpen(true)}
+            onExport={onExportSnapshot}
+            onImport={onImportSnapshot}
             focusKey={focusKey}
           />
         )}
@@ -464,6 +564,7 @@ export function App() {
         open={infoOpen}
         fetchedDate={meta.fetchedDate}
         contactEmail={meta.contactEmail}
+        onImport={onImportSnapshot}
         onClose={() => setInfoOpen(false)}
       />
       <ShareModal
