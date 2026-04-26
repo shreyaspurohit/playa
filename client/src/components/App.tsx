@@ -114,6 +114,18 @@ export function App() {
     writeString(LS.myCampId, next);
     setMyCampId(next);
   }, [myCampId]);
+  // Multi-tab sync for myCampId — another tab tapping "set as my camp"
+  // updates this one without a refresh.
+  useEffect(() => {
+    const win = typeof window !== 'undefined' ? window : null;
+    if (!win) return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== null && e.key !== LS.myCampId) return;
+      setMyCampId(readString(LS.myCampId, ''));
+    }
+    win.addEventListener('storage', onStorage);
+    return () => win.removeEventListener('storage', onStorage);
+  }, []);
 
   // Flatten the friend store into the shape MapView wants: one entry
   // per friend with a camp or spots, nothing for the rest.

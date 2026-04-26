@@ -3,7 +3,7 @@
 // flow can embed the whole list verbatim in its URL payload. Mirrors
 // the useFavorites API shape (array + add/remove/clear) even though
 // the underlying values are objects, not opaque ids.
-import { useCallback, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import type { MeetSpot } from '../types';
 import { LS } from '../types';
 import { readString, writeString } from '../utils/storage';
@@ -57,6 +57,18 @@ export function useMeetSpots(): MeetSpotsApi {
   const clear = useCallback(() => {
     save([]);
     setSpots([]);
+  }, []);
+
+  // Multi-tab sync: another tab's add/remove fires `storage` here.
+  useEffect(() => {
+    const win = typeof window !== 'undefined' ? window : null;
+    if (!win) return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== null && e.key !== LS.meetSpots) return;
+      setSpots(load());
+    }
+    win.addEventListener('storage', onStorage);
+    return () => win.removeEventListener('storage', onStorage);
   }, []);
 
   return { spots, add, removeAt, clear };

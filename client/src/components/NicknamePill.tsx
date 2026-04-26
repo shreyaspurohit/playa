@@ -33,6 +33,19 @@ export function NicknamePill() {
     setOpen(false);
   }, []);
 
+  // Multi-tab sync — another tab editing the nickname propagates to
+  // this pill (and to anywhere else that reads it via storage events).
+  useEffect(() => {
+    const win = typeof window !== 'undefined' ? window : null;
+    if (!win) return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== null && e.key !== LS.nickname) return;
+      setName(readString(LS.nickname, ''));
+    }
+    win.addEventListener('storage', onStorage);
+    return () => win.removeEventListener('storage', onStorage);
+  }, []);
+
   return (
     <>
       <button

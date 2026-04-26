@@ -25,5 +25,17 @@ export function useTheme() {
     document.documentElement.setAttribute('data-theme', theme);
     writeString(LS.theme, theme);
   }, [theme]);
+  // Multi-tab sync — picking a theme in tab A propagates to tab B.
+  useEffect(() => {
+    const win = typeof window !== 'undefined' ? window : null;
+    if (!win) return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== null && e.key !== LS.theme) return;
+      const next = readString(LS.theme, 'paper');
+      if (THEME_NAMES.has(next)) setThemeState(next);
+    }
+    win.addEventListener('storage', onStorage);
+    return () => win.removeEventListener('storage', onStorage);
+  }, []);
   return { theme, setTheme: setThemeState };
 }

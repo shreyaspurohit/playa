@@ -1,7 +1,7 @@
 // Friends = other people's imported favorites. We keep them separate
 // from `bm-favs` / `bm-fav-events` (which are always YOU) so the fav
 // filter can surface "who starred this" per camp.
-import { useCallback, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import type { FriendFavs, MeetSpot } from '../types';
 import { LS } from '../types';
 import { readString, writeString } from '../utils/storage';
@@ -116,6 +116,19 @@ export function useFriends(): FriendsApi {
   const clear = useCallback(() => {
     persistFriends({});
     setFriends({});
+  }, []);
+
+  // Multi-tab sync — another tab's importFriend / removeFriend writes
+  // to LS.sharedFavs and fires `storage` in this tab.
+  useEffect(() => {
+    const win = typeof window !== 'undefined' ? window : null;
+    if (!win) return;
+    function onStorage(e: StorageEvent) {
+      if (e.key !== null && e.key !== LS.sharedFavs) return;
+      setFriends(loadFriends());
+    }
+    win.addEventListener('storage', onStorage);
+    return () => win.removeEventListener('storage', onStorage);
   }, []);
 
   const names = Object.keys(friends);

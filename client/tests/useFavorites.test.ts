@@ -29,6 +29,11 @@ beforeEach(() => {
   render(h(Harness, {}), mountpoint);
 });
 afterEach(() => {
+  // Unmount before tearing down the DOM globals — the new storage-
+  // event listener (added for multi-tab sync) needs `window` to be
+  // present in its cleanup, otherwise Preact's later effect-cleanup
+  // throws "window is not defined" asynchronously.
+  try { render(null, mountpoint); } catch { /* ignore */ }
   teardownDom();
   api = null;
 });
