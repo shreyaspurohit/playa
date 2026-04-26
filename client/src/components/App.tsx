@@ -3,7 +3,7 @@
 // and wires it up.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Camp } from '../types';
-import { LS } from '../types';
+import { LS, SS } from '../types';
 import { readEmbeddedPayload, indexHaystacks, haystackOf } from '../data';
 import type { Payload } from '../data';
 import { readString, writeString } from '../utils/storage';
@@ -125,6 +125,27 @@ export function App() {
     }
     win.addEventListener('storage', onStorage);
     return () => win.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Long-lived password-share responder. After the gate unlocks, App
+  // is the component that lives for the rest of the session — Gate is
+  // gone, so its BroadcastChannel listener is gone too. Without a
+  // listener on this side, a freshly-opened second tab broadcasts
+  // {type:'request'} and gets no response, so it falls through to
+  // the password prompt. Keeping the channel open here for the
+  // whole session lets sibling tabs decrypt silently.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('BroadcastChannel' in window)) return;
+    const channel = new BroadcastChannel('playa-camps-pw');
+    channel.onmessage = (e) => {
+      const msg = e.data;
+      if (!msg || typeof msg !== 'object' || msg.type !== 'request') return;
+      let pw: string | null = null;
+      try { pw = sessionStorage.getItem(SS.password); } catch {}
+      if (pw) channel.postMessage({ type: 'share', pw });
+    };
+    return () => { try { channel.close(); } catch { /* ignore */ } };
   }, []);
 
   // Flatten the friend store into the shape MapView wants: one entry
