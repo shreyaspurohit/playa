@@ -6,6 +6,33 @@ GitHub Pages deploy with password gate at `playa.purohit.dev`, for
 personal/friends use only — **not** a general-public site. See "ToS risk +
 mitigations" below for the reasoning.
 
+## Architecture docs
+
+System-decisions docs live in `docs/`. Read these before planning any
+non-trivial change so the why-it-works-this-way isn't re-derived from
+code each time. Always cross-check against the relevant doc when a
+change touches one of these subsystems.
+
+- [`docs/00-index.md`](docs/00-index.md) — table of contents + template
+- [`docs/01-overview.md`](docs/01-overview.md) — system overview
+- [`docs/02-tech-stack.md`](docs/02-tech-stack.md) — Preact, Python, esbuild, GH Actions, Renovate
+- [`docs/03-build-pipeline.md`](docs/03-build-pipeline.md) — fetch → tag → bundle → encrypt → embed
+- [`docs/04-data-encryption.md`](docs/04-data-encryption.md) — PBKDF2 + AES-CBC for camp data
+- [`docs/05-password-management.md`](docs/05-password-management.md) — Gate + AES-GCM wrapping in IndexedDB
+- [`docs/06-multi-tab-sync.md`](docs/06-multi-tab-sync.md) — `storage` events + BroadcastChannel
+- [`docs/07-offline-pwa.md`](docs/07-offline-pwa.md) — service worker + install + manifest
+- [`docs/08-versioning-and-release-notes.md`](docs/08-versioning-and-release-notes.md) — `vYYYY.MM.DD.HHMM`, polling, `rn:` commits
+- [`docs/09-share-and-import.md`](docs/09-share-and-import.md) — share links + JSON snapshots + self-recognition
+- [`docs/10-map-system.md`](docs/10-map-system.md) — SVG BRC grid, GPS, zoom/pan
+- [`docs/11-schedule-system.md`](docs/11-schedule-system.md) — event time parsing + calendar
+- [`docs/12-deployment-and-ci.md`](docs/12-deployment-and-ci.md) — GH Actions, Pages, custom domain
+- [`docs/13-tos-compliance.md`](docs/13-tos-compliance.md) — directory + Innovate API stance
+- [`docs/14-refresh-cycle.md`](docs/14-refresh-cycle.md) — refresh / force-refresh paths + SW interaction
+- [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
+
+When adding a new subsystem worth of decisions, follow the template in
+`docs/00-index.md` and add a row to its index + a bullet here.
+
 ## Public repo, private data
 
 **The repo is public. The fetched camp data is not in the repo.** This is

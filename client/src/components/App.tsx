@@ -545,60 +545,70 @@ export function App() {
         )}
       </div>
 
-      {view === 'camps' && (
-        <CampsView
-          camps={filtered}
-          total={camps?.length ?? 0}
-          query={query}
-          queryLower={queryLower}
-          sortedTags={sortedTags}
-          activeTags={activeTags}
-          showAllTags={showAllTags}
-          onToggleTag={onToggleTag}
-          onToggleShowAllTags={() => setShowAllTags((v) => !v)}
-          isFav={campFavs.has}
-          isFavEvent={eventFavs.has}
-          friendsFavingCamp={friends.friendsFavingCamp}
-          friendsFavingEvent={friends.friendsFavingEvent}
-          onToggleFav={campFavs.toggle}
-          onToggleFavEvent={onToggleFavEvent}
-          onNavigate={onNavigate}
-          myCampId={myCampId}
-          onSetMyCamp={onSetMyCamp}
-          scrollToCampId={scrollToCampId}
-          scrollToCampTick={scrollTick}
-        />
-      )}
-      {view === 'schedule' && camps && (
-        <ScheduleView
-          camps={camps}
-          favEventIds={eventFavs.favs}
-          friendFavEventIds={friends.friendsFavingEvent}
-          burnStart={meta.burnStart}
-          burnEnd={meta.burnEnd}
-          isDayHidden={isDayHidden}
-          onToggleDayHidden={toggleDayHidden}
-          hiddenCount={hiddenDays.size}
-          onClearHidden={hiddenDays.clear}
-          onGotoCamp={onGotoCamp}
-        />
-      )}
-      {view === 'map' && camps && (
-        <MapView
-          camps={camps}
-          favCampIds={campFavs.favs}
-          friendFavCampIds={friends.friendsFavingCamp}
-          favEventIds={eventFavs.favs}
-          friendFavEventIds={friends.friendsFavingEvent}
-          myCampId={myCampId}
-          meetSpots={meetSpots.spots}
-          onAddMeetSpot={meetSpots.add}
-          onRemoveMeetSpot={meetSpots.removeAt}
-          friendsRendezvous={friendsRendezvous}
-          initialTargetId={mapTargetId}
-          onClearTarget={() => setMapTargetId(null)}
-          onGotoCamp={onGotoCamp}
-        />
+      {/* All three views stay mounted once `camps` is loaded so tab
+          switches are an instant CSS toggle, not a remount of 600
+          camp cards / a fresh SVG / a fresh calendar. The one-time
+          mount hit happens at first paint; everything afterward is
+          O(1). The `hidden` attribute is the modern equivalent of
+          `display: none` plus an aria-hidden hint for assistive tech. */}
+      {camps && (
+        <>
+          <div hidden={view !== 'camps'}>
+            <CampsView
+              camps={filtered}
+              total={camps.length}
+              query={query}
+              queryLower={queryLower}
+              sortedTags={sortedTags}
+              activeTags={activeTags}
+              showAllTags={showAllTags}
+              onToggleTag={onToggleTag}
+              onToggleShowAllTags={() => setShowAllTags((v) => !v)}
+              isFav={campFavs.has}
+              isFavEvent={eventFavs.has}
+              friendsFavingCamp={friends.friendsFavingCamp}
+              friendsFavingEvent={friends.friendsFavingEvent}
+              onToggleFav={campFavs.toggle}
+              onToggleFavEvent={onToggleFavEvent}
+              onNavigate={onNavigate}
+              myCampId={myCampId}
+              onSetMyCamp={onSetMyCamp}
+              scrollToCampId={scrollToCampId}
+              scrollToCampTick={scrollTick}
+            />
+          </div>
+          <div hidden={view !== 'schedule'}>
+            <ScheduleView
+              camps={camps}
+              favEventIds={eventFavs.favs}
+              friendFavEventIds={friends.friendsFavingEvent}
+              burnStart={meta.burnStart}
+              burnEnd={meta.burnEnd}
+              isDayHidden={isDayHidden}
+              onToggleDayHidden={toggleDayHidden}
+              hiddenCount={hiddenDays.size}
+              onClearHidden={hiddenDays.clear}
+              onGotoCamp={onGotoCamp}
+            />
+          </div>
+          <div hidden={view !== 'map'}>
+            <MapView
+              camps={camps}
+              favCampIds={campFavs.favs}
+              friendFavCampIds={friends.friendsFavingCamp}
+              favEventIds={eventFavs.favs}
+              friendFavEventIds={friends.friendsFavingEvent}
+              myCampId={myCampId}
+              meetSpots={meetSpots.spots}
+              onAddMeetSpot={meetSpots.add}
+              onRemoveMeetSpot={meetSpots.removeAt}
+              friendsRendezvous={friendsRendezvous}
+              initialTargetId={mapTargetId}
+              onClearTarget={() => setMapTargetId(null)}
+              onGotoCamp={onGotoCamp}
+            />
+          </div>
+        </>
       )}
 
       <Footer fetchedDate={meta.fetchedDate} contactEmail={meta.contactEmail} />
