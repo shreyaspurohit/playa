@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { LS, SS } from '../types';
 import { removeKey } from '../utils/storage';
+import { clearCachedPassword } from '../utils/secureStore';
 import { forceRefresh } from '../utils/refresh';
 import { buildSnapshot, downloadSnapshot } from '../utils/exportImport';
 
@@ -76,6 +77,12 @@ export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }
     removeKey(LS.sharedFavs);
     removeKey(LS.theme);
     removeKey(LS.infoSeen);
+    // Wipes both the encrypted-blob in LS and the AES wrapping key
+    // in IndexedDB so nothing identifying the unlock state survives.
+    clearCachedPassword();
+    // Legacy session-cached password slot (pre-LS migration) — drop it
+    // too in case the user clicked Clear before ever loading the new
+    // build that would have migrated it.
     try { sessionStorage.removeItem(SS.password); } catch {}
     location.reload();
   }

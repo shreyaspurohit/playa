@@ -64,8 +64,22 @@ export const LS = {
   // user can un-star an auto-added camp without it being re-starred on
   // next load.
   eventCampReconciled: 'bm-event-camp-reconciled',
+  // Cached unlock password. Lives in localStorage (not sessionStorage)
+  // so mobile browsers don't drop it when they reclaim a backgrounded
+  // tab — that's the difference between "stays signed in like a real
+  // app" and "re-prompts every time you switch apps". Cleared by
+  // "Clear all local data" in the About modal.
+  password:  'bm-pw',
+  // ISO timestamp of the most recent release-note this user has seen.
+  // Anything in the embedded notes list with a later `ts` lights up
+  // the release-notes banner.
+  releaseNotesSeen: 'bm-rn-seen',
 } as const;
 
+/** Compat shim — older builds wrote the password to sessionStorage
+ *  under this key. The Gate reads it on boot and migrates the value
+ *  into LS.password, then clears the old slot. After everyone has
+ *  loaded a build that's seen this code at least once, this can go. */
 export const SS = {
   password:  'bm-pw',
 } as const;

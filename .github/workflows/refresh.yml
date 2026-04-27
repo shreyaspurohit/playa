@@ -57,7 +57,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # fetch-depth: 200 so the builder's `git log` can collect any
+      # `rn:` commits authored since the user's last visit. Default
+      # of 1 would give zero history → empty release-notes list.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 200
 
       - uses: actions/setup-python@v6
         with:

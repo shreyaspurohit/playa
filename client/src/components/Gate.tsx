@@ -1,13 +1,21 @@
 // Password gate, shown when the embedded data is encrypted. On
-// success, caches the password in sessionStorage (per-tab — cleared on
-// tab close, much tighter than localStorage). For multi-tab UX, an
-// already-unlocked tab broadcasts the password over a BroadcastChannel
-// so a freshly-opened tab can decrypt without re-prompting. Password
-// never lands in localStorage / disk; if every tab is closed, the
-// next session starts with the gate again.
+// success, caches the password in localStorage so the unlock survives
+// tab kills — mobile browsers reclaim backgrounded tabs aggressively
+// and sessionStorage went with them, which made the app re-prompt
+// every time you switched away and back. The cached value is
+// AES-GCM-encrypted with a non-extractable per-device key in
+// IndexedDB so the disk-side blob is meaningless without the
+// browser's runtime — see `utils/secureStore.ts` for the threat
+// model. For multi-tab UX, an already-unlocked tab also broadcasts
+// the password over a BroadcastChannel so a freshly-opened tab
+// decrypts silently. "Clear all local data" in the About modal
+// wipes both the encrypted blob and the wrapping key.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { decryptPayload } from '../crypto';
 import { SS, type EncryptedPayload } from '../types';
+import {
+  cachePassword, clearCachedPassword, loadCachedPassword,
+} from '../utils/secureStore';
 
 interface Props {
   enc: EncryptedPayload;
@@ -36,7 +44,7 @@ export function Gate({ enc, onUnlock }: Props) {
     async function tryPassword(pw: string): Promise<boolean> {
       try {
         const text = await decryptPayload(enc, pw);
-        try { sessionStorage.setItem(SS.password, pw); } catch {}
+        await cachePassword(pw);
         if (!cancelled) onUnlock(text);
         return true;
       } catch {
@@ -52,8 +60,7 @@ export function Gate({ enc, onUnlock }: Props) {
         const msg = e.data;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'request') {
-          let pw: string | null = null;
-          try { pw = sessionStorage.getItem(SS.password); } catch {}
+          const pw = await loadCachedPassword();
           if (pw) channel.postMessage({ type: 'share', pw });
         } else if (msg.type === 'share' && typeof msg.pw === 'string') {
           if (cancelled) return;
@@ -63,14 +70,28 @@ export function Gate({ enc, onUnlock }: Props) {
     }
 
     (async () => {
-      // 1) sessionStorage cache (this tab unlocked earlier in its life).
-      let remembered: string | null = null;
-      try { remembered = sessionStorage.getItem(SS.password); } catch {}
+      // 1) Encrypted localStorage cache (this device unlocked earlier).
+      //    Also handles the legacy plaintext format from older builds
+      //    transparently — see secureStore.loadCachedPassword.
+      let remembered = await loadCachedPassword();
+      // 2) Migrate sessionStorage cache from the previous-previous
+      //    build (sessionStorage → plaintext LS → encrypted LS).
+      if (!remembered) {
+        try {
+          const legacy = sessionStorage.getItem(SS.password);
+          if (legacy) {
+            remembered = legacy;
+            sessionStorage.removeItem(SS.password);
+          }
+        } catch { /* private mode etc — fall through */ }
+      }
       if (remembered) {
         if (await tryPassword(remembered)) return;
-        try { sessionStorage.removeItem(SS.password); } catch {}
+        // Stored value didn't decrypt — server password rotated.
+        // Drop the cache (and wrapping key) so we don't loop.
+        clearCachedPassword();
       }
-      // 2) Ask other tabs over the channel.
+      // 3) Ask other tabs over the channel.
       if (channel && !cancelled) {
         channel.postMessage({ type: 'request' });
         await new Promise((r) => setTimeout(r, PW_REQUEST_TIMEOUT_MS));
@@ -101,7 +122,7 @@ export function Gate({ enc, onUnlock }: Props) {
     if (!pw) return;
     try {
       const text = await decryptPayload(enc, pw);
-      try { sessionStorage.setItem(SS.password, pw); } catch {}
+      await cachePassword(pw);
       // Hand the password to any sibling tab that's still on the gate.
       try { channelRef.current?.postMessage({ type: 'share', pw }); } catch {}
       onUnlock(text);

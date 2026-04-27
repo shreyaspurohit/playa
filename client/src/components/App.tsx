@@ -3,10 +3,11 @@
 // and wires it up.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Camp } from '../types';
-import { LS, SS } from '../types';
+import { LS } from '../types';
 import { readEmbeddedPayload, indexHaystacks, haystackOf } from '../data';
 import type { Payload } from '../data';
 import { readString, writeString } from '../utils/storage';
+import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
 import type { SharePayload } from '../utils/share';
 import {
@@ -24,7 +25,9 @@ import { Header } from './Header';
 import { ImportBanner } from './ImportBanner';
 import { SnapshotImportBanner } from './SnapshotImportBanner';
 import { UpdateBanner } from './UpdateBanner';
+import { ReleaseNotesBanner } from './ReleaseNotesBanner';
 import { useVersionCheck } from '../hooks/useVersionCheck';
+import { useReleaseNotes } from '../hooks/useReleaseNotes';
 import type { Snapshot } from '../utils/exportImport';
 import { InfoModal } from './InfoModal';
 import { MapView } from './MapView';
@@ -64,6 +67,7 @@ export function App() {
   const { theme, setTheme } = useTheme();
   const { view, goto } = useHashRoute();
   const { updateAvailable, latest: latestVersion } = useVersionCheck();
+  const { pending: pendingReleaseNotes, dismiss: dismissReleaseNotes } = useReleaseNotes();
 
   const [camps, setCamps] = useState<Camp[] | null>(null);
   const [encEnvelope, setEncEnvelope] = useState<Payload | null>(null);
@@ -138,11 +142,10 @@ export function App() {
     if (typeof window === 'undefined') return;
     if (!('BroadcastChannel' in window)) return;
     const channel = new BroadcastChannel('playa-camps-pw');
-    channel.onmessage = (e) => {
+    channel.onmessage = async (e) => {
       const msg = e.data;
       if (!msg || typeof msg !== 'object' || msg.type !== 'request') return;
-      let pw: string | null = null;
-      try { pw = sessionStorage.getItem(SS.password); } catch {}
+      const pw = await loadCachedPassword();
       if (pw) channel.postMessage({ type: 'share', pw });
     };
     return () => { try { channel.close(); } catch { /* ignore */ } };
@@ -490,6 +493,12 @@ export function App() {
         />
         <TabBar view={view} onGoto={goto} scheduleBadge={scheduleBadge} />
         {updateAvailable && <UpdateBanner latest={latestVersion} />}
+        {pendingReleaseNotes.length > 0 && (
+          <ReleaseNotesBanner
+            notes={pendingReleaseNotes}
+            onDismiss={dismissReleaseNotes}
+          />
+        )}
         {incomingShare && (
           <ImportBanner
             payload={incomingShare}

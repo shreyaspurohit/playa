@@ -346,6 +346,57 @@ class SiteBuilder:
         out.write_text(sw, encoding="utf-8")
         return out
 
+    def _collect_release_notes(self, limit: int = 30) -> list[dict]:
+        """Walk the most recent commits and return any whose subject line
+        starts with `rn:` as structured release notes.
+
+        Format: list of {ts, sha, message}, sorted oldest-first so the
+        client can lex-compare timestamps to a watermark in localStorage
+        and surface only notes newer than what the user has dismissed.
+
+        Cap at `limit` entries — the embed lives in every page load and
+        the most recent ~30 notes is plenty for any realistic gap
+        between a user's last visit and "now". Older notes age out.
+        """
+        repo_root = self.config.root
+        try:
+            result = subprocess.run(
+                [
+                    "git", "log", f"-{limit * 4}",  # over-fetch then filter
+                    "--pretty=format:%H%x1f%aI%x1f%s",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # No git available (e.g., a tarball deploy) — quietly skip.
+            return []
+        if result.returncode != 0:
+            return []
+
+        notes: list[dict] = []
+        for line in result.stdout.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) != 3:
+                continue
+            sha, ts, subject = parts
+            # Strict prefix match — `rnnnn` or "around: ..." don't qualify.
+            if not subject.startswith("rn:"):
+                continue
+            message = subject[len("rn:"):].strip()
+            if not message:
+                continue
+            notes.append({"ts": ts, "sha": sha[:7], "message": message})
+            if len(notes) >= limit:
+                break
+        # git log is newest-first; reverse for oldest-first so the
+        # client's "show notes after watermark" filter walks naturally.
+        notes.reverse()
+        return notes
+
     def build(self) -> Path:
         camps = self.load_camps()
         # Sanity check: a near-empty fetch indicates something upstream
@@ -374,6 +425,21 @@ class SiteBuilder:
         if "</script>" in bundle_js.lower():
             raise RuntimeError("bundle contains a literal </script>; refusing to embed")
 
+        # Release notes — commits whose subject starts with `rn:`. The
+        # client polls this list against a localStorage watermark and
+        # shows a banner with anything newer than what the user has
+        # dismissed. `</` is escaped to `<\/` so a stray `</script>` in
+        # an `rn:` message can't break the inline JSON embed.
+        notes_json = (
+            json.dumps(self._collect_release_notes(), separators=(",", ":"))
+            .replace("</", "<\\/")
+        )
+        notes_script = (
+            f'<script id="bm-release-notes" type="application/json">'
+            f'{notes_json}'
+            f'</script>'
+        )
+
         # load_camps() already populated _effective_start. The client
         # derives calendar columns from burn_start + burn_end directly,
         # so no separate week-map tag is needed.
@@ -381,6 +447,7 @@ class SiteBuilder:
             self._read_template()
             .replace("__DATA_SCRIPT__",   data_script)
             .replace("__BUNDLE__",        bundle_js)
+            .replace("__RELEASE_NOTES__", notes_script)
             .replace("__CONTACT_EMAIL__", self.config.contact_email)
             .replace("__VERSION__",       meta.get("version", "v0.0.0"))
             .replace("__FETCHED_DATE__",  meta.get("fetched_date", "unknown"))
