@@ -69,7 +69,7 @@ export function InstallPrompt() {
             class="install-pill offline"
             title="The site is cached — it'll launch without a network next time"
           >
-            ✓ Offline-ready
+            Offline ✓
           </span>
           {/* Small refresh button next to the offline pill. One click
               pulls the latest build from the server (network-probed,
