@@ -8,6 +8,7 @@
 //   - 12:00 points up. Clockwise as you'd read a real clock.
 //   - Lat/lng → ft via haversine + compass rotation (see utils/address).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { JSX } from 'preact';
 import type { Camp, MeetSpot } from '../types';
 import type { BrcPOI } from '../map/data';
 import { BRC, POIS } from '../map/data';
@@ -16,7 +17,7 @@ import {
   latLngToSvgFeet, latLngToAddress, parseAddress,
 } from '../map/address';
 import { useGeolocation } from '../hooks/useGeolocation';
-import { friendChipStyle } from '../utils/friendColor';
+import { friendChipStyle, friendHue } from '../utils/friendColor';
 import { MapInfoModal } from './MapInfoModal';
 import { MeetSpotEditor } from './MeetSpotEditor';
 import { TrashIcon } from './TrashIcon';
@@ -72,6 +73,18 @@ const ZOOM_MIN = 1;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 1.5;
 
+// === Selection-key encoding ============================================
+// Each map item that can be selected gets a stable string key so a
+// single Set<string> can track multi-select across heterogeneous
+// types (camps, POIs, meet spots). Format documented inline in the
+// state declaration. These are module-level pure functions so the
+// `useState` initializer can use them.
+const campKey = (id: string) => 'camp:' + id;
+const mineSpotKey = (idx: number) => 'mine:' + idx;
+const friendSpotKey = (name: string, idx: number) =>
+  'friend:' + name + ':' + idx;
+const poiKey = (kind: string, name: string) => 'poi:' + kind + ':' + name;
+
 export function MapView({
   camps, favCampIds, friendFavCampIds,
   favEventIds, friendFavEventIds,
@@ -79,8 +92,49 @@ export function MapView({
   friendsRendezvous,
   initialTargetId = null, onClearTarget, onGotoCamp,
 }: Props) {
-  const [targetId, setTargetId] = useState<string | null>(initialTargetId);
-  useEffect(() => { setTargetId(initialTargetId); }, [initialTargetId]);
+  // Unified multi-selection. Each entry is a typed key so a single Set
+  // can hold camps, POIs, meet spots, friend camps, friend meet spots
+  // concurrently. Tap-to-toggle: every tap on a pin or sidebar row
+  // adds the key, or removes it if already present. Tap on the empty
+  // SVG canvas clears the whole set.
+  //   camp:<id>          — any camp pin (starred, my-camp, friend's)
+  //   mine:<idx>         — your meet spot at that index
+  //   friend:<name>:<idx>— friend's meet spot at that index
+  //   poi:<kind>:<name>  — point of interest
+  const [selection, setSelection] = useState<Set<string>>(() =>
+    initialTargetId ? new Set([campKey(initialTargetId)]) : new Set(),
+  );
+  useEffect(() => {
+    // External "navigate to camp X" snaps selection to that camp only.
+    setSelection(
+      initialTargetId ? new Set([campKey(initialTargetId)]) : new Set(),
+    );
+  }, [initialTargetId]);
+  const toggleKey = useCallback((key: string) => {
+    setSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Sidebar list collapse state. Default-collapsed so the map sits
+  // close to the top — long lists (30+ camps) used to push the SVG
+  // way below the fold. When a section is collapsed we still render
+  // any items in it that are SELECTED (so multi-select detail is
+  // never hidden), just not the rest of the list. Section keys:
+  // 'meet', 'landmarks', 'friends', 'starred'.
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const toggleSection = useCallback((id: string) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const isSectionExpanded = (id: string) => expandedSections.has(id);
 
   const [infoOpen, setInfoOpen] = useState(false);
   const [addingSpot, setAddingSpot] = useState(false);
@@ -108,15 +162,10 @@ export function MapView({
     () => { setZoom(1); setCenter(DEFAULT_CENTER); },
     [],
   );
-  // Selected meet spot (mine or a friend's). Mutually exclusive with
-  // `targetId` (the camp-selection path). Whichever the user last
-  // clicked is the one whose details show near the Man.
-  const [selectedSpot, setSelectedSpot] = useState<
-    | { source: 'mine'; idx: number }
-    | { source: 'friend'; name: string; idx: number }
-    | { source: 'poi'; kind: string; name: string }
-    | null
-  >(null);
+  // (Selection state lives above as `selection`. `target` and
+  // `activeSpot` are derived single-selection views below for code
+  // paths that pre-date multi-select — they're populated only when
+  // exactly one item is selected.)
 
   const { state: geo, request: requestGps, stop: stopGps } = useGeolocation();
 
@@ -181,47 +230,64 @@ export function MapView({
     return pt ? { camp, x: pt.x, y: pt.y } : null;
   }, [myCampId, camps]);
 
-  // Resolve the current selectedSpot state into the concrete data
-  // needed to draw the highlight + sidebar target box.
+  // Single-spot view — populated only when exactly one non-camp item
+  // is selected. Drives the legacy single-selection sidebar/SVG paths
+  // (big near-Man label, GPS bearing line) which only make sense
+  // when there's exactly one thing to be "at."
   const activeSpot = useMemo(() => {
-    if (!selectedSpot) return null;
-    if (selectedSpot.source === 'mine') {
-      const m = myMeetPins.find((p) => p.idx === selectedSpot.idx);
+    if (selection.size !== 1) return null;
+    const key = [...selection][0];
+    if (key.startsWith('mine:')) {
+      const idx = parseInt(key.slice('mine:'.length), 10);
+      const m = myMeetPins.find((p) => p.idx === idx);
       if (!m) return null;
       return {
         label: m.spot.label, address: m.spot.address, when: m.spot.when,
         description: undefined as string | undefined,
         x: m.x, y: m.y, author: null as string | null, isPoi: false,
+        color: 'var(--meet)',
       };
     }
-    if (selectedSpot.source === 'friend') {
-      const f = friendMeetPins.find(
-        (p) => p.name === selectedSpot.name && p.idx === selectedSpot.idx,
-      );
+    if (key.startsWith('friend:')) {
+      const rest = key.slice('friend:'.length);
+      const lastColon = rest.lastIndexOf(':');
+      const name = rest.slice(0, lastColon);
+      const idx = parseInt(rest.slice(lastColon + 1), 10);
+      const f = friendMeetPins.find((p) => p.name === name && p.idx === idx);
       if (!f) return null;
       return {
         label: f.spot.label, address: f.spot.address, when: f.spot.when,
         description: undefined as string | undefined,
         x: f.x, y: f.y, author: f.name, isPoi: false,
+        color: `hsl(${friendHue(f.name)}, 65%, 50%)`,
       };
     }
-    // POI — look up by kind + name so we pull the fresh address + desc.
-    const hit = poiPins.find(
-      ({ poi }) => poi.kind === selectedSpot.kind && poi.name === selectedSpot.name,
-    );
-    if (!hit) return null;
-    return {
-      label: hit.poi.name, address: hit.poi.address, when: undefined,
-      description: hit.poi.description,
-      x: hit.x, y: hit.y, author: null as string | null, isPoi: true,
-    };
-  }, [selectedSpot, myMeetPins, friendMeetPins, poiPins]);
+    if (key.startsWith('poi:')) {
+      const rest = key.slice('poi:'.length);
+      const sep = rest.indexOf(':');
+      const kind = rest.slice(0, sep);
+      const name = rest.slice(sep + 1);
+      const hit = poiPins.find(
+        ({ poi }) => poi.kind === kind && poi.name === name,
+      );
+      if (!hit) return null;
+      let color = 'var(--muted)';
+      if (kind === 'center-camp') color = '#dc2626';
+      else if (kind === 'playa-info') color = '#0369a1';
+      return {
+        label: hit.poi.name, address: hit.poi.address, when: undefined,
+        description: hit.poi.description,
+        x: hit.x, y: hit.y, author: null as string | null, isPoi: true,
+        color,
+      };
+    }
+    return null;
+  }, [selection, myMeetPins, friendMeetPins, poiPins]);
 
   // Unified "clear any selection" — the SVG backdrop + Clear buttons
-  // both need to drop camp AND spot highlights.
+  // both empty the multi-selection set.
   function clearSelection() {
-    setTargetId(null);
-    setSelectedSpot(null);
+    setSelection(new Set());
     onClearTarget?.();
   }
 
@@ -253,19 +319,30 @@ export function MapView({
     /** Names of friends who starred this camp (for kind='fav'). Empty
      *  for 'mine' / 'friend' kinds — those have a single 'author'. */
     friends: string[];
+    /** Highlight color matching the dot's fill. */
+    color: string;
   } | null => {
-    if (!targetId) return null;
+    // Single-select view of the multi-selection set. Returns null
+    // when zero or 2+ items are selected — multi-select rendering
+    // walks `selectedItems` instead of this memo.
+    if (selection.size !== 1) return null;
+    const key = [...selection][0];
+    if (!key.startsWith('camp:')) return null;
+    const targetId = key.slice('camp:'.length);
     const p = pins.find((x) => x.camp.id === targetId);
     if (p) {
+      // Gold when you starred it, accent when only friends did.
+      const color = p.mine ? '#f59e0b' : 'var(--accent)';
       return {
         camp: p.camp, x: p.x, y: p.y,
-        author: null, kind: 'fav', friends: p.friends,
+        author: null, kind: 'fav', friends: p.friends, color,
       };
     }
     if (myCampPin && myCampPin.camp.id === targetId) {
       return {
         camp: myCampPin.camp, x: myCampPin.x, y: myCampPin.y,
         author: null, kind: 'mine', friends: [],
+        color: 'var(--my-camp)',
       };
     }
     const f = friendCampPins.find((fp) => fp.camp.id === targetId);
@@ -273,14 +350,118 @@ export function MapView({
       return {
         camp: f.camp, x: f.x, y: f.y,
         author: f.name, kind: 'friend', friends: [],
+        color: `hsl(${friendHue(f.name)}, 65%, 50%)`,
       };
     }
     return null;
-  }, [targetId, pins, myCampPin, friendCampPins]);
+  }, [selection, pins, myCampPin, friendCampPins]);
 
-  // When the user picks a pin / spot / POI while zoomed in, pan the
-  // viewBox over so the selection is visible. At 1x the whole city is
-  // already visible so there's nothing to pan toward.
+  // Multi-select rendering source. Each entry carries everything the
+  // SVG layer needs to draw a highlight + line label without re-doing
+  // the per-item lookups. Walked once per render — single-select paths
+  // (target / activeSpot above) keep their existing structure for
+  // backward-compat with the sidebar info boxes.
+  const selectedItems = useMemo((): Array<{
+    key: string;
+    x: number; y: number;
+    address: string;             // raw "7:30 & E"
+    label: string;               // primary display name
+    kind: 'camp' | 'mine' | 'friend' | 'poi';
+    /** Hex / hsl / CSS-var string the highlight (radial + ring + halo
+     *  + bearing) should use. Matches the dot's actual fill so the
+     *  line color reads as continuation of the dot, not a separate
+     *  visual layer. */
+    color: string;
+  }> => {
+    const out: Array<{
+      key: string; x: number; y: number;
+      address: string; label: string;
+      kind: 'camp' | 'mine' | 'friend' | 'poi';
+      color: string;
+    }> = [];
+    for (const key of selection) {
+      if (key.startsWith('camp:')) {
+        const id = key.slice('camp:'.length);
+        const p = pins.find((x) => x.camp.id === id)
+          || (myCampPin && myCampPin.camp.id === id ? myCampPin : null)
+          || friendCampPins.find((fp) => fp.camp.id === id) || null;
+        if (!p) continue;
+        const camp = (p as { camp: Camp }).camp;
+        const author = (p as { name?: string }).name;
+        // Color follows the dot itself:
+        //   my home camp → teal
+        //   friend's home camp → that friend's hue
+        //   you starred it → gold (matches `.brc-pin-inner`)
+        //   only friends starred it → accent
+        let color: string;
+        if (myCampPin && myCampPin.camp.id === id) {
+          color = 'var(--my-camp)';
+        } else if (author) {
+          color = `hsl(${friendHue(author)}, 65%, 50%)`;
+        } else if (favCampIds.has(id)) {
+          color = '#f59e0b';
+        } else {
+          color = 'var(--accent)';
+        }
+        out.push({
+          key,
+          x: p.x, y: p.y,
+          address: camp.location,
+          label: author ? `${author}'s camp — ${camp.name}` : camp.name,
+          kind: 'camp',
+          color,
+        });
+      } else if (key.startsWith('mine:')) {
+        const idx = parseInt(key.slice('mine:'.length), 10);
+        const m = myMeetPins.find((p) => p.idx === idx);
+        if (!m) continue;
+        out.push({
+          key, x: m.x, y: m.y,
+          address: m.spot.address, label: m.spot.label, kind: 'mine',
+          color: 'var(--meet)',
+        });
+      } else if (key.startsWith('friend:')) {
+        const rest = key.slice('friend:'.length);
+        const lastColon = rest.lastIndexOf(':');
+        const name = rest.slice(0, lastColon);
+        const idx = parseInt(rest.slice(lastColon + 1), 10);
+        const f = friendMeetPins.find((p) => p.name === name && p.idx === idx);
+        if (!f) continue;
+        out.push({
+          key, x: f.x, y: f.y,
+          address: f.spot.address,
+          label: `${f.spot.label} · ${f.name}`,
+          kind: 'friend',
+          color: `hsl(${friendHue(f.name)}, 65%, 50%)`,
+        });
+      } else if (key.startsWith('poi:')) {
+        const rest = key.slice('poi:'.length);
+        const sep = rest.indexOf(':');
+        const kind = rest.slice(0, sep);
+        const name = rest.slice(sep + 1);
+        const hit = poiPins.find(
+          ({ poi }) => poi.kind === kind && poi.name === name,
+        );
+        if (!hit) continue;
+        // Same hex used by `.map-poi-{kind}` + `.brc-poi-{kind}-dot`.
+        let color = 'var(--muted)';
+        if (kind === 'center-camp') color = '#dc2626';
+        else if (kind === 'playa-info') color = '#0369a1';
+        out.push({
+          key, x: hit.x, y: hit.y,
+          address: hit.poi.address, label: hit.poi.name, kind: 'poi',
+          color,
+        });
+      }
+    }
+    return out;
+  }, [selection, pins, myCampPin, friendCampPins,
+      myMeetPins, friendMeetPins, poiPins, favCampIds]);
+
+  // When the user picks exactly one pin / spot / POI while zoomed in,
+  // pan the viewBox over so the selection is visible. With multi we
+  // can't sensibly auto-recenter (the centroid could be off-map), so
+  // pan only fires for single-select.
   useEffect(() => {
     if (zoom <= 1) return;
     if (target) setCenter({ x: target.x, y: target.y });
@@ -309,32 +490,53 @@ export function MapView({
     return { walk, bike };
   }
 
-  // Same bearing/distance/ETA math but for the active meet spot.
-  const spotInfo = useMemo(() => {
-    if (!activeSpot || geo.status !== 'ready') return null;
-    const latLng = addressToLatLng(activeSpot.address);
-    if (!latLng) return null;
-    const user = { lat: geo.lat, lng: geo.lng };
-    const meters = haversineMeters(user, latLng);
-    const brng = bearingDeg(user, latLng);
-    return { meters, bearing: brng };
-  }, [activeSpot, geo]);
-
-  // Bearing + distance to target camp.
-  const targetInfo = useMemo(() => {
-    if (!target || geo.status !== 'ready') return null;
-    const targetLatLng = addressToLatLng(target.camp.location);
-    if (!targetLatLng) return null;
-    const user = { lat: geo.lat, lng: geo.lng };
-    const meters = haversineMeters(user, targetLatLng);
-    const brng = bearingDeg(user, targetLatLng);
-    return { meters, bearing: brng, targetLatLng };
-  }, [target, geo]);
+  // (Bearing/distance/ETA are now computed per-row by `navFor` —
+  // the previous `spotInfo` / `targetInfo` memos were single-target
+  // only and went unused once we moved to inline expansion.)
 
   function externalMapsUrl(c: Camp) {
     const ll = addressToLatLng(c.location);
     if (!ll) return null;
     return `https://www.google.com/maps?q=${ll.lat},${ll.lng}`;
+  }
+
+  // Per-item bearing + distance — used by expanded list rows where each
+  // selected item shows its own nav details (multi-select friendly).
+  // Returns null when GPS isn't on or the address doesn't parse to lat/lng.
+  function navFor(address: string): { meters: number; bearing: number } | null {
+    if (geo.status !== 'ready') return null;
+    const ll = addressToLatLng(address);
+    if (!ll) return null;
+    return {
+      meters: haversineMeters({ lat: geo.lat, lng: geo.lng }, ll),
+      bearing: bearingDeg({ lat: geo.lat, lng: geo.lng }, ll),
+    };
+  }
+
+  // Reusable nav-block renderer — shared by every row type's
+  // expanded form. `address` is what the row points at; `gpsHint`
+  // toggles the "tap Use my GPS" footnote when no fix is available.
+  function NavBlock({ address }: { address: string }) {
+    const nav = navFor(address);
+    if (nav) {
+      const e = etaMinutes(nav.meters);
+      return (
+        <>
+          <div class="row-nav">
+            <strong>{Math.round(nav.meters)} m</strong> away,
+            bearing <strong>{Math.round(nav.bearing)}&deg;</strong>
+            {' '}(compass {compassCardinal(nav.bearing)})
+          </div>
+          <div class="row-eta">
+            ~{e.walk} min walk &middot; {e.bike} min bike
+          </div>
+        </>
+      );
+    }
+    if (geo.status === 'ready') {
+      return <div class="row-footnote">Couldn't resolve this address to lat/lng.</div>;
+    }
+    return <div class="row-footnote">Tap "Use my GPS" above for distance + bearing.</div>;
   }
 
   return (
@@ -378,6 +580,17 @@ export function MapView({
               >⤾</button>
             )}
           </div>
+          {selection.size > 0 && (
+            <button
+              type="button"
+              class="map-clear-btn"
+              aria-label="Clear all selections"
+              title="Clear all selections from the map"
+              onClick={() => clearSelection()}
+            >
+              Clear ({selection.size})
+            </button>
+          )}
           <button
             type="button"
             class="map-legend-btn"
@@ -440,57 +653,43 @@ export function MapView({
                 onClick={() => setAddingSpot(true)}
               >+ Add</button>
             </div>
-            {activeSpot && (
-              <div class={'map-target-box spot' + (activeSpot.isPoi ? ' poi' : '')}>
-                <div class="map-target-name">
-                  {activeSpot.isPoi ? '📍' : '◆'}{' '}
-                  {activeSpot.author ? `${activeSpot.author}: ` : ''}{activeSpot.label}
+            {/* Sticky details pane removed — each selected row expands
+                in place below (see the row blocks). Lets multi-select
+                show details for every picked item simultaneously. */}
+            {myCampPin && (() => {
+              const active = selection.has(campKey(myCampPin.camp.id));
+              return (
+                <div
+                  class={'map-my-camp-row' + (active ? ' active' : '')}
+                  onClick={() => toggleKey(campKey(myCampPin.camp.id))}
+                >
+                  <span class="map-my-camp-icon" aria-hidden="true"><TentIcon size={18} /></span>
+                  <div class="map-my-camp-body">
+                    <div class="map-my-camp-name">Your camp — {myCampPin.camp.name}</div>
+                    <div class="map-pin-addr">{myCampPin.camp.location}</div>
+                    {active && (
+                      <div class="row-details">
+                        <NavBlock address={myCampPin.camp.location} />
+                        <div class="row-actions">
+                          <button
+                            type="button" class="map-ext-link"
+                            onClick={(e) => { e.stopPropagation(); onGotoCamp(myCampPin.camp.id); }}
+                          >Open camp card →</button>
+                          {externalMapsUrl(myCampPin.camp) && (
+                            <a
+                              class="map-ext-link"
+                              href={externalMapsUrl(myCampPin.camp)!}
+                              target="_blank" rel="noopener"
+                              onClick={(e) => e.stopPropagation()}
+                            >Open in Google Maps ↗</a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div class="map-target-addr">
-                  {activeSpot.address}
-                  {activeSpot.when && <> · <strong>{activeSpot.when}</strong></>}
-                </div>
-                {activeSpot.description && (
-                  <div class="map-target-desc">{activeSpot.description}</div>
-                )}
-                {spotInfo && (
-                  <>
-                    <div class="map-target-nav">
-                      <strong>{Math.round(spotInfo.meters)} m</strong> away,
-                      bearing <strong>{Math.round(spotInfo.bearing)}°</strong>
-                      {' '}
-                      (compass {compassCardinal(spotInfo.bearing)})
-                    </div>
-                    <div class="map-target-eta">
-                      {(() => {
-                        const e = etaMinutes(spotInfo.meters);
-                        return <>~{e.walk} min walk · {e.bike} min bike</>;
-                      })()}
-                    </div>
-                  </>
-                )}
-                <div class="map-target-links">
-                  <button
-                    type="button" class="subtle-btn"
-                    onClick={() => setSelectedSpot(null)}
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-            )}
-            {myCampPin && (
-              <div
-                class={'map-my-camp-row' + (target?.camp.id === myCampPin.camp.id ? ' active' : '')}
-                onClick={() => { setSelectedSpot(null); setTargetId(myCampPin.camp.id); }}
-              >
-                <span class="map-my-camp-icon" aria-hidden="true"><TentIcon size={18} /></span>
-                <div>
-                  <div class="map-my-camp-name">Your camp — {myCampPin.camp.name}</div>
-                  <div class="map-pin-addr">{myCampPin.camp.location}</div>
-                </div>
-              </div>
-            )}
+              );
+            })()}
             {meetSpots.length === 0 && !myCampPin && (
               <p class="map-rendezvous-hint">
                 Set a camp card as <strong>my camp</strong> in the Camps
@@ -499,23 +698,53 @@ export function MapView({
                 importing.
               </p>
             )}
-            {meetSpots.length > 0 && (
-              <ul class="map-meet-list">
-                {meetSpots.map((spot, idx) => {
-                  const active =
-                    selectedSpot?.source === 'mine' && selectedSpot.idx === idx;
+            {meetSpots.length > 0 && (() => {
+              const sectionExpanded = isSectionExpanded('meet');
+              const selectedCount = meetSpots.reduce(
+                (n, _s, i) => n + (selection.has(mineSpotKey(i)) ? 1 : 0),
+                0,
+              );
+              const visibleSpots = sectionExpanded
+                ? meetSpots.map((s, i) => ({ s, i }))
+                : meetSpots
+                    .map((s, i) => ({ s, i }))
+                    .filter(({ i }) => selection.has(mineSpotKey(i)));
+              return (
+                <>
+                  <div class="map-section-toggle">
+                    <button
+                      type="button"
+                      class="map-section-toggle-btn"
+                      onClick={() => toggleSection('meet')}
+                    >
+                      {sectionExpanded ? '▾' : '▸'}{' '}
+                      Your meet spots ({meetSpots.length})
+                      {!sectionExpanded && selectedCount > 0 && (
+                        <span class="count"> · {selectedCount} selected</span>
+                      )}
+                    </button>
+                  </div>
+                  {visibleSpots.length > 0 && (
+                    <ul class="map-meet-list">
+                      {visibleSpots.map(({ s: spot, i: idx }) => {
+                  const active = selection.has(mineSpotKey(idx));
                   return (
                     <li
                       key={`spot-${idx}`}
                       class={'map-meet-row clickable' + (active ? ' active' : '')}
-                      onClick={() => { setTargetId(null); setSelectedSpot({ source: 'mine', idx }); }}
+                      onClick={() => toggleKey(mineSpotKey(idx))}
                     >
-                      <span class="map-meet-diamond mine" aria-hidden="true">◆</span>
+                      <span class="map-meet-dot mine" aria-hidden="true" />
                       <div class="map-meet-body">
                         <div class="map-meet-label">{spot.label}</div>
                         <div class="map-pin-addr">
                           {spot.address}{spot.when ? ` · ${spot.when}` : ''}
                         </div>
+                        {active && (
+                          <div class="row-details">
+                            <NavBlock address={spot.address} />
+                          </div>
+                        )}
                       </div>
                       <button
                         class="meet-delete-btn"
@@ -529,79 +758,150 @@ export function MapView({
                     </li>
                   );
                 })}
-              </ul>
-            )}
-            {poiPins.length > 0 && (
-              <>
-                <div class="map-rendezvous-head"><h4>Landmarks</h4></div>
-                <ul class="map-meet-list">
-                  {poiPins.map(({ poi }) => {
-                    const active =
-                      selectedSpot?.source === 'poi'
-                      && selectedSpot.kind === poi.kind
-                      && selectedSpot.name === poi.name;
+                    </ul>
+                  )}
+                </>
+              );
+            })()}
+            {poiPins.length > 0 && (() => {
+              const sectionExpanded = isSectionExpanded('landmarks');
+              const selectedCount = poiPins.reduce(
+                (n, { poi }) => n + (selection.has(poiKey(poi.kind, poi.name)) ? 1 : 0),
+                0,
+              );
+              const visiblePois = sectionExpanded
+                ? poiPins
+                : poiPins.filter(
+                  ({ poi }) => selection.has(poiKey(poi.kind, poi.name)),
+                );
+              return (
+                <>
+                  <div class="map-section-toggle">
+                    <button
+                      type="button"
+                      class="map-section-toggle-btn"
+                      onClick={() => toggleSection('landmarks')}
+                    >
+                      {sectionExpanded ? '▾' : '▸'}{' '}
+                      Landmarks ({poiPins.length})
+                      {!sectionExpanded && selectedCount > 0 && (
+                        <span class="count"> · {selectedCount} selected</span>
+                      )}
+                    </button>
+                  </div>
+                  {visiblePois.length > 0 && (
+                    <ul class="map-meet-list">
+                      {visiblePois.map(({ poi }) => {
+                    const active = selection.has(poiKey(poi.kind, poi.name));
                     return (
                       <li
                         key={`poi-${poi.kind}-${poi.name}`}
                         class={'map-meet-row clickable' + (active ? ' active' : '')}
                         onClick={() => {
-                          setTargetId(null);
-                          setSelectedSpot({ source: 'poi', kind: poi.kind, name: poi.name });
+                          toggleKey(poiKey(poi.kind, poi.name));
                         }}
                       >
                         <span class={`map-poi-dot map-poi-${poi.kind}`} aria-hidden="true" />
                         <div class="map-meet-body">
                           <div class="map-meet-label">{poi.name}</div>
-                          <div class="map-pin-addr">
-                            {poi.address}
-                            {poi.description && <> · {poi.description}</>}
-                          </div>
+                          <div class="map-pin-addr">{poi.address}</div>
+                          {poi.description && (
+                            <div class="row-poi-desc">{poi.description}</div>
+                          )}
+                          {active && (
+                            <div class="row-details">
+                              <NavBlock address={poi.address} />
+                            </div>
+                          )}
                         </div>
                       </li>
                     );
                   })}
-                </ul>
-              </>
-            )}
-            {friendsRendezvous.some((f) => f.myCampId || (f.meetSpots && f.meetSpots.length > 0)) && (
+                    </ul>
+                  )}
+                </>
+              );
+            })()}
+            {friendsRendezvous.some((f) => f.myCampId || (f.meetSpots && f.meetSpots.length > 0)) && (() => {
+              const sectionExpanded = isSectionExpanded('friends');
+              const totalFriends = friendCampPins.length + friendMeetPins.length;
+              const selectedCount =
+                friendCampPins.reduce((n, fp) => n + (selection.has(campKey(fp.camp.id)) ? 1 : 0), 0)
+                + friendMeetPins.reduce((n, fm) => n + (selection.has(friendSpotKey(fm.name, fm.idx)) ? 1 : 0), 0);
+              const visibleFriendCamps = sectionExpanded
+                ? friendCampPins
+                : friendCampPins.filter((fp) => selection.has(campKey(fp.camp.id)));
+              const visibleFriendSpots = sectionExpanded
+                ? friendMeetPins
+                : friendMeetPins.filter((fm) => selection.has(friendSpotKey(fm.name, fm.idx)));
+              const anyVisible = visibleFriendCamps.length + visibleFriendSpots.length > 0;
+              return (
               <>
-                <div class="map-rendezvous-head"><h4>Friends' plans</h4></div>
+                <div class="map-section-toggle">
+                  <button
+                    type="button"
+                    class="map-section-toggle-btn"
+                    onClick={() => toggleSection('friends')}
+                  >
+                    {sectionExpanded ? '▾' : '▸'}{' '}
+                    Friends' plans ({totalFriends})
+                    {!sectionExpanded && selectedCount > 0 && (
+                      <span class="count"> · {selectedCount} selected</span>
+                    )}
+                  </button>
+                </div>
+                {anyVisible && (
                 <ul class="map-meet-list">
-                  {friendCampPins.map((fp) => (
-                    <li
-                      key={`fc-${fp.name}-${fp.camp.id}`}
-                      class={'map-meet-row clickable' + (target?.camp.id === fp.camp.id ? ' active' : '')}
-                      onClick={() => { setSelectedSpot(null); setTargetId(fp.camp.id); }}
-                    >
-                      <span class="map-meet-diamond friend-tent" aria-hidden="true" style={friendChipStyle(fp.name)}><TentIcon size={16} /></span>
-                      <div class="map-meet-body">
-                        {/* Primary line: camp name + friend chip — same
-                            shape as the Starred camps list (name first,
-                            chip after) so the two lists scan identically. */}
-                        <div class="map-meet-label">
-                          {fp.camp.name}
-                          {' '}
-                          <span class="fav-by-chip" style={friendChipStyle(fp.name)}>{fp.name}</span>
+                  {visibleFriendCamps.map((fp) => {
+                    const active = selection.has(campKey(fp.camp.id));
+                    return (
+                      <li
+                        key={`fc-${fp.name}-${fp.camp.id}`}
+                        class={'map-meet-row clickable' + (active ? ' active' : '')}
+                        onClick={() => toggleKey(campKey(fp.camp.id))}
+                      >
+                        <span class="map-friend-tent" aria-hidden="true" style={friendHueStyle(fp.name)}><TentIcon size={16} /></span>
+                        <div class="map-meet-body">
+                          <div class="map-meet-label">
+                            {fp.camp.name}
+                            {' '}
+                            <span class="fav-by-chip" style={friendChipStyle(fp.name)}>{fp.name}</span>
+                          </div>
+                          <div class="map-pin-addr">{fp.camp.location}</div>
+                          {active && (
+                            <div class="row-details">
+                              <NavBlock address={fp.camp.location} />
+                              <div class="row-actions">
+                                <button
+                                  type="button" class="map-ext-link"
+                                  onClick={(e) => { e.stopPropagation(); onGotoCamp(fp.camp.id); }}
+                                >Open camp card →</button>
+                                {externalMapsUrl(fp.camp) && (
+                                  <a
+                                    class="map-ext-link"
+                                    href={externalMapsUrl(fp.camp)!}
+                                    target="_blank" rel="noopener"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >Open in Google Maps ↗</a>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div class="map-pin-addr">{fp.camp.location}</div>
-                      </div>
-                    </li>
-                  ))}
-                  {friendMeetPins.map((fm) => {
-                    const active =
-                      selectedSpot?.source === 'friend'
-                      && selectedSpot.name === fm.name
-                      && selectedSpot.idx === fm.idx;
+                      </li>
+                    );
+                  })}
+                  {visibleFriendSpots.map((fm) => {
+                    const active = selection.has(friendSpotKey(fm.name, fm.idx));
                     return (
                       <li
                         key={`fm-${fm.name}-${fm.idx}`}
                         class={'map-meet-row clickable' + (active ? ' active' : '')}
                         onClick={() => {
-                          setTargetId(null);
-                          setSelectedSpot({ source: 'friend', name: fm.name, idx: fm.idx });
+                          toggleKey(friendSpotKey(fm.name, fm.idx));
                         }}
                       >
-                        <span class="map-meet-diamond" aria-hidden="true">◆</span>
+                        <span class="map-meet-dot friend" aria-hidden="true" style={friendHueStyle(fm.name)} />
                         <div class="map-meet-body">
                           <div class="map-meet-label">
                             {fm.spot.label}
@@ -611,179 +911,197 @@ export function MapView({
                           <div class="map-pin-addr">
                             {fm.spot.address}{fm.spot.when ? ` · ${fm.spot.when}` : ''}
                           </div>
+                          {active && (
+                            <div class="row-details">
+                              <NavBlock address={fm.spot.address} />
+                            </div>
+                          )}
                         </div>
                       </li>
                     );
                   })}
                 </ul>
+                )}
               </>
-            )}
+              );
+            })()}
           </div>
 
           {/* Pin list + navigation details. Placed ABOVE the map SVG
               so the "tap a row → see it on the map below" flow reads
               top-to-bottom: pick a camp in the list, scroll (or glance)
               down to the SVG to see its location + bearing. */}
+          {(() => {
+            const sectionExpanded = isSectionExpanded('starred');
+            // Are there any imported friends in play? Drives whether
+            // every row shows the "you" chip (so multiple-owner rows
+            // don't read inconsistently against single-owner ones).
+            const hasAnyFriends =
+              friendCampPins.length > 0
+              || friendMeetPins.length > 0
+              || pins.some((p) => p.friends.length > 0);
+            const selectedCount = pins.reduce(
+              (n, p) => n + (selection.has(campKey(p.camp.id)) ? 1 : 0),
+              0,
+            );
+            const visiblePins = sectionExpanded
+              ? pins
+              : pins.filter((p) => selection.has(campKey(p.camp.id)));
+            return (
           <div class="map-list">
-            <h4>Starred camps</h4>
-            {target && (
-              <div class="map-target-box">
-                <div class="map-target-name">
-                  →{' '}
-                  {target.kind === 'mine' ? <>Your camp — <strong>{target.camp.name}</strong></>
-                    : target.kind === 'friend' ? <>{target.author}'s camp — <strong>{target.camp.name}</strong></>
-                    : target.camp.name}
-                </div>
-                <div class="map-target-addr">{target.camp.location}</div>
-                {target.kind === 'fav' && (favCampIds.has(target.camp.id) || target.friends.length > 0) && (
-                  <div class="map-target-faved">
-                    Starred by{' '}
-                    {favCampIds.has(target.camp.id) && (
-                      <span class="fav-by-chip mine">you</span>
-                    )}
-                    {target.friends.map((n) => (
-                      <span
-                        key={`f-${n}`}
-                        class="fav-by-chip"
-                        style={friendChipStyle(n)}
-                      >{n}</span>
-                    ))}
-                  </div>
+            <div class="map-section-toggle">
+              <button
+                type="button"
+                class="map-section-toggle-btn"
+                onClick={() => toggleSection('starred')}
+              >
+                {sectionExpanded ? '▾' : '▸'}{' '}
+                Starred camps ({pins.length})
+                {!sectionExpanded && selectedCount > 0 && (
+                  <span class="count"> · {selectedCount} selected</span>
                 )}
-                {targetInfo ? (
-                  <>
-                    <div class="map-target-nav">
-                      <strong>{Math.round(targetInfo.meters)} m</strong> away,
-                      bearing <strong>{Math.round(targetInfo.bearing)}°</strong>
-                      {' '}
-                      (compass {compassCardinal(targetInfo.bearing)})
-                    </div>
-                    <div class="map-target-eta">
-                      {(() => {
-                        const e = etaMinutes(targetInfo.meters);
-                        return <>~{e.walk} min walk · {e.bike} min bike</>;
-                      })()}
-                    </div>
-                  </>
-                ) : geo.status === 'ready' ? (
-                  <div class="map-target-nav footnote">
-                    Couldn't resolve this camp's address to lat/lng.
-                  </div>
-                ) : (
-                  <div class="map-target-nav footnote">
-                    Tap "Use my GPS" above to see bearing + distance.
-                  </div>
-                )}
-                {(() => {
-                  const starred = (target.camp.events ?? []).filter(
-                    (e) => favEventIds.has(e.id) || friendFavEventIds(e.id).length > 0,
-                  );
-                  if (starred.length === 0) return null;
-                  return (
-                    <div class="map-target-events">
-                      <div class="map-target-events-head">
-                        Starred events at this camp
-                      </div>
-                      <ul>
-                        {starred.map((e) => {
-                          const eventFriends = friendFavEventIds(e.id);
-                          const youStarred = favEventIds.has(e.id);
-                          return (
-                            <li key={e.id}>
-                              <a
-                                href={`https://directory.burningman.org/events/${encodeURIComponent(e.id)}/`}
-                                target="_blank" rel="noopener"
-                              >{e.name}</a>
-                              {e.display_time && <span class="map-ev-time"> · {e.display_time}</span>}
-                              {(youStarred || eventFriends.length > 0) && (
-                                <span class="map-ev-faved">
-                                  {youStarred && (
-                                    <span class="fav-by-chip mine">you</span>
-                                  )}
-                                  {eventFriends.map((n) => (
-                                    <span
-                                      key={`f-${n}`}
-                                      class="fav-by-chip"
-                                      style={friendChipStyle(n)}
-                                    >{n}</span>
-                                  ))}
-                                </span>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  );
-                })()}
-                <div class="map-target-links">
-                  <button
-                    type="button" class="map-ext-link"
-                    onClick={() => onGotoCamp(target.camp.id)}
-                  >
-                    Open camp card →
-                  </button>
-                  {externalMapsUrl(target.camp) && (
-                    <a
-                      class="map-ext-link"
-                      href={externalMapsUrl(target.camp)!}
-                      target="_blank" rel="noopener"
-                    >
-                      Open in Google Maps ↗
-                    </a>
-                  )}
-                  <button
-                    type="button" class="subtle-btn"
-                    onClick={() => { setTargetId(null); onClearTarget?.(); }}
-                  >
-                    Clear target
-                  </button>
-                </div>
-              </div>
-            )}
+              </button>
+            </div>
+            {visiblePins.length > 0 && (
             <ul>
-              {pins.map((p) => (
-                <li
-                  key={p.camp.id}
-                  class={'map-pin-row' + (target?.camp.id === p.camp.id ? ' active' : '')}
-                  onClick={() => { setSelectedSpot(null); setTargetId(p.camp.id); }}
-                >
-                  <span class={'map-pin-dot' + (p.mine ? ' mine' : '')}>★</span>
-                  <span class="map-pin-mid">
-                    <span class="map-pin-name">{p.camp.name}</span>
-                    {p.friends.length > 0 && (
-                      <span class="map-pin-friends">
-                        {p.friends.map((n) => (
-                          <span
-                            key={`f-${n}`}
-                            class="fav-by-chip"
-                            style={friendChipStyle(n)}
-                          >{n}</span>
-                        ))}
-                      </span>
+              {visiblePins.map((p) => {
+                const active = selection.has(campKey(p.camp.id));
+                const youStarredCamp = favCampIds.has(p.camp.id);
+                return (
+                  <li
+                    key={p.camp.id}
+                    class={'map-pin-row' + (active ? ' active' : '')}
+                    onClick={() => toggleKey(campKey(p.camp.id))}
+                  >
+                    <span class={'map-pin-dot' + (p.mine ? ' mine' : '')} aria-hidden="true" />
+                    <span class="map-pin-mid">
+                      <span class="map-pin-name">{p.camp.name}</span>
+                      {(p.mine || p.friends.length > 0) && hasAnyFriends && (
+                        <span class="map-pin-friends">
+                          {/* Once any friend's stars are in the picture,
+                              every row consistently shows who starred
+                              it (you + their nicknames). Without that,
+                              some rows would have a "you" chip and
+                              others wouldn't, which reads confusingly.
+                              When no friends are imported at all the
+                              whole chip strip is suppressed — the
+                              "Starred camps" header alone says they're
+                              yours. */}
+                          {p.mine && (
+                            <span class="fav-by-chip mine">you</span>
+                          )}
+                          {p.friends.map((n) => (
+                            <span
+                              key={`f-${n}`}
+                              class="fav-by-chip"
+                              style={friendChipStyle(n)}
+                            >{n}</span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
+                    <span class="map-pin-addr">{p.camp.location}</span>
+                    {active && (
+                      <div class="row-details">
+                        {(youStarredCamp || p.friends.length > 0) && (
+                          <div class="row-faved">
+                            Starred by{' '}
+                            {youStarredCamp && (
+                              <span class="fav-by-chip mine">you</span>
+                            )}
+                            {p.friends.map((n) => (
+                              <span
+                                key={`fd-${n}`}
+                                class="fav-by-chip"
+                                style={friendChipStyle(n)}
+                              >{n}</span>
+                            ))}
+                          </div>
+                        )}
+                        <NavBlock address={p.camp.location} />
+                        {(() => {
+                          const starred = (p.camp.events ?? []).filter(
+                            (e) => favEventIds.has(e.id) || friendFavEventIds(e.id).length > 0,
+                          );
+                          if (starred.length === 0) return null;
+                          return (
+                            <div class="row-events">
+                              <div class="row-events-head">
+                                Starred events at this camp
+                              </div>
+                              <ul>
+                                {starred.map((e) => {
+                                  const eventFriends = friendFavEventIds(e.id);
+                                  const youStarred = favEventIds.has(e.id);
+                                  return (
+                                    <li key={e.id}>
+                                      <a
+                                        href={`https://directory.burningman.org/events/${encodeURIComponent(e.id)}/`}
+                                        target="_blank" rel="noopener"
+                                        onClick={(ev) => ev.stopPropagation()}
+                                      >{e.name}</a>
+                                      {e.display_time && <span class="map-ev-time"> · {e.display_time}</span>}
+                                      {(youStarred || eventFriends.length > 0) && (
+                                        <span class="map-ev-faved">
+                                          {youStarred && (
+                                            <span class="fav-by-chip mine">you</span>
+                                          )}
+                                          {eventFriends.map((n) => (
+                                            <span
+                                              key={`fe-${n}`}
+                                              class="fav-by-chip"
+                                              style={friendChipStyle(n)}
+                                            >{n}</span>
+                                          ))}
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          );
+                        })()}
+                        <div class="row-actions">
+                          <button
+                            type="button" class="map-ext-link"
+                            onClick={(e) => { e.stopPropagation(); onGotoCamp(p.camp.id); }}
+                          >Open camp card →</button>
+                          {externalMapsUrl(p.camp) && (
+                            <a
+                              class="map-ext-link"
+                              href={externalMapsUrl(p.camp)!}
+                              target="_blank" rel="noopener"
+                              onClick={(e) => e.stopPropagation()}
+                            >Open in Google Maps ↗</a>
+                          )}
+                        </div>
+                      </div>
                     )}
-                  </span>
-                  <span class="map-pin-addr">{p.camp.location}</span>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
+            )}
           </div>
+            );
+          })()}
 
           <Svg
             pins={pins}
             target={target}
             targetAddress={target ? parseAddress(target.camp.location) : null}
             userSvg={userSvg}
-            onSelectPin={(id) => { setSelectedSpot(null); setTargetId(id); }}
+            selection={selection}
+            toggleKey={toggleKey}
             onClearSelection={clearSelection}
             myCampPin={myCampPin}
             myMeetPins={myMeetPins}
             friendCampPins={friendCampPins}
             friendMeetPins={friendMeetPins}
-            selectedSpot={selectedSpot}
-            setSelectedSpot={(sel) => { setTargetId(null); setSelectedSpot(sel); }}
             activeSpot={activeSpot}
             activeSpotAddress={activeSpot ? parseAddress(activeSpot.address) : null}
+            selectedItems={selectedItems}
             poiPins={poiPins}
             zoom={zoom}
             center={center}
@@ -811,71 +1129,62 @@ function compassCardinal(deg: number): string {
 // --- SVG --------------------------------------------------------------
 
 function Svg({
-  pins, target, targetAddress, userSvg, onSelectPin, onClearSelection,
+  pins, target, targetAddress, userSvg, onClearSelection,
   myCampPin, myMeetPins, friendCampPins, friendMeetPins,
-  selectedSpot, setSelectedSpot, activeSpot, activeSpotAddress,
-  poiPins, zoom, center, setCenter,
+  selection, toggleKey, activeSpot, activeSpotAddress,
+  selectedItems, poiPins, zoom, center, setCenter,
 }: {
   pins: Array<{ camp: Camp; x: number; y: number; mine: boolean; friends: string[] }>;
+  /** Single-select view — populated only when exactly one camp is in
+   *  the selection set. Drives the big near-Man label + GPS bearing
+   *  line, both of which only make sense for a single target. */
   target: {
     camp: Camp; x: number; y: number;
     author: string | null;
     kind: 'fav' | 'mine' | 'friend';
+    color: string;
   } | null;
-  /** Parsed address for the selected camp — both the polar numerics
-   *  (for drawing the highlighted radial + ring arc) and the display
-   *  strings (for the large address readout next to the Man). Null
-   *  when no pin is selected or the address doesn't parse. */
+  /** Parsed address for the single selected camp. Null in multi mode. */
   targetAddress: {
     clockHour: number; radiusFeet: number;
     clock: string; street: string;
   } | null;
   userSvg: { x: number; y: number } | null;
-  onSelectPin: (id: string) => void;
-  /** Click on empty map canvas (not on a pin) drops the selection —
-   *  clears the highlighted radial/ring/halo and the address readout. */
+  /** Click on empty SVG canvas drops the entire selection set. */
   onClearSelection: () => void;
   myCampPin: { camp: Camp; x: number; y: number } | null;
   myMeetPins: Array<{ spot: MeetSpot; idx: number; x: number; y: number }>;
   friendCampPins: Array<{ name: string; camp: Camp; x: number; y: number }>;
   friendMeetPins: Array<{ name: string; spot: MeetSpot; idx: number; x: number; y: number }>;
-  selectedSpot:
-    | { source: 'mine'; idx: number }
-    | { source: 'friend'; name: string; idx: number }
-    | { source: 'poi'; kind: string; name: string }
-    | null;
-  setSelectedSpot: (sel:
-    | { source: 'mine'; idx: number }
-    | { source: 'friend'; name: string; idx: number }
-    | { source: 'poi'; kind: string; name: string }
-    | null
-  ) => void;
-  /** Pre-resolved details for the currently-selected spot: display
-   *  label, author (null if yours), x/y in SVG space. POIs carry a
-   *  description instead of a `when`, and `isPoi` flips the styling. */
+  /** Multi-select set of typed keys (camp:<id>, mine:<idx>, …). */
+  selection: Set<string>;
+  /** Add/remove a key from the selection. */
+  toggleKey: (key: string) => void;
+  /** Single-spot view of the multi-selection — null in multi mode. */
   activeSpot: {
     label: string; address: string; when?: string;
     description?: string;
     x: number; y: number; author: string | null;
     isPoi: boolean;
+    color: string;
   } | null;
-  /** parseAddress() output for activeSpot's address — used to draw the
-   *  accent radial + ring highlight identical to camp selections. */
+  /** parseAddress() output for activeSpot — null in multi mode. */
   activeSpotAddress: {
     clockHour: number; radiusFeet: number;
     clock: string; street: string;
   } | null;
-  /** Points of interest (Center Camp, Playa Info, etc) — static data
-   *  from map/data.ts, resolved into SVG space. Rendered as distinct
-   *  non-selectable markers beneath the camp + meet pins. */
+  /** Multi-select rendering source. Each item carries x/y + label +
+   *  raw address; the SVG draws one highlight per entry plus a line
+   *  label when there are 2 or more. */
+  selectedItems: Array<{
+    key: string; x: number; y: number;
+    address: string; label: string;
+    kind: 'camp' | 'mine' | 'friend' | 'poi';
+    color: string;
+  }>;
   poiPins: Array<{ poi: BrcPOI; x: number; y: number }>;
-  /** Zoom multiplier (1 = fit whole city). Width/height of the viewBox
-   *  scale inversely with this. */
   zoom: number;
-  /** SVG-space point the viewBox is centered on — moves on selection
-   *  when zoom > 1 so the picked pin stays in frame. */
   center: { x: number; y: number };
-  /** Setter for pan — wired to pointer drag events below. */
   setCenter: (c: { x: number; y: number }) => void;
 }) {
   // Radial streets we draw: 2:00 through 10:00. The arc is NOT a full
@@ -1102,7 +1411,10 @@ function Svg({
           12,
         );
         return (
-          <g class="brc-highlight spot">
+          <g
+            class="brc-highlight spot"
+            style={{ '--highlight-color': activeSpot.color } as JSX.CSSProperties}
+          >
             <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
             <path d={arcD} class="brc-highlight-ring" fill="none" />
             <circle cx={activeSpot.x} cy={activeSpot.y} r={180} class="brc-highlight-halo" />
@@ -1126,7 +1438,10 @@ function Svg({
           12,
         );
         return (
-          <g class="brc-highlight">
+          <g
+            class="brc-highlight"
+            style={{ '--highlight-color': target.color } as JSX.CSSProperties}
+          >
             <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
             <path d={arcD} class="brc-highlight-ring" fill="none" />
             <circle cx={target.x} cy={target.y} r={180} class="brc-highlight-halo" />
@@ -1134,17 +1449,93 @@ function Svg({
         );
       })()}
 
-      {/* Bearing line from user to whatever is currently selected —
-          a camp pin (`target`) OR a meet spot / POI / friend spot
-          (`activeSpot`). Both selection paths are mutually exclusive
-          on the parent (clearing one clears the other), so this picks
-          whichever is active. */}
+      {/* Multi-select highlights. Only fires when 2+ items are picked;
+          single-select uses the type-specific target / activeSpot
+          blocks above so the camp-orange / spot-violet styling reads
+          correctly.
+
+          Label split:
+            - NAME sits at the item (horizontal, just above the halo)
+              so it reads naturally regardless of the radial's clock
+              hour. Different items naturally separate by their pin
+              positions, not by a shared midpoint.
+            - ADDRESS rides along the radial, rotated to match it,
+              with a tight perpendicular offset (~1 px on screen) so
+              it visually hugs the line without crossing it. */}
+      {selectedItems.length >= 2 && selectedItems.map((item) => {
+        const addr = parseAddress(item.address);
+        if (!addr) return null;
+        const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 150;
+        const radialEnd = hourToSvgPoint(addr.clockHour, outerR);
+        const span = 0.6;
+        const arcD = arcPolylinePath(
+          addr.clockHour - span, addr.clockHour + span,
+          addr.radiusFeet, 12,
+        );
+        const cls = item.kind === 'camp' ? 'brc-highlight'
+          : item.kind === 'poi' ? 'brc-highlight poi'
+          : 'brc-highlight spot';
+        // Address: place along the radial at 50% of the way from the
+        // Man to the item, perpendicular-offset by a tiny amount so
+        // the text hugs the line instead of crossing it.
+        const len = Math.hypot(item.x, item.y) || 1;
+        const ux = item.x / len;
+        const uy = item.y / len;
+        const addrR = len * 0.5;
+        // Perpendicular direction — rotated 90° CCW from the radial.
+        // Pick the one that points "up" in screen coords for visual
+        // consistency (label always sits on the same screen-side).
+        let perpX = -uy;
+        let perpY = ux;
+        if (perpY > 0) { perpX = -perpX; perpY = -perpY; }
+        const tinyOff = 50;   // ~1–3 px on screen depending on width
+        const addrCx = ux * addrR + perpX * tinyOff;
+        const addrCy = uy * addrR + perpY * tinyOff;
+        // Rotation follows the radial; flip 180° on the upper half so
+        // text reads upright at every clock position.
+        let angle = (Math.atan2(item.y, item.x) * 180) / Math.PI;
+        if (angle > 90 || angle < -90) angle += 180;
+        // Name dy: offset above the halo (r=180). Negative dy in SVG
+        // means "up the page" → halo is cleared with ~40 units of
+        // breathing room. Horizontal text, never rotated.
+        const nameDy = -220;
+        return (
+          <g
+            key={item.key}
+            class={cls + ' multi'}
+            style={{ '--highlight-color': item.color } as JSX.CSSProperties}
+          >
+            <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
+            <path d={arcD} class="brc-highlight-ring" fill="none" />
+            <circle cx={item.x} cy={item.y} r={180} class="brc-highlight-halo" />
+            <text
+              x={item.x} y={item.y}
+              dy={nameDy}
+              text-anchor="middle"
+              class="brc-line-label brc-line-name"
+            >{item.label}</text>
+            <text
+              transform={`translate(${addrCx}, ${addrCy}) rotate(${angle})`}
+              text-anchor="middle"
+              class="brc-line-label brc-line-addr"
+            >{addr.clock} &amp; {addr.street}</text>
+          </g>
+        );
+      })}
+
+      {/* Bearing line from user to single selection. Multi-select
+          drops it — there's no clear "where am I going?" with N≥2.
+          Color matches the target's dot so the line reads as an
+          extension of the dot, not a separate visual layer. */}
       {userSvg && (target || activeSpot) && (
         <line
           x1={userSvg.x} y1={userSvg.y}
           x2={target ? target.x : activeSpot!.x}
           y2={target ? target.y : activeSpot!.y}
           class="brc-bearing"
+          style={{
+            '--highlight-color': target ? target.color : activeSpot!.color,
+          } as JSX.CSSProperties}
         />
       )}
 
@@ -1154,10 +1545,7 @@ function Svg({
           the user-authored pins so a starred camp at the same spot
           wouldn't be covered over. */}
       {poiPins.map(({ poi, x, y }) => {
-        const active =
-          selectedSpot?.source === 'poi'
-          && selectedSpot.kind === poi.kind
-          && selectedSpot.name === poi.name;
+        const active = selection.has(poiKey(poi.kind, poi.name));
         return (
           <g
             key={`poi-${poi.kind}-${poi.name}`}
@@ -1165,7 +1553,7 @@ function Svg({
             transform={`translate(${x} ${y})`}
             onClick={(e) => {
               e.stopPropagation();
-              setSelectedSpot({ source: 'poi', kind: poi.kind, name: poi.name });
+              toggleKey(poiKey(poi.kind, poi.name));
             }}
           >
             {/* Transparent hit-catcher (same r=150 pattern as camp pins).
@@ -1183,11 +1571,11 @@ function Svg({
       {pins.map((p) => (
         <g
           key={p.camp.id}
-          class={'brc-pin' + (target?.camp.id === p.camp.id ? ' active' : '') + (p.mine ? ' mine' : ' friend')}
+          class={'brc-pin' + (selection.has(campKey(p.camp.id)) ? ' active' : '') + (p.mine ? ' mine' : ' friend')}
           transform={`translate(${p.x} ${p.y})`}
           onClick={(e) => {
             e.stopPropagation();
-            onSelectPin(p.camp.id);
+            toggleKey(campKey(p.camp.id));
           }}
         >
           {/* Invisible hit-catcher — see comment on `brc-pin-hit`. */}
@@ -1205,9 +1593,9 @@ function Svg({
           orange used elsewhere. */}
       {myCampPin && (
         <g
-          class={'brc-my-camp' + (target?.camp.id === myCampPin.camp.id ? ' active' : '')}
+          class={'brc-my-camp' + (selection.has(campKey(myCampPin.camp.id)) ? ' active' : '')}
           transform={`translate(${myCampPin.x} ${myCampPin.y})`}
-          onClick={(e) => { e.stopPropagation(); onSelectPin(myCampPin.camp.id); }}
+          onClick={(e) => { e.stopPropagation(); toggleKey(campKey(myCampPin.camp.id)); }}
         >
           {/* Transparent hit-catcher — the halo (r=140) + tent body
               (~75px wide) map to only ~4px on a phone, below fat-finger
@@ -1226,9 +1614,9 @@ function Svg({
       {friendCampPins.map((fp) => (
         <g
           key={`friend-camp-${fp.name}-${fp.camp.id}`}
-          class={'brc-friend-camp' + (target?.camp.id === fp.camp.id ? ' active' : '')}
+          class={'brc-friend-camp' + (selection.has(campKey(fp.camp.id)) ? ' active' : '')}
           transform={`translate(${fp.x} ${fp.y})`}
-          onClick={(e) => { e.stopPropagation(); onSelectPin(fp.camp.id); }}
+          onClick={(e) => { e.stopPropagation(); toggleKey(campKey(fp.camp.id)); }}
           style={friendHueStyle(fp.name)}
         >
           <circle r={150} class="brc-pin-hit" />
@@ -1238,40 +1626,32 @@ function Svg({
           <title>{fp.name}'s camp — {fp.camp.name}</title>
         </g>
       ))}
-      {/* Your meet spots — violet diamond pins, distinct from the
-          accent-orange camp pins. Bigger than camp pins too so they
-          visually assert "rendezvous plans" vs "places I might visit".
-          Clickable — selecting a spot displays its details near the
-          Man using the same address-readout slot as camp selections. */}
+      {/* Your meet spots — bright violet dots. The whole map reads as
+          a graph of dots; meet spots used to be diamonds with text
+          labels under them, which stood out oddly on a phone. Now
+          they're just bright dots with a generous hit-catcher. The
+          sidebar surfaces label + nickname for any selection. */}
       {myMeetPins.map((mp) => {
-        const active =
-          selectedSpot?.source === 'mine' && selectedSpot.idx === mp.idx;
+        const active = selection.has(mineSpotKey(mp.idx));
         return (
           <g
             key={`my-spot-${mp.idx}`}
             class={'brc-meet' + (active ? ' active' : '')}
-            transform={`translate(${mp.x} ${mp.y}) rotate(45)`}
+            transform={`translate(${mp.x} ${mp.y})`}
             onClick={(e) => {
               e.stopPropagation();
-              // The caller's setSelectedSpot already clears any camp
-              // target on the parent side; we just relay the selection.
-              setSelectedSpot({ source: 'mine', idx: mp.idx });
+              toggleKey(mineSpotKey(mp.idx));
             }}
           >
-            <rect x={-50} y={-50} width={100} height={100} class="brc-meet-body" />
+            <circle r={150} class="brc-pin-hit" />
+            <circle r={60} class="brc-meet-dot" />
             <title>{mp.spot.label} — {mp.spot.address}{mp.spot.when ? ` · ${mp.spot.when}` : ''}</title>
           </g>
         );
       })}
-      {/* Friends' meet spots — same diamond shape, tinted with friend
-          hue so Alice's plans read differently from Bob's. Rotation is
-          nested on the inner <g> so the nickname label stays upright
-          instead of riding the 45° tilt with the diamond. */}
+      {/* Friends' meet spots — bright dots tinted with friend hue. */}
       {friendMeetPins.map((fm) => {
-        const active =
-          selectedSpot?.source === 'friend'
-          && selectedSpot.name === fm.name
-          && selectedSpot.idx === fm.idx;
+        const active = selection.has(friendSpotKey(fm.name, fm.idx));
         return (
           <g
             key={`fr-spot-${fm.name}-${fm.idx}`}
@@ -1280,13 +1660,11 @@ function Svg({
             style={friendHueStyle(fm.name)}
             onClick={(e) => {
               e.stopPropagation();
-              setSelectedSpot({ source: 'friend', name: fm.name, idx: fm.idx });
+              toggleKey(friendSpotKey(fm.name, fm.idx));
             }}
           >
-            <g transform="rotate(45)">
-              <rect x={-42} y={-42} width={84} height={84} class="brc-meet-body" />
-            </g>
-            <text x={0} y={105} class="brc-friend-label" text-anchor="middle">{fm.name}</text>
+            <circle r={150} class="brc-pin-hit" />
+            <circle r={60} class="brc-meet-dot" />
             <title>{fm.name}: {fm.spot.label} — {fm.spot.address}{fm.spot.when ? ` · ${fm.spot.when}` : ''}</title>
           </g>
         );

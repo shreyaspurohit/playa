@@ -862,22 +862,59 @@
      pointer-events off so the halo doesn't steal clicks meant for
      the pin underneath or the SVG background. */
   .brc-highlight { pointer-events: none; }
+  /* `--highlight-color` is set inline per-item from MapView.tsx so the
+     radial / ring / halo match the dot's fill (gold, teal, friend-hue,
+     violet, POI red/blue, …). The `var(--accent)` fallback covers the
+     rare path where no inline color is provided. */
   .brc-highlight-radial {
-    stroke: var(--accent); stroke-width: 22;
+    stroke: var(--highlight-color, var(--accent)); stroke-width: 22;
     opacity: 0.85; stroke-linecap: round;
   }
   .brc-highlight-ring {
-    stroke: var(--accent); stroke-width: 28;
+    stroke: var(--highlight-color, var(--accent)); stroke-width: 28;
     opacity: 0.85; fill: none; stroke-linecap: round;
   }
   .brc-highlight-halo {
-    fill: var(--accent); opacity: 0.22;
+    fill: var(--highlight-color, var(--accent)); opacity: 0.22;
     animation: brc-halo-pulse 1.8s ease-in-out infinite;
   }
   @keyframes brc-halo-pulse {
     0%, 100% { opacity: 0.18; }
     50%      { opacity: 0.38; }
   }
+  /* Multi-select: drop the pulse — N animating halos at once is
+     visually noisy. Static fill at the same average opacity. */
+  .brc-highlight.multi .brc-highlight-halo {
+    animation: none;
+    opacity: 0.28;
+  }
+  /* Line labels along each multi-select item's radial. Rotated in JS
+     to follow the line; --bg knockout stroke keeps them legible over
+     grid lines + arcs. Two text elements per item (name + address)
+     sit on opposite sides of the line so the radial stays visible
+     between them. Pointer-events none so they can't block pin hits. */
+  .brc-line-label {
+    paint-order: stroke;
+    stroke: var(--bg); stroke-width: 36;
+    stroke-linejoin: round;
+    pointer-events: none;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  /* Name label sits at the dot, horizontal — read at a glance, no
+     rotation gymnastics. Slightly bolder than the address since it's
+     the primary identifier. */
+  .brc-line-label.brc-line-name {
+    font-size: 160px; font-weight: 700;
+    fill: var(--accent);
+  }
+  /* Address rides along the radial, smaller + lighter so it reads
+     as the secondary "where" annotation, not as a competing title. */
+  .brc-line-label.brc-line-addr {
+    font-size: 120px; font-weight: 500;
+    fill: var(--muted);
+  }
+  .brc-highlight.spot .brc-line-name { fill: var(--meet); }
+  .brc-highlight.poi .brc-line-name { fill: var(--text); opacity: 0.9; }
   .brc-man { fill: var(--accent); stroke: var(--text); stroke-width: 8; }
   .brc-label { font-size: 180px; fill: var(--muted); font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
   .brc-label.man-label { fill: var(--accent); font-weight: 600; font-size: 230px; }
@@ -914,7 +951,10 @@
   .brc-pin.friend .brc-pin-inner { fill: var(--accent); }
   .brc-pin.active .brc-pin-outer { opacity: 0.7; r: 130; }
   .brc-pin.active .brc-pin-inner { stroke-width: 14; }
-  .brc-bearing { stroke: var(--accent); stroke-width: 14; stroke-dasharray: 60 40; opacity: 0.9; }
+  .brc-bearing {
+    stroke: var(--highlight-color, var(--accent));
+    stroke-width: 14; stroke-dasharray: 60 40; opacity: 0.9;
+  }
   .brc-user-halo { fill: #3b82f6; opacity: 0.25; }
   .brc-user-dot { fill: #3b82f6; stroke: #fff; stroke-width: 10; }
 
@@ -929,8 +969,20 @@
   }
   .map-pin-row:hover { border-color: var(--accent); }
   .map-pin-row.active { background: var(--accent-soft); border-color: var(--accent); }
-  .map-pin-dot { font-size: 14px; color: var(--accent); }
-  .map-pin-dot.mine { color: #f59e0b; }
+  /* Camp marker — small circle that mirrors the SVG `.brc-pin-inner`
+     so the list and the map use the same shape and same fill. Mine =
+     gold (matches the map's `.brc-pin-inner` for own stars), friend-
+     only = accent orange (matches the friend variant). */
+  .map-pin-dot {
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 12px; height: 12px; margin-top: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 1.5px solid #1a1a1a;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  }
+  .map-pin-dot.mine { background: #f59e0b; }
   .map-pin-mid {
     display: flex; flex-wrap: wrap; align-items: center;
     column-gap: 6px; row-gap: 3px; min-width: 0;
@@ -958,6 +1010,31 @@
   .map-target-events ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
   .map-target-events li { font-size: 12px; line-height: 1.5; }
   .map-target-events a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  /* Inline expansion below a selected list row. Replaces the old
+     "sticky details pane" pattern so multi-select can show details
+     for every selected item simultaneously, each in its own row. */
+  .row-details {
+    grid-column: 1 / -1;            /* span the row's full grid width */
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    font-size: 12px; line-height: 1.5; color: var(--text);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .row-nav, .row-eta, .row-faved { font-size: 12px; }
+  .row-footnote { font-size: 11px; color: var(--muted); font-style: italic; }
+  .row-faved { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--muted); }
+  .row-poi-desc { font-size: 11px; color: var(--muted); margin-top: 2px; font-style: italic; }
+  .row-events { padding-top: 4px; border-top: 1px dashed var(--border); }
+  .row-events-head { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .row-events ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+  .row-events li { font-size: 12px; line-height: 1.5; }
+  .row-events a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .row-events a:hover { text-decoration: underline; }
+  .row-actions {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    padding-top: 4px; border-top: 1px dashed var(--border);
+  }
   .map-target-events a:hover { text-decoration: underline; }
   /* "Starred by you, alice, bob" rows under the camp target box and
      each starred event. Reuses .fav-by-chip from the camp cards so
@@ -1042,11 +1119,38 @@
     box-shadow: inset 0 0 0 2px var(--meet);
   }
   .map-meet-row:last-child { border-bottom: 0; }
+  /* Legacy diamond glyph — still used by friend HOME-camp rows
+     (which wrap a TentIcon in this span and tint via inline style). */
   .map-meet-diamond {
     flex: 0 0 auto; font-size: 14px; line-height: 1.4;
     color: var(--meet);
   }
   .map-meet-diamond.mine { color: var(--meet); }
+  /* Friend home-camp tent in the list. Renders the TentIcon in the
+     friend's hue so the list silhouette matches the map's solid-
+     hued tent. --friend-hue is set on the parent span via
+     friendHueStyle; the TentIcon uses currentColor for fill. */
+  .map-friend-tent {
+    flex: 0 0 auto;
+    color: hsl(var(--friend-hue, 20), 65%, 45%);
+    line-height: 1;
+  }
+  /* Meet-spot list marker — mirrors the map's `.brc-meet-dot` so the
+     list and map use the same shape AND the same color. Friend
+     variant pulls its hue from --friend-hue (set inline via
+     friendHueStyle). White-ish ring matches the SVG dot's outline. */
+  .map-meet-dot {
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 12px; height: 12px; margin-top: 4px;
+    border-radius: 50%;
+    border: 1.5px solid var(--bg);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+  }
+  .map-meet-dot.mine { background: var(--meet); }
+  .map-meet-dot.friend {
+    background: hsl(var(--friend-hue, 20), 65%, 50%);
+  }
   .map-meet-body { flex: 1; min-width: 0; }
   .map-meet-label { font-weight: 500; color: var(--text); }
   /* Dedicated delete button for meet-spot rows. Reuses the same
@@ -1121,17 +1225,21 @@
     pointer-events: none;
   }
   .brc-meet { cursor: pointer; }
-  .brc-meet .brc-meet-body {
-    fill: var(--meet); opacity: 0.88;
-    stroke: #fff; stroke-width: 8;
+  /* Bright filled dot — same shape language as camp pins / POIs, so
+     the whole map reads as a uniform graph of dots. Friend tint via
+     --friend-hue (set inline by the .friend variant); your own
+     spots use the violet --meet accent. */
+  .brc-meet .brc-meet-dot {
+    fill: var(--meet);
+    stroke: #fff; stroke-width: 6;
   }
-  .brc-meet.friend .brc-meet-body {
-    fill: hsl(var(--friend-hue, 20), 65%, 50%); opacity: 0.88;
-    stroke: #fff; stroke-width: 7;
+  .brc-meet.friend .brc-meet-dot {
+    fill: hsl(var(--friend-hue, 20), 65%, 50%);
+    stroke: #fff; stroke-width: 5;
   }
-  .brc-meet.active .brc-meet-body {
-    opacity: 1;
-    stroke-width: 14;
+  .brc-meet.active .brc-meet-dot {
+    stroke-width: 10;
+    filter: brightness(1.1);
   }
   /* Points of interest — year-stable landmarks (Center Camp, Playa
      Info). Intentionally BIG: these are the two most-pointed-at
@@ -1159,13 +1267,18 @@
   }
   .map-poi-center-camp { background: #dc2626; }
   .map-poi-playa-info  { background: #0369a1; }
-  /* Violet variant of the address highlight — fires when a meet spot
-     is the selected item instead of a camp. */
+  /* `.brc-highlight.spot` previously hard-coded violet here; the
+     per-item `--highlight-color` (set inline) now drives the color so
+     friend meet-spots show in their friend-hue and own meet-spots
+     stay violet. The `--meet` fallback preserves the old look if no
+     inline color is provided. */
   .brc-highlight.spot .brc-highlight-radial,
   .brc-highlight.spot .brc-highlight-ring {
-    stroke: var(--meet);
+    stroke: var(--highlight-color, var(--meet));
   }
-  .brc-highlight.spot .brc-highlight-halo { fill: var(--meet); }
+  .brc-highlight.spot .brc-highlight-halo {
+    fill: var(--highlight-color, var(--meet));
+  }
   /* Small author/label above the big address text when a spot is
      selected — gives context ("Coffee meetup · 9:00 & Esplanade"
      reads as one unit). */
@@ -1223,6 +1336,44 @@
   .map-legend-btn:hover,
   .map-legend-btn:focus-visible {
     border-color: var(--accent); color: var(--accent);
+    outline: none;
+  }
+  /* Section toggle. Replaces the static <h4> headings on lists that
+     can hide/show their items. Default-collapsed so the map sits
+     close to the top of the screen. Selected items still render
+     when collapsed (per-section filter), so multi-select detail is
+     never hidden by the toggle. */
+  .map-section-toggle {
+    display: flex; align-items: center;
+    margin: 8px 0 4px;
+  }
+  .map-section-toggle-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 8px;
+    background: transparent; border: 0;
+    color: var(--text); font-size: 14px; font-weight: 600;
+    cursor: pointer; border-radius: 4px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .map-section-toggle-btn:hover { background: var(--chip-bg); }
+  .map-section-toggle-btn .count {
+    font-weight: 400; color: var(--muted); font-size: 12px;
+  }
+  /* "Clear (N)" pill — same shape as the legend button so the header
+     reads as a single row of related controls, but tinted to flag
+     it as a destructive-ish action when there are selections. */
+  .map-clear-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px;
+    border: 1px solid var(--accent); background: var(--accent-soft);
+    color: var(--accent); border-radius: 999px;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .map-clear-btn:hover,
+  .map-clear-btn:focus-visible {
+    background: var(--accent); color: var(--bg);
     outline: none;
   }
   /* `?` glyph inside the pill — sits in a small circle so it reads
