@@ -74,6 +74,10 @@ export const LS = {
   // Anything in the embedded notes list with a later `ts` lights up
   // the release-notes banner.
   releaseNotesSeen: 'bm-rn-seen',
+  // Map distance preference — 'imperial' (mi/ft) or 'metric' (km/m).
+  // Drives the between-pins distance label, the per-row nav distance,
+  // and any future distance readout. Default 'imperial' (US-centric burn).
+  distanceUnit: 'bm-distance-unit',
 } as const;
 
 /** Compat shim — older builds wrote the password to sessionStorage

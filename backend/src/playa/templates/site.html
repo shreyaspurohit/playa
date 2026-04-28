@@ -834,6 +834,20 @@
     font-variant-numeric: tabular-nums;
   }
   .map-zoom-reset { font-size: 15px; }
+  /* Distance-unit toggle — same pill silhouette as the zoom control
+     so it reads as part of the map's chrome row. Click cycles
+     mi ↔ km; the persisted preference survives reloads. */
+  .map-unit-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 30px; min-width: 40px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--chip-bg); color: var(--text);
+    font-size: 12px; font-weight: 600; line-height: 1;
+    cursor: pointer; font-variant-numeric: tabular-nums;
+  }
+  .map-unit-btn:hover, .map-unit-btn:focus-visible {
+    background: var(--bg); outline: none;
+  }
   .map-gps { font-size: 12px; color: var(--muted); }
   .map-gps-err { font-size: 12px; color: #c2410c; }
   .brc-svg {
@@ -915,6 +929,32 @@
   }
   .brc-highlight.spot .brc-line-name { fill: var(--meet); }
   .brc-highlight.poi .brc-line-name { fill: var(--text); opacity: 0.9; }
+  /* Pair-distance overlay — drawn between two selected pins. Dashed
+     so it reads as a measurement line rather than another radial,
+     and uses --text so it doesn't compete with any single dot's
+     color (the two endpoints already wear their own colors). */
+  .brc-pair-line {
+    stroke: var(--text); stroke-width: 10;
+    stroke-dasharray: 30 24; stroke-linecap: round;
+    opacity: 0.7;
+  }
+  /* Leader from the segment midpoint out to the displaced label —
+     only rendered in "close mode" when the two pins overlap. Thinner
+     + lower opacity than the pair line so the eye reads it as a
+     connector rather than another measurement. */
+  .brc-pair-leader {
+    stroke: var(--text); stroke-width: 4;
+    stroke-linecap: round; opacity: 0.45;
+  }
+  .brc-pair-label {
+    font-size: 140px; font-weight: 600;
+    fill: var(--text);
+    paint-order: stroke;
+    stroke: var(--bg); stroke-width: 36;
+    stroke-linejoin: round;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
   .brc-man { fill: var(--accent); stroke: var(--text); stroke-width: 8; }
   .brc-label { font-size: 180px; fill: var(--muted); font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
   .brc-label.man-label { fill: var(--accent); font-weight: 600; font-size: 230px; }

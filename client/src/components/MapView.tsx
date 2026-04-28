@@ -10,6 +10,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import type { Camp, MeetSpot } from '../types';
+import { LS } from '../types';
+import { readString, writeString } from '../utils/storage';
 import type { BrcPOI } from '../map/data';
 import { BRC, POIS } from '../map/data';
 import {
@@ -162,6 +164,22 @@ export function MapView({
     () => { setZoom(1); setCenter(DEFAULT_CENTER); },
     [],
   );
+
+  // Distance unit preference — drives the between-pins label and the
+  // per-row nav distance. Persisted across sessions; default imperial
+  // since the burn audience is overwhelmingly US-based.
+  const [unit, setUnit] = useState<DistanceUnit>(() => {
+    const stored = readString(LS.distanceUnit, 'imperial');
+    return stored === 'metric' ? 'metric' : 'imperial';
+  });
+  const toggleUnit = useCallback(() => {
+    setUnit((u) => {
+      const next: DistanceUnit = u === 'imperial' ? 'metric' : 'imperial';
+      writeString(LS.distanceUnit, next);
+      return next;
+    });
+  }, []);
+
   // (Selection state lives above as `selection`. `target` and
   // `activeSpot` are derived single-selection views below for code
   // paths that pre-date multi-select — they're populated only when
@@ -523,7 +541,7 @@ export function MapView({
       return (
         <>
           <div class="row-nav">
-            <strong>{Math.round(nav.meters)} m</strong> away,
+            <strong>{formatDistance(nav.meters, unit)}</strong> away,
             bearing <strong>{Math.round(nav.bearing)}&deg;</strong>
             {' '}(compass {compassCardinal(nav.bearing)})
           </div>
@@ -580,6 +598,15 @@ export function MapView({
               >⤾</button>
             )}
           </div>
+          <button
+            type="button"
+            class="map-unit-btn"
+            aria-label={`Distance unit: ${unit === 'imperial' ? 'imperial (mi/ft)' : 'metric (km/m)'}. Click to switch.`}
+            title="Toggle imperial / metric"
+            onClick={toggleUnit}
+          >
+            {unit === 'imperial' ? 'mi' : 'km'}
+          </button>
           {selection.size > 0 && (
             <button
               type="button"
@@ -1106,6 +1133,7 @@ export function MapView({
             zoom={zoom}
             center={center}
             setCenter={setCenter}
+            unit={unit}
           />
         </>
       )}
@@ -1126,13 +1154,36 @@ function compassCardinal(deg: number): string {
   return dirs[i];
 }
 
+type DistanceUnit = 'imperial' | 'metric';
+
+// 1 m = 3.28084 ft; 1 mi = 5280 ft; 1 km = 1000 m.
+function feetToMeters(ft: number): number { return ft * 0.3048; }
+
+/** Human-friendly distance string for either unit system. Switches to
+ *  the smaller unit (ft / m) under ~0.1 of the major unit so a
+ *  next-block hop doesn't read as "0.04 mi" — that's harder to
+ *  picture than "210 ft". */
+function formatDistance(meters: number, unit: DistanceUnit): string {
+  if (unit === 'imperial') {
+    const feet = meters / 0.3048;
+    const miles = feet / 5280;
+    if (miles < 0.1) return `${Math.round(feet)} ft`;
+    if (miles < 10)  return `${miles.toFixed(2)} mi`;
+    return `${miles.toFixed(1)} mi`;
+  }
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  const km = meters / 1000;
+  if (km < 10) return `${km.toFixed(2)} km`;
+  return `${km.toFixed(1)} km`;
+}
+
 // --- SVG --------------------------------------------------------------
 
 function Svg({
   pins, target, targetAddress, userSvg, onClearSelection,
   myCampPin, myMeetPins, friendCampPins, friendMeetPins,
   selection, toggleKey, activeSpot, activeSpotAddress,
-  selectedItems, poiPins, zoom, center, setCenter,
+  selectedItems, poiPins, zoom, center, setCenter, unit,
 }: {
   pins: Array<{ camp: Camp; x: number; y: number; mine: boolean; friends: string[] }>;
   /** Single-select view — populated only when exactly one camp is in
@@ -1186,6 +1237,8 @@ function Svg({
   zoom: number;
   center: { x: number; y: number };
   setCenter: (c: { x: number; y: number }) => void;
+  /** Distance unit for the between-pins label (and any future readouts). */
+  unit: DistanceUnit;
 }) {
   // Radial streets we draw: 2:00 through 10:00. The arc is NOT a full
   // circle — the 6:00 side is open to the playa.
@@ -1461,67 +1514,227 @@ function Svg({
               positions, not by a shared midpoint.
             - ADDRESS rides along the radial, rotated to match it,
               with a tight perpendicular offset (~1 px on screen) so
-              it visually hugs the line without crossing it. */}
-      {selectedItems.length >= 2 && selectedItems.map((item) => {
-        const addr = parseAddress(item.address);
-        if (!addr) return null;
-        const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 150;
-        const radialEnd = hourToSvgPoint(addr.clockHour, outerR);
-        const span = 0.6;
-        const arcD = arcPolylinePath(
-          addr.clockHour - span, addr.clockHour + span,
-          addr.radiusFeet, 12,
-        );
-        const cls = item.kind === 'camp' ? 'brc-highlight'
-          : item.kind === 'poi' ? 'brc-highlight poi'
-          : 'brc-highlight spot';
-        // Address: place along the radial at 50% of the way from the
-        // Man to the item, perpendicular-offset by a tiny amount so
-        // the text hugs the line instead of crossing it.
-        const len = Math.hypot(item.x, item.y) || 1;
-        const ux = item.x / len;
-        const uy = item.y / len;
-        const addrR = len * 0.5;
-        // Perpendicular direction — rotated 90° CCW from the radial.
-        // Pick the one that points "up" in screen coords for visual
-        // consistency (label always sits on the same screen-side).
-        let perpX = -uy;
-        let perpY = ux;
-        if (perpY > 0) { perpX = -perpX; perpY = -perpY; }
-        const tinyOff = 50;   // ~1–3 px on screen depending on width
-        const addrCx = ux * addrR + perpX * tinyOff;
-        const addrCy = uy * addrR + perpY * tinyOff;
-        // Rotation follows the radial; flip 180° on the upper half so
-        // text reads upright at every clock position.
-        let angle = (Math.atan2(item.y, item.x) * 180) / Math.PI;
-        if (angle > 90 || angle < -90) angle += 180;
-        // Name dy: offset above the halo (r=180). Negative dy in SVG
-        // means "up the page" → halo is cleared with ~40 units of
-        // breathing room. Horizontal text, never rotated.
-        const nameDy = -220;
+              it visually hugs the line without crossing it.
+
+          Collision avoidance:
+            - Items at similar clock-bearings would land their address
+              labels on the same radial line — distribute them across
+              [0.3, 0.7] of each item's distance instead of a fixed
+              0.5 so the labels separate radially.
+            - Items with dots close to each other in screen space
+              would collide their NAME labels above the dot — stack
+              the names vertically (the lower-screen dot keeps its
+              label close, the upper-screen dot's label is pushed
+              further up). */}
+      {(() => {
+        if (selectedItems.length < 2) return null;
+        // 1. Bearing groups for radial address-label spreading.
+        const BEARING_TOL = 0.5;   // clock-hours
+        type BGroup = { hr: number; items: Array<{ key: string; radius: number }> };
+        const bearingGroups: BGroup[] = [];
+        const parsed = selectedItems.map((it) => ({ it, addr: parseAddress(it.address) }));
+        for (const p of parsed) {
+          if (!p.addr) continue;
+          let g = bearingGroups.find((bg) => Math.abs(bg.hr - p.addr!.clockHour) < BEARING_TOL);
+          if (!g) { g = { hr: p.addr.clockHour, items: [] }; bearingGroups.push(g); }
+          g.items.push({ key: p.it.key, radius: p.addr.radiusFeet });
+        }
+        const addrFracByKey = new Map<string, number>();
+        for (const g of bearingGroups) {
+          if (g.items.length === 1) {
+            addrFracByKey.set(g.items[0].key, 0.5);
+            continue;
+          }
+          // Closer-to-Man first → smaller fraction. Distribute across
+          // [0.3, 0.7] of each item's own length.
+          g.items.sort((x, y) => x.radius - y.radius);
+          const lo = 0.3, hi = 0.7;
+          for (let i = 0; i < g.items.length; i++) {
+            const t = i / (g.items.length - 1);
+            addrFracByKey.set(g.items[i].key, lo + t * (hi - lo));
+          }
+        }
+
+        // 2. Screen-space clusters for name-label placement.
+        // Two name labels visibly overlap whenever their X centers
+        // are within roughly half-the-sum-of-widths AND Y centers
+        // are within ~font height. Names vary widely in width, so
+        // use generous tolerances and rely on the above/below
+        // alternation below to separate clustered labels even when
+        // they DO end up at the same Y after offsetting.
+        const POS_TOL_X = 1800;
+        const POS_TOL_Y = 600;
+        const posClusters: Array<Array<{ key: string; x: number; y: number }>> = [];
+        for (const it of selectedItems) {
+          let c = posClusters.find((cl) => {
+            // Match against any member of the cluster (transitive
+            // closure) — handles A close to B, B close to C without
+            // requiring A and C to also pass the test.
+            return cl.some((m) =>
+              Math.abs(m.x - it.x) < POS_TOL_X &&
+              Math.abs(m.y - it.y) < POS_TOL_Y,
+            );
+          });
+          if (!c) { c = []; posClusters.push(c); }
+          c.push({ key: it.key, x: it.x, y: it.y });
+        }
+        const nameStackByKey = new Map<string, number>();
+        for (const c of posClusters) {
+          // Sort top-of-screen first (smallest y). The top dot keeps
+          // its label ABOVE; the next dot's label flips BELOW; the
+          // third goes further above; the fourth further below — even
+          // indices alternate up, odd alternate down. This is the
+          // only way to reliably separate two labels that share a Y
+          // (purely vertical stacking would still leave them at the
+          // same horizontal extent).
+          c.sort((x, y) => x.y - y.y);
+          for (let i = 0; i < c.length; i++) nameStackByKey.set(c[i].key, i);
+        }
+
+        // 3. Render — same per-item logic as before, but read the
+        //    precomputed offsets instead of using fixed values.
+        return selectedItems.map((item) => {
+          const addr = parseAddress(item.address);
+          if (!addr) return null;
+          const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 150;
+          const radialEnd = hourToSvgPoint(addr.clockHour, outerR);
+          const span = 0.6;
+          const arcD = arcPolylinePath(
+            addr.clockHour - span, addr.clockHour + span,
+            addr.radiusFeet, 12,
+          );
+          const cls = item.kind === 'camp' ? 'brc-highlight'
+            : item.kind === 'poi' ? 'brc-highlight poi'
+            : 'brc-highlight spot';
+          const len = Math.hypot(item.x, item.y) || 1;
+          const ux = item.x / len;
+          const uy = item.y / len;
+          const addrFrac = addrFracByKey.get(item.key) ?? 0.5;
+          const addrR = len * addrFrac;
+          let perpX = -uy;
+          let perpY = ux;
+          if (perpY > 0) { perpX = -perpX; perpY = -perpY; }
+          const tinyOff = 50;
+          const addrCx = ux * addrR + perpX * tinyOff;
+          const addrCy = uy * addrR + perpY * tinyOff;
+          let angle = (Math.atan2(item.y, item.x) * 180) / Math.PI;
+          if (angle > 90 || angle < -90) angle += 180;
+          const stackIdx = nameStackByKey.get(item.key) ?? 0;
+          // Even index → above the dot (default), odd → below the
+          // dot, with each pair pushed further out. Halo is r=180
+          // and the name label baseline sits ~30 px above the
+          // y-coordinate, so:
+          //   above: dy = -220 (text spans roughly y-380 .. y-250)
+          //   below: dy = +400 (text spans roughly y+220 .. y+350)
+          // Both clear the halo with breathing room.
+          const above = stackIdx % 2 === 0;
+          const tier = Math.floor(stackIdx / 2);
+          const nameDy = above
+            ? -220 - tier * 200
+            :  400 + tier * 200;
+          return (
+            <g
+              key={item.key}
+              class={cls + ' multi'}
+              style={{ '--highlight-color': item.color } as JSX.CSSProperties}
+            >
+              <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
+              <path d={arcD} class="brc-highlight-ring" fill="none" />
+              <circle cx={item.x} cy={item.y} r={180} class="brc-highlight-halo" />
+              <text
+                x={item.x} y={item.y}
+                dy={nameDy}
+                text-anchor="middle"
+                class="brc-line-label brc-line-name"
+              >{item.label}</text>
+              <text
+                transform={`translate(${addrCx}, ${addrCy}) rotate(${angle})`}
+                text-anchor="middle"
+                class="brc-line-label brc-line-addr"
+              >{addr.clock} &amp; {addr.street}</text>
+            </g>
+          );
+        });
+      })()}
+
+      {/* Pair-distance link. Only fires for exactly 2 selections —
+          adding more would draw N(N-1)/2 segments that fight the
+          radials for visual real estate. SVG coords are in feet
+          centered on the Man, so Euclidean distance ≈ true ground
+          distance at BRC scale (sub-mile, flat playa).
+
+          Two layouts depending on how far apart the pins are:
+          - Far apart: midpoint label rides along the segment.
+          - Close (overlapping halos / name labels): push label out
+            perpendicular to the segment with a leader line, so the
+            number doesn't get sandwiched between the two dots and
+            their own name labels. */}
+      {selectedItems.length === 2 && (() => {
+        const [a, b] = selectedItems;
+        const dxFt = b.x - a.x;
+        const dyFt = b.y - a.y;
+        const segLen = Math.hypot(dxFt, dyFt);
+        const meters = feetToMeters(segLen);
+        const midX = (a.x + b.x) / 2;
+        const midY = (a.y + b.y) / 2;
+        // Threshold roughly = "halos overlap or come close enough
+        // that the midpoint sits inside a name label." Halo r=180
+        // each + name labels at dy=-220 means anything under ~700 ft
+        // overlaps somewhere.
+        const CLOSE_FT = 700;
+        const closeMode = segLen < CLOSE_FT;
+        let labelX = midX;
+        let labelY = midY;
+        let angle = 0;
+        let dy = -40;
+        if (closeMode) {
+          // Perpendicular unit vector to the segment. Fall back to
+          // straight-up when the two pins are essentially coincident.
+          let perpX: number;
+          let perpY: number;
+          if (segLen < 1) { perpX = 0; perpY = -1; }
+          else { perpX = -dyFt / segLen; perpY = dxFt / segLen; }
+          // Pick the half-plane that points AWAY from the Man so the
+          // label lands in open playa, not on top of the city's
+          // grid+pin clutter on the inside.
+          if (perpX * midX + perpY * midY < 0) {
+            perpX = -perpX; perpY = -perpY;
+          }
+          const offset = 700;   // clears halo (r=180) + name band
+          labelX = midX + perpX * offset;
+          labelY = midY + perpY * offset;
+          // Horizontal in close mode — no rotation gymnastics, the
+          // leader line conveys the association.
+          angle = 0;
+          dy = 0;
+        } else {
+          // Rotate the label to ride along the line; flip if it
+          // would read upside-down so it's always readable.
+          angle = (Math.atan2(dyFt, dxFt) * 180) / Math.PI;
+          if (angle > 90 || angle < -90) angle += 180;
+        }
         return (
-          <g
-            key={item.key}
-            class={cls + ' multi'}
-            style={{ '--highlight-color': item.color } as JSX.CSSProperties}
-          >
-            <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
-            <path d={arcD} class="brc-highlight-ring" fill="none" />
-            <circle cx={item.x} cy={item.y} r={180} class="brc-highlight-halo" />
+          <g class="brc-pair-distance" pointer-events="none">
+            <line
+              x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+              class="brc-pair-line"
+            />
+            {closeMode && (
+              <line
+                x1={midX} y1={midY} x2={labelX} y2={labelY}
+                class="brc-pair-leader"
+              />
+            )}
             <text
-              x={item.x} y={item.y}
-              dy={nameDy}
+              transform={`translate(${labelX}, ${labelY}) rotate(${angle})`}
+              dy={dy}
               text-anchor="middle"
-              class="brc-line-label brc-line-name"
-            >{item.label}</text>
-            <text
-              transform={`translate(${addrCx}, ${addrCy}) rotate(${angle})`}
-              text-anchor="middle"
-              class="brc-line-label brc-line-addr"
-            >{addr.clock} &amp; {addr.street}</text>
+              dominant-baseline={closeMode ? 'central' : 'auto'}
+              class="brc-pair-label"
+            >{formatDistance(meters, unit)}</text>
           </g>
         );
-      })}
+      })()}
 
       {/* Bearing line from user to single selection. Multi-select
           drops it — there's no clear "where am I going?" with N≥2.
