@@ -61,13 +61,34 @@ export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }
       'Clear all local data?',
       '',
       'This removes:',
-      "  • your favorited camps and events",
+      "  • your favorited camps and events (across all data sources)",
       "  • your theme preference",
       "  • the password cached for this tab",
       '',
       "You'll need to re-enter the password.",
     ].join('\n');
     if (!confirm(msg)) return;
+    // Per-source LS keys live under `<base>/<source>`. Iterate all
+    // localStorage keys and remove anything whose prefix matches one
+    // of our scoped bases — covers `directory`, `api-2024`, etc.
+    // without having to know the active source set.
+    const scopedBases = [
+      LS.favs, LS.favEvents, LS.hiddenDays, LS.myCampId,
+      LS.meetSpots, LS.sharedFavs,
+    ];
+    try {
+      const toDrop: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (scopedBases.some((b) => k === b || k.startsWith(b + '/'))) {
+          toDrop.push(k);
+        }
+      }
+      toDrop.forEach((k) => removeKey(k));
+    } catch { /* private mode etc. — fall through to bare key removals */ }
+    // Bare-key fallback (covers the keys above on browsers where the
+    // iteration path failed) plus the genuinely-global slots.
     removeKey(LS.favs);
     removeKey(LS.favEvents);
     removeKey(LS.hiddenDays);
@@ -77,6 +98,8 @@ export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }
     removeKey(LS.sharedFavs);
     removeKey(LS.theme);
     removeKey(LS.infoSeen);
+    removeKey(LS.source);
+    removeKey(LS.legacyKeysMigrated);
     // Wipes both the encrypted-blob in LS and the AES wrapping key
     // in IndexedDB so nothing identifying the unlock state survives.
     clearCachedPassword();

@@ -155,15 +155,18 @@ function cleanFriends(raw: unknown): Record<string, FriendFavs> {
 
 // === Build / parse / apply ============================================
 
-/** Read all relevant LS keys and return a Snapshot ready to JSON-encode. */
-export function buildSnapshot(): Snapshot {
+/** Read all relevant LS keys for the active source and return a
+ *  Snapshot ready to JSON-encode. The source defaults to `directory`
+ *  for callers that haven't been migrated yet. */
+export function buildSnapshot(source: string = 'directory'): Snapshot {
+  const k = (base: string) => `${base}/${source}`;
   const nickname = readString(LS.nickname, '');
-  const campFavs = parseStringArray(readString(LS.favs, ''));
-  const eventFavs = parseStringArray(readString(LS.favEvents, ''));
-  const myCampId = readString(LS.myCampId, '');
-  const meetSpots = parseMeetSpots(readString(LS.meetSpots, ''));
-  const hiddenDays = parseStringArray(readString(LS.hiddenDays, ''));
-  const friends = parseFriendsMap(readString(LS.sharedFavs, ''));
+  const campFavs = parseStringArray(readString(k(LS.favs), ''));
+  const eventFavs = parseStringArray(readString(k(LS.favEvents), ''));
+  const myCampId = readString(k(LS.myCampId), '');
+  const meetSpots = parseMeetSpots(readString(k(LS.meetSpots), ''));
+  const hiddenDays = parseStringArray(readString(k(LS.hiddenDays), ''));
+  const friends = parseFriendsMap(readString(k(LS.sharedFavs), ''));
   return {
     schema: SNAPSHOT_SCHEMA,
     exportedAt: new Date().toISOString(),
@@ -227,19 +230,23 @@ export function parseSnapshot(text: string): Snapshot | null {
 }
 
 /**
- * Write the snapshot to localStorage, replacing the user's own state.
- * Caller is expected to `location.reload()` afterward — hooks read
- * their initial state from LS on mount, so a reload is the simplest
- * way to surface the change without per-hook bulk setters.
+ * Write the snapshot to localStorage, replacing the user's own state
+ * for the given source (defaults to `directory`). Caller is expected
+ * to `location.reload()` afterward — hooks read their initial state
+ * from LS on mount, so a reload is the simplest way to surface the
+ * change without per-hook bulk setters.
  */
-export function applySnapshot(snap: Snapshot): void {
+export function applySnapshot(
+  snap: Snapshot, source: string = 'directory',
+): void {
+  const k = (base: string) => `${base}/${source}`;
   writeString(LS.nickname, snap.nickname);
-  writeString(LS.favs, JSON.stringify(snap.campFavs));
-  writeString(LS.favEvents, JSON.stringify(snap.eventFavs));
-  writeString(LS.myCampId, snap.myCampId);
-  writeString(LS.meetSpots, JSON.stringify(snap.meetSpots));
-  writeString(LS.hiddenDays, JSON.stringify(snap.hiddenDays));
-  writeString(LS.sharedFavs, JSON.stringify(snap.friends));
+  writeString(k(LS.favs), JSON.stringify(snap.campFavs));
+  writeString(k(LS.favEvents), JSON.stringify(snap.eventFavs));
+  writeString(k(LS.myCampId), snap.myCampId);
+  writeString(k(LS.meetSpots), JSON.stringify(snap.meetSpots));
+  writeString(k(LS.hiddenDays), JSON.stringify(snap.hiddenDays));
+  writeString(k(LS.sharedFavs), JSON.stringify(snap.friends));
 }
 
 // === IO helpers (browser only) =======================================

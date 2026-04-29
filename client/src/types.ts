@@ -78,7 +78,39 @@ export const LS = {
   // Drives the between-pins distance label, the per-row nav distance,
   // and any future distance readout. Default 'imperial' (US-centric burn).
   distanceUnit: 'bm-distance-unit',
+  // Currently active data source. Matches one of the sources listed in
+  // <meta name="bm-sources">. Keys ending in this constant's prefix
+  // ('bm-favs', 'bm-fav-events', 'bm-shared', 'bm-my-camp',
+  // 'bm-meet-spots', 'bm-hidden-days') are PER-SOURCE: the real
+  // storage slot is `${base}/${source}` via `scopedKey()`.
+  // See docs/15-data-sources.md for why ID spaces don't cross sources.
+  source: 'bm-source',
+  // One-shot flag: existing users had unsuffixed `bm-favs` etc. before
+  // multi-source landed. On first load, we copy each into its
+  // `/directory` slot. This flag tells us not to repeat that copy.
+  legacyKeysMigrated: 'bm-legacy-migrated',
 } as const;
+
+/** A data-source identifier as it appears in DOM script ids,
+ *  `<meta name="bm-sources">`, and the `bm-source` LS slot.
+ *
+ *  Examples: `'directory'`, `'api-2024'`, `'api-2025'`.
+ *
+ *  Kept as a plain string because the set is dynamic — what's
+ *  available depends on what the build embedded.
+ */
+export type Source = string;
+
+/** Compose a per-source storage key. Use for any LS slot that holds
+ *  user data tied to a specific year / provider (favorites, friends,
+ *  meet spots, my camp, hidden-days). Don't use for global slots
+ *  like theme or password.
+ *
+ *  Format: `${base}/${source}` — e.g., `bm-favs/api-2024`.
+ */
+export function scopedKey(base: string, source: Source): string {
+  return `${base}/${source}`;
+}
 
 /** Compat shim — older builds wrote the password to sessionStorage
  *  under this key. The Gate reads it on boot and migrates the value

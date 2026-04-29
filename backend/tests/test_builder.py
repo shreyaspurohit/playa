@@ -241,12 +241,17 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         # The Preact mount point.
         self.assertIn('id="app"', html)
         # Plaintext data payload — camp name is inside the JSON blob.
-        self.assertIn('id="camps-data"', html)
+        # Per-source script id (multi-source architecture).
+        self.assertIn('id="camps-data-directory"', html)
         self.assertIn('Demo Camp', html)
         # Meta tags consumed by the client at startup.
         self.assertIn('name="bm-version"', html)
         self.assertIn('name="bm-fetched-date"', html)
         self.assertIn('name="bm-contact-email"', html)
+        # Multi-source meta lists which sources are embedded; `directory`
+        # is the only one in this smoke test.
+        self.assertIn('name="bm-sources"', html)
+        self.assertIn('content="directory"', html)
         # Stub bundle was embedded.
         self.assertIn('"use strict";(()=>{', html)
         # Noindex still enforced.

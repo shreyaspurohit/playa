@@ -2,9 +2,11 @@
 // indicators, report bug link, info button, theme switcher. Keyed
 // to the version + fetch metadata the Python builder injected as
 // <meta name="bm-*"> tags.
+import type { Source } from '../types';
 import { THEMES } from '../hooks/useTheme';
 import { InstallPrompt } from './InstallPrompt';
 import { NicknamePill } from './NicknamePill';
+import { SourceSwitcher } from './SourceSwitcher';
 
 interface Props {
   total: number;
@@ -17,11 +19,15 @@ interface Props {
   onThemeChange: (name: string) => void;
   onInfoClick: () => void;
   infoPulse: boolean;
+  source: Source;
+  availableSources: Source[];
+  onSourceChange: (s: Source) => void;
 }
 
 export function Header({
   total, matching, filterNote, fetchedDate, fetchedAt, version,
   currentTheme, onThemeChange, onInfoClick, infoPulse,
+  source, availableSources, onSourceChange,
 }: Props) {
   return (
     <header>
@@ -36,6 +42,11 @@ export function Header({
           </span>
         </div>
         <div class="topline-right">
+          <SourceSwitcher
+            source={source}
+            available={availableSources}
+            onChange={onSourceChange}
+          />
           <NicknamePill />
           <InstallPrompt />
           <a

@@ -3,6 +3,12 @@ name: Refresh camps directory
 # Repo is public; fetched camp data is NOT committed (see .gitignore).
 # Every run fetches fresh on the ephemeral runner, builds the site, and
 # deploys via actions/upload-pages-artifact — data never lands in git.
+#
+# api.burningman.org sources (api-YYYY) are cached as ENCRYPTED GitHub
+# Release assets — see docs/15-data-sources.md decision D7. The cache
+# step downloads the asset if a release tag exists, otherwise hits the
+# API once + uploads. Past-year builds therefore stop costing API calls
+# after the first run.
 
 on:
   schedule:
@@ -56,6 +62,11 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # `contents: write` is required so the API-cache step can create
+    # / upload to GitHub Releases. Pages still uses its own dedicated
+    # job below with the narrower `pages: write`.
+    permissions:
+      contents: write
     steps:
       # fetch-depth: 200 so the builder's `git log` can collect any
       # `rn:` commits authored since the user's last visit. Default
@@ -74,13 +85,15 @@ jobs:
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
-      # openssl + bash + xargs ship with ubuntu-latest; nothing to install.
-      # (We shell out to openssl at build time for the encrypted payload.)
+      # openssl + bash + gh ship with ubuntu-latest. We shell out to
+      # openssl for the deployed-site payload AND the API cache
+      # (encrypted at fetch time, decrypted at build time).
       - name: Verify build prerequisites
         run: |
           openssl version
           python3 --version
           node --version
+          gh --version
 
       - name: Install client deps
         run: npm ci
@@ -93,12 +106,83 @@ jobs:
         run: npm run build
         working-directory: client
 
+      # ===============================================================
+      # API source caches.
+      #
+      # For each year in `vars.BM_API_YEARS` (repo-level variable, e.g.
+      # "2024,2025"), try to download the encrypted cache from the
+      # `data-api-<year>` Release. Cache miss → fetch from
+      # api.burningman.org once, encrypt, attach as the Release asset.
+      #
+      # To force a re-fetch for a year (e.g., a corrected dataset
+      # mid-year): delete the corresponding Release manually
+      # (`gh release delete data-api-2024 --yes`) and re-run the
+      # workflow.
+      # ===============================================================
+      - name: Refresh API source caches
+        env:
+          BM_API_KEY: ${{ secrets.BM_API_KEY }}
+          BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          BM_API_YEARS: ${{ vars.BM_API_YEARS }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BM_API_YEARS:-}" ]; then
+            echo "BM_API_YEARS unset — directory-only build, skipping API cache."
+            exit 0
+          fi
+          mkdir -p data/api
+          # Encrypted writes use BM_CACHE_PASSWORD with SITE_PASSWORD
+          # fallback (matches Config.effective_cache_password).
+          : "${BM_CACHE_PASSWORD:=${SITE_PASSWORD:-}}"
+          export BM_CACHE_PASSWORD
+          if [ -z "${BM_CACHE_PASSWORD:-}" ]; then
+            echo "::error ::Neither BM_CACHE_PASSWORD nor SITE_PASSWORD set; refusing to upload plaintext cache assets to a public release. Set one before re-running."
+            exit 1
+          fi
+          IFS=',' read -ra YEARS <<< "$BM_API_YEARS"
+          for year_raw in "${YEARS[@]}"; do
+            year="$(echo "$year_raw" | tr -d '[:space:]')"
+            [ -z "$year" ] && continue
+            tag="data-api-${year}"
+            asset="${year}.bin"
+            out="data/api/${year}.json"
+            echo "::group::api-${year}"
+            if gh release download "$tag" --pattern "$asset" --output "$out" 2>/dev/null; then
+              echo "cache hit: pulled ${asset} from release ${tag}"
+            else
+              echo "cache miss for ${tag} — fetching from api.burningman.org"
+              if [ -z "${BM_API_KEY:-}" ]; then
+                echo "::error ::BM_API_KEY not set; cannot fetch year ${year}. Add the secret or remove the year from BM_API_YEARS."
+                exit 1
+              fi
+              python3 -m playa api-fetch --year "${year}"
+              # Idempotent release create.
+              if ! gh release view "$tag" >/dev/null 2>&1; then
+                gh release create "$tag" \
+                  --title "API cache ${year}" \
+                  --notes "Encrypted api.burningman.org cache for ${year}. AES-256-CBC + PBKDF2 via openssl. See docs/15-data-sources.md decision D7. Delete this release to force a re-fetch on the next workflow run."
+              fi
+              gh release upload "$tag" "${out}#${asset}" --clobber
+              echo "uploaded ${asset} to release ${tag}"
+            fi
+            echo "::endgroup::"
+          done
+
       - name: Fetch + build site
         env:
           # Pulled from repo secrets. Blank → plaintext build with the
           # placeholder email. Set both before the first real deploy.
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
+          # API source plumbing. BM_API_YEARS drives both the cache
+          # step above AND `_resolve_sources()` in playa.cli — the
+          # same value picks the years to fetch and the years to
+          # embed in the site.
+          BM_API_KEY: ${{ secrets.BM_API_KEY }}
+          BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
+          BM_API_YEARS: ${{ vars.BM_API_YEARS }}
         run: python3 -m playa all
 
       # Uploads site/ (index.html + CNAME + robots.txt + .nojekyll) from

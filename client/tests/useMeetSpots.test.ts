@@ -11,8 +11,11 @@ import { LS } from '../src/types';
 let api: MeetSpotsApi | null = null;
 let mountpoint: HTMLElement;
 
+// Tests run with a fixed scoped key — `useMeetSpots` is per-source.
+const TEST_KEY = LS.meetSpots + '/directory';
+
 function Harness(): null {
-  api = useMeetSpots();
+  api = useMeetSpots(TEST_KEY);
   return null;
 }
 
@@ -45,7 +48,7 @@ describe('useMeetSpots — basics', () => {
     assert.equal(api!.spots.length, 1);
     assert.equal(api!.spots[0].label, 'Coffee');
     assert.equal(api!.spots[0].when, 'Tue 9am');
-    const stored = JSON.parse(localStorage.getItem(LS.meetSpots) ?? '[]');
+    const stored = JSON.parse(localStorage.getItem(TEST_KEY) ?? '[]');
     assert.equal(stored.length, 1);
   });
 
@@ -75,13 +78,13 @@ describe('useMeetSpots — basics', () => {
     api!.clear();
     rerender();
     assert.deepEqual(api!.spots, []);
-    assert.equal(localStorage.getItem(LS.meetSpots), '[]');
+    assert.equal(localStorage.getItem(TEST_KEY), '[]');
   });
 });
 
 describe('useMeetSpots — load defensiveness', () => {
   test('legacy garbage in LS results in an empty list, not a crash', () => {
-    localStorage.setItem(LS.meetSpots, 'not-json{{{');
+    localStorage.setItem(TEST_KEY, 'not-json{{{');
     const fresh = document.createElement('div');
     document.body.appendChild(fresh);
     render(h(Harness, {}), fresh);
@@ -89,7 +92,7 @@ describe('useMeetSpots — load defensiveness', () => {
   });
 
   test('drops entries missing label or address', () => {
-    localStorage.setItem(LS.meetSpots, JSON.stringify([
+    localStorage.setItem(TEST_KEY, JSON.stringify([
       { label: 'Good', address: '6:00 & C' },
       { label: 'No address' },
       { address: 'No label' },
@@ -119,9 +122,9 @@ describe('useMeetSpots — multi-tab sync', () => {
     const updated = [
       { label: 'From other tab', address: '9:00 & E', when: 'Wed' },
     ];
-    localStorage.setItem(LS.meetSpots, JSON.stringify(updated));
+    localStorage.setItem(TEST_KEY, JSON.stringify(updated));
     const evt = new (window as unknown as { StorageEvent: typeof StorageEvent }).StorageEvent('storage', {
-      key: LS.meetSpots,
+      key: TEST_KEY,
       newValue: JSON.stringify(updated),
       storageArea: localStorage,
     } as StorageEventInit);

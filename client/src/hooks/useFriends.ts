@@ -1,9 +1,12 @@
 // Friends = other people's imported favorites. We keep them separate
 // from `bm-favs` / `bm-fav-events` (which are always YOU) so the fav
 // filter can surface "who starred this" per camp.
-import { useCallback, useEffect, useState } from 'preact/hooks';
+//
+// Per-source: `storageKey` is the scoped slot like
+// `bm-shared/api-2024`. Each source has its own friends map because
+// camp ids don't cross sources (numeric directory ids vs. SFDC uids).
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { FriendFavs, MeetSpot } from '../types';
-import { LS } from '../types';
 import { readString, writeString } from '../utils/storage';
 
 /** Options bag for importFriend. Keeps the call site readable as the
@@ -17,9 +20,9 @@ export interface ImportFriendInput {
 
 type FriendsMap = Record<string, FriendFavs>;
 
-function loadFriends(): FriendsMap {
+function loadFriends(storageKey: string): FriendsMap {
   try {
-    const raw = readString(LS.sharedFavs, '');
+    const raw = readString(storageKey, '');
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') return parsed as FriendsMap;
@@ -27,8 +30,8 @@ function loadFriends(): FriendsMap {
   return {};
 }
 
-function persistFriends(friends: FriendsMap): void {
-  writeString(LS.sharedFavs, JSON.stringify(friends));
+function persistFriends(storageKey: string, friends: FriendsMap): void {
+  writeString(storageKey, JSON.stringify(friends));
 }
 
 export interface FriendsApi {
@@ -65,8 +68,16 @@ export interface FriendsApi {
   friendsFavingEvent: (eventId: string) => string[];
 }
 
-export function useFriends(): FriendsApi {
-  const [friends, setFriends] = useState<FriendsMap>(loadFriends);
+export function useFriends(storageKey: string): FriendsApi {
+  const [friends, setFriends] = useState<FriendsMap>(() => loadFriends(storageKey));
+
+  // Re-read on data-source switch (ref-guarded — see useMeetSpots).
+  const lastKeyRef = useRef<string>(storageKey);
+  useEffect(() => {
+    if (lastKeyRef.current === storageKey) return;
+    lastKeyRef.current = storageKey;
+    setFriends(loadFriends(storageKey));
+  }, [storageKey]);
 
   const importFriend = useCallback(
     (
@@ -98,38 +109,38 @@ export function useFriends(): FriendsApi {
               : {}),
           },
         };
-        persistFriends(next);
+        persistFriends(storageKey, next);
         return next;
       });
     },
-    [],
+    [storageKey],
   );
 
   const removeFriend = useCallback((name: string) => {
     setFriends((prev) => {
       const { [name]: _, ...rest } = prev;
-      persistFriends(rest);
+      persistFriends(storageKey, rest);
       return rest;
     });
-  }, []);
+  }, [storageKey]);
 
   const clear = useCallback(() => {
-    persistFriends({});
+    persistFriends(storageKey, {});
     setFriends({});
-  }, []);
+  }, [storageKey]);
 
   // Multi-tab sync — another tab's importFriend / removeFriend writes
-  // to LS.sharedFavs and fires `storage` in this tab.
+  // to the same scoped key and fires `storage` in this tab.
   useEffect(() => {
     const win = typeof window !== 'undefined' ? window : null;
     if (!win) return;
     function onStorage(e: StorageEvent) {
-      if (e.key !== null && e.key !== LS.sharedFavs) return;
-      setFriends(loadFriends());
+      if (e.key !== null && e.key !== storageKey) return;
+      setFriends(loadFriends(storageKey));
     }
     win.addEventListener('storage', onStorage);
     return () => win.removeEventListener('storage', onStorage);
-  }, []);
+  }, [storageKey]);
 
   const names = Object.keys(friends);
 

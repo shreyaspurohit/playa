@@ -9,6 +9,10 @@ data/meta.json
 data/camps.csv
 data/camps_tagged.csv
 data/logs/
+# api.burningman.org cache — Phase 1 stores fetched payloads on the
+# local filesystem (see docs/15-data-sources.md, decision D7). Phase 2
+# moves this into GitHub Releases; the gitignore stays either way.
+data/api/
 
 # === GENERATED SITE — not committed either ===
 # site/index.html contains the (encrypted) fetched payload. site/sw.js

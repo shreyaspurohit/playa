@@ -44,6 +44,7 @@ sections wherever they apply:
 | [12](./12-deployment-and-ci.md) | Deployment & CI | GitHub Actions, Pages, custom domain |
 | [13](./13-tos-compliance.md) | ToS compliance | directory.burningman.org + Innovate API stance |
 | [14](./14-refresh-cycle.md) | Refresh & force-refresh | What each path does, the SW interactions, the bug we fixed |
+| [15](./15-data-sources.md) | Multi-source data architecture | Directory + `api.burningman.org`, per-source state, normalization |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
 
 ## Adding a new doc

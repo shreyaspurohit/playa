@@ -26,6 +26,11 @@ export interface SharePayload {
   myCampId?: string;
   /** Rendezvous plans. Drops gracefully to empty when the shape is off. */
   meetSpots?: MeetSpot[];
+  /** Data source the ids belong to ("directory", "api-2024", …). When
+   *  absent (legacy share links from pre-multi-source clients), the
+   *  receiver assumes "directory". The receiver's UI nudges them to
+   *  switch sources first if their current view doesn't match. */
+  source?: string;
 }
 
 // === Validation limits + allow/deny lists ============================
@@ -152,14 +157,16 @@ function fromBase64Url(s: string): Uint8Array {
 
 export function encodeShare(p: SharePayload): string {
   // Compact field names keep URLs short. Optional rendezvous fields
-  // are omitted entirely when empty so a share with just favorites
-  // stays byte-identical to the pre-rendezvous format.
+  // and the source tag are omitted when empty / when source is the
+  // implicit default ('directory'), so a directory-only share stays
+  // byte-identical to the pre-multi-source format.
   const compact: {
     n: string; c: string[]; e: string[];
-    m?: string; s?: MeetSpot[];
+    m?: string; s?: MeetSpot[]; src?: string;
   } = { n: p.name, c: p.campIds, e: p.eventIds };
   if (p.myCampId) compact.m = p.myCampId;
   if (p.meetSpots && p.meetSpots.length > 0) compact.s = p.meetSpots;
+  if (p.source && p.source !== 'directory') compact.src = p.source;
   const json = JSON.stringify(compact);
   return toBase64Url(new TextEncoder().encode(json));
 }
@@ -179,10 +186,18 @@ export function decodeShare(encoded: string): SharePayload | null {
     const eventIds = cleanIds((parsed as { e?: unknown }).e);
     const myCampId = cleanSingleId((parsed as { m?: unknown }).m);
     const meetSpots = cleanMeetSpots((parsed as { s?: unknown }).s);
+    const sourceRaw = (parsed as { src?: unknown }).src;
+    // Validate source against a tight pattern — directory or api-YYYY.
+    // Anything else is silently dropped so a malicious sender can't
+    // poke at LS keys we didn't intend.
+    const source = typeof sourceRaw === 'string'
+      && /^(directory|api-\d{4})$/.test(sourceRaw)
+      ? sourceRaw : undefined;
     return {
       name, campIds, eventIds,
       ...(myCampId ? { myCampId } : {}),
       ...(meetSpots.length > 0 ? { meetSpots } : {}),
+      ...(source ? { source } : {}),
     };
   } catch {
     return null;

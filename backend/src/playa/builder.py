@@ -1,13 +1,18 @@
 """Build the self-contained site/index.html.
 
 Reads the HTML template from `playa/templates/site.html`, loads camps
-from `data/pages/`, applies tags and denylist, optionally encrypts the
-payload via openssl + PBKDF2 + AES-256-CBC, substitutes placeholders,
-and writes the result.
+from each configured Source (see playa.sources), applies tags + denylist,
+optionally encrypts each source's payload via openssl + PBKDF2 +
+AES-256-CBC, substitutes placeholders, and writes the result.
 
 Placeholders in the template:
-    __DATA_SCRIPT__     — the <script> tag holding plaintext or encrypted data
-    __BODY_CLASS__      — "gated" when encrypted, "" otherwise
+    __DATA_SCRIPT__     — concatenated <script> tags, one per source,
+                          each id-suffixed with the source name
+                          (e.g., camps-data-directory or
+                          camps-data-api-2024-encrypted)
+    __SOURCES_META__    — <meta name="bm-sources" content="…"> listing
+                          embedded sources (default-first)
+    __BODY_CLASS__      — "gated" when any source is encrypted
     __GATE_HIDDEN__     — "" when encrypted (shown), "gate-hidden" otherwise
     __CONTACT_EMAIL__   — footer + modal takedown mailto
     __VERSION__         — vYYYY.MM.DD
@@ -26,6 +31,7 @@ from zoneinfo import ZoneInfo
 
 from .config import Config
 from .models import Camp
+from .sources import Source, make_source
 from .tagger import Tagger
 from .timeparser import (
     canonical_week_map,
@@ -50,7 +56,12 @@ DEFAULT_MIN_CAMPS = 500
 
 
 class SiteBuilder:
-    def __init__(self, config: Config, tagger: Tagger | None = None):
+    def __init__(
+        self,
+        config: Config,
+        tagger: Tagger | None = None,
+        sources: list[str] | None = None,
+    ):
         self.config = config
         self.tagger = tagger or Tagger()
         # Populated by _enrich_event_times. The calendar window is derived
@@ -58,11 +69,20 @@ class SiteBuilder:
         # so it can't be known until events are loaded.
         self._effective_start: str = config.burn_start
         self._week_map: dict[str, str] = {}
+        # Sources to embed. First entry is the default selection on
+        # cold-start (matches the existing behavior — directory only).
+        self.source_specs: list[str] = sources or ["directory"]
 
     # --- data loading -----------------------------------------------------
 
     def load_denylist(self) -> set[str]:
-        """Read data/denylist.txt; comments (# …) and blanks ignored."""
+        """Read data/denylist.txt; comments (# …) and blanks ignored.
+
+        Kept for backward-compat — the directory source uses its own
+        copy of this loader; the API source has its own denylist
+        (data/denylist-api.txt). New code should call the source's
+        loader directly.
+        """
         if not self.config.denylist_file.exists():
             return set()
         ids: set[str] = set()
@@ -93,27 +113,25 @@ class SiteBuilder:
         }
 
     def load_camps(self) -> list[Camp]:
-        """Dedupe by id, skip denylisted, apply tags, enrich event times,
-        sort by lowercased name."""
-        denied = self.load_denylist()
-        seen: set[str] = set()
-        skipped = 0
-        camps: list[Camp] = []
-        for f in sorted(self.config.pages_dir.glob("page_*.json")):
-            for raw in json.loads(f.read_text()):
-                camp = Camp.from_dict(raw)
-                if camp.id in seen:
-                    continue
-                seen.add(camp.id)
-                if camp.id in denied:
-                    skipped += 1
-                    continue
-                camp.tags = self.tagger.tag_camp(camp)
-                camps.append(camp)
+        """Backward-compat: directory source only. New code should call
+        `load_camps_for_source(spec)` per source.
+        """
+        return self.load_camps_for_source("directory")
+
+    def load_camps_for_source(self, spec: str) -> list[Camp]:
+        """Load + tag + enrich one source's camps.
+
+        Each source is responsible for dedupe + denylist (those rules
+        differ between directory's numeric ids and the API's SFDC
+        uids). The builder then runs Tagger + event-time enrichment
+        uniformly across whatever the source returned.
+        """
+        source: Source = make_source(spec)
+        camps = source.load_camps(self.config)
+        for camp in camps:
+            camp.tags = self.tagger.tag_camp(camp)
         camps.sort(key=lambda c: c.name.lower())
         self._enrich_event_times(camps)
-        if skipped:
-            print(f"  (skipped {skipped} camp(s) per denylist)")
         return camps
 
     def _enrich_event_times(self, camps: list[Camp]) -> None:
@@ -205,8 +223,18 @@ class SiteBuilder:
     def _read_template() -> str:
         return TEMPLATE_PATH.read_text(encoding="utf-8")
 
-    def _data_script(self, camps: list[Camp]) -> tuple[str, str]:
-        """Return (data_script_tag, mode_label)."""
+    def _data_script(
+        self, camps: list[Camp], source: str,
+    ) -> tuple[str, str]:
+        """Return (data_script_tag, mode_label) for one source.
+
+        Script id format:
+          plaintext  → camps-data-<source>
+          encrypted  → camps-data-<source>-encrypted
+
+        The client's `readEmbeddedPayload(source)` reads whichever
+        suffix is present.
+        """
         # Compact JSON — strip indent + whitespace — for payload embedding.
         payload_bytes = json.dumps(
             [c.to_dict() for c in camps],
@@ -216,7 +244,8 @@ class SiteBuilder:
         if self.config.site_password:
             enc = self.encrypt_payload(payload_bytes)
             tag = (
-                '<script id="camps-data-encrypted" type="application/json">'
+                f'<script id="camps-data-{source}-encrypted" '
+                f'type="application/json">'
                 + json.dumps(enc, separators=(",", ":"))
                 + "</script>"
             )
@@ -227,7 +256,7 @@ class SiteBuilder:
         # "\/" transparently.
         payload_text = payload_bytes.decode("utf-8").replace("</", "<\\/")
         tag = (
-            '<script id="camps-data" type="application/json">'
+            f'<script id="camps-data-{source}" type="application/json">'
             + payload_text
             + "</script>"
         )
@@ -398,24 +427,58 @@ class SiteBuilder:
         return notes
 
     def build(self) -> Path:
-        camps = self.load_camps()
-        # Sanity check: a near-empty fetch indicates something upstream
-        # failed (directory/API change, ToS revocation, parser bug) or
-        # we're testing with a fixture. Refusing to build preserves the
-        # last-good deployment — CI's `upload-pages-artifact` step
-        # never runs, the previous deploy stays live. Override with
-        # MIN_CAMPS=0 in env for intentional small/empty builds.
-        min_camps = int(os.environ.get("MIN_CAMPS", DEFAULT_MIN_CAMPS))
-        if len(camps) < min_camps:
+        # Load each configured source. The MIN_CAMPS rail applies to
+        # the FIRST (default) source — that's the "is the primary
+        # data path broken?" signal CI uses to refuse a degraded
+        # deploy. Secondary sources can be sparse without aborting.
+        loaded: list[tuple[str, list[Camp]]] = []
+        for spec in self.source_specs:
+            try:
+                camps = self.load_camps_for_source(spec)
+            except FileNotFoundError as e:
+                # API source asked for, no payload cached. Skip with a
+                # warning rather than aborting — the user runs
+                # `playa api-fetch --year YYYY` to populate it.
+                print(f"  source {spec!r}: {e}; skipping")
+                continue
+            print(f"  source {spec!r}: {len(camps)} camps loaded")
+            loaded.append((spec, camps))
+
+        if not loaded:
             raise RuntimeError(
-                f"refusing to build — only {len(camps)} camp(s) loaded, "
-                f"minimum is {min_camps}. This usually means the fetch "
-                f"or the upstream source is broken. Set MIN_CAMPS=0 to "
+                "no sources loaded successfully — refusing to build."
+            )
+
+        primary_spec, primary_camps = loaded[0]
+        # Sanity check on the primary source: a near-empty fetch
+        # indicates something upstream broke. Refusing to build
+        # preserves the last-good deployment.
+        min_camps = int(os.environ.get("MIN_CAMPS", DEFAULT_MIN_CAMPS))
+        if len(primary_camps) < min_camps:
+            raise RuntimeError(
+                f"refusing to build — primary source {primary_spec!r} "
+                f"has only {len(primary_camps)} camp(s), minimum is "
+                f"{min_camps}. This usually means the fetch or the "
+                f"upstream source is broken. Set MIN_CAMPS=0 to "
                 f"bypass, but do NOT set it in CI unless you want a "
                 f"degraded build to overwrite the live site."
             )
         meta = self.load_meta()
-        data_script, mode = self._data_script(camps)
+        # One <script> per source, concatenated. Newlines between are
+        # cosmetic (template's `__DATA_SCRIPT__` substitutes a string).
+        data_parts: list[str] = []
+        modes: list[str] = []
+        for spec, camps in loaded:
+            tag, mode = self._data_script(camps, spec)
+            data_parts.append(tag)
+            modes.append(f"{spec}={mode}")
+        data_script = "\n".join(data_parts)
+        # Comma-separated source list; client picks the first as
+        # default if there's no `bm-source` in localStorage.
+        sources_meta = (
+            f'<meta name="bm-sources" content="'
+            f'{",".join(spec for spec, _ in loaded)}">'
+        )
         bundle_js = self._read_bundle()
 
         # Guard: our placeholder isn't a substring that could legally appear
@@ -446,6 +509,7 @@ class SiteBuilder:
         html = (
             self._read_template()
             .replace("__DATA_SCRIPT__",   data_script)
+            .replace("__SOURCES_META__",  sources_meta)
             .replace("__BUNDLE__",        bundle_js)
             .replace("__RELEASE_NOTES__", notes_script)
             .replace("__CONTACT_EMAIL__", self.config.contact_email)
@@ -472,16 +536,17 @@ class SiteBuilder:
             meta.get("version", "v0.0.0") + "\n", encoding="utf-8",
         )
 
-        total_events = sum(len(c.events) for c in camps)
-        with_web = sum(1 for c in camps if c.website)
-        tagged = sum(1 for c in camps if c.tags)
         size_kb = self.config.site_html.stat().st_size / 1024
         print(f"wrote {self.config.site_html}")
         print(f"wrote {sw_path}")
-        print(f"  mode: {mode}")
+        print(f"  modes: {', '.join(modes)}")
         print(f"  contact: {self.config.contact_email}")
         print(f"  version: {meta.get('version', '?')} ({meta.get('fetched_date', '?')})")
-        print(f"  {len(camps)} camps · {with_web} with website · "
-              f"{total_events} events · {tagged} tagged")
+        for spec, camps in loaded:
+            total_events = sum(len(c.events) for c in camps)
+            with_web = sum(1 for c in camps if c.website)
+            tagged = sum(1 for c in camps if c.tags)
+            print(f"  [{spec}] {len(camps)} camps · {with_web} with website "
+                  f"· {total_events} events · {tagged} tagged")
         print(f"  {size_kb:.1f} KB")
         return self.config.site_html

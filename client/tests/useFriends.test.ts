@@ -16,8 +16,12 @@ import { LS } from '../src/types';
 let api: FriendsApi | null = null;
 let mountpoint: HTMLElement;
 
+// Tests run with a fixed scoped key — `useFriends` doesn't care which
+// source it points at, only that the key is per-source-stable.
+const TEST_KEY = LS.sharedFavs + '/directory';
+
 function Harness(): null {
-  api = useFriends();
+  api = useFriends(TEST_KEY);
   return null;
 }
 
@@ -59,7 +63,7 @@ describe('useFriends — basics', () => {
   test('persists to localStorage so other tabs see it', () => {
     api!.importFriend('alice', { campIds: ['1'], eventIds: [] });
     rerender();
-    const stored = JSON.parse(localStorage.getItem(LS.sharedFavs) ?? '{}');
+    const stored = JSON.parse(localStorage.getItem(TEST_KEY) ?? '{}');
     assert.ok(stored.alice);
     assert.deepEqual(stored.alice.campIds, ['1']);
   });
@@ -74,7 +78,7 @@ describe('useFriends — basics', () => {
         importedAt: '2026-04-26T12:00:00Z',
       },
     };
-    localStorage.setItem(LS.sharedFavs, JSON.stringify(seeded));
+    localStorage.setItem(TEST_KEY, JSON.stringify(seeded));
     const fresh = document.createElement('div');
     document.body.appendChild(fresh);
     render(h(Harness, {}), fresh);
@@ -167,7 +171,7 @@ describe('useFriends — remove + clear', () => {
     rerender();
     assert.deepEqual(api!.names, []);
     assert.deepEqual(api!.friends, {});
-    assert.equal(localStorage.getItem(LS.sharedFavs), '{}');
+    assert.equal(localStorage.getItem(TEST_KEY), '{}');
   });
 });
 
@@ -227,9 +231,9 @@ describe('useFriends — multi-tab sync via storage events', () => {
         importedAt: '2026-04-26T12:00:00Z',
       },
     };
-    localStorage.setItem(LS.sharedFavs, JSON.stringify(updated));
+    localStorage.setItem(TEST_KEY, JSON.stringify(updated));
     const evt = new (window as unknown as { StorageEvent: typeof StorageEvent }).StorageEvent('storage', {
-      key: LS.sharedFavs,
+      key: TEST_KEY,
       newValue: JSON.stringify(updated),
       storageArea: localStorage,
     } as StorageEventInit);

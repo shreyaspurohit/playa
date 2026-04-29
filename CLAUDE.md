@@ -28,6 +28,7 @@ change touches one of these subsystems.
 - [`docs/12-deployment-and-ci.md`](docs/12-deployment-and-ci.md) — GH Actions, Pages, custom domain
 - [`docs/13-tos-compliance.md`](docs/13-tos-compliance.md) — directory + Innovate API stance
 - [`docs/14-refresh-cycle.md`](docs/14-refresh-cycle.md) — refresh / force-refresh paths + SW interaction
+- [`docs/15-data-sources.md`](docs/15-data-sources.md) — multi-source architecture (directory + `api.burningman.org`), per-source state, normalization
 - [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
 
 When adding a new subsystem worth of decisions, follow the template in
@@ -171,16 +172,29 @@ wrapping them in classes would have been pure ceremony.
 
 ## Build-time config (env vars)
 
-| Var              | Default                | Effect                                              |
-|------------------|------------------------|-----------------------------------------------------|
-| `SITE_PASSWORD`  | *(unset)*              | If set, encrypt the JSON payload at build time      |
-| `CONTACT_EMAIL`  | `bm-camps@example.com` | Address used in footer `mailto:` takedown link      |
-| `PBKDF2_ITER`    | `200000`               | PBKDF2 iteration count                              |
-| `PAGES`          | `30`                   | Listing pages to fetch (used by `fetch_all.sh`)   |
-| `PARALLEL`       | `5`                    | Parallelism for fetch (used by `fetch_all.sh`)    |
+| Var                  | Default                       | Effect                                                                                           |
+|----------------------|-------------------------------|--------------------------------------------------------------------------------------------------|
+| `SITE_PASSWORD`      | *(unset)*                     | If set, encrypt the deployed JSON payload at build time                                          |
+| `CONTACT_EMAIL`      | `bm-camps@example.com`        | Address used in footer `mailto:` takedown link                                                   |
+| `PBKDF2_ITER`        | `200000`                      | PBKDF2 iteration count (used for both site + cache encryption)                                   |
+| `PAGES`              | `30`                          | Listing pages to fetch (used by `fetch_all.sh`)                                                  |
+| `PARALLEL`           | `5`                           | Parallelism for fetch (used by `fetch_all.sh`)                                                   |
+| `BM_API_KEY`         | *(unset)*                     | api.burningman.org access key — required by `playa api-fetch` and the CI cache-fetch step        |
+| `BM_API_BASE_URL`    | `https://api.burningman.org`  | Override the API base (testing / staging only)                                                   |
+| `BM_API_YEARS`       | *(unset)*                     | Comma-separated years (`2024,2025`) — auto-derives `--sources directory,api-2024,api-2025`       |
+| `BM_CACHE_PASSWORD`  | falls back to `SITE_PASSWORD` | Password used to AES-256-CBC encrypt API cache assets uploaded to GitHub Releases                |
+| `SITE_TIERS`         | *(unset)*                     | Multi-tier access. Format: `pw1=src1+src2,pw2=src3,…`. Each tier (password) unlocks its source list via per-source envelope encryption. Three planned tiers: `god-mode` (directory + all apis), `demigod-mode` (all apis only), `spirit-mode` (latest api only). Unset → falls through to single-tier `SITE_PASSWORD`. See ADR D10. |
+| `BURN_OPEN`          | `0` / unset                   | `workflow_dispatch` override for D13 burn-window auto-unlock. When `1`, deploys `site/burn-key.json` alongside `index.html` so the client auto-unlocks `spirit-mode` without a password. `god-mode` / `demigod-mode` stay password-gated. |
+| `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` | unset | Repo *variables* (Settings → Secrets and variables → Actions → Variables). ISO dates. When both set, the nightly cron evaluates today-in-window and auto-includes / auto-removes `burn-key.json` — set-once-forget, no manual flip per burn. Manual `BURN_OPEN` input always wins. See ADR D13. |
 
 Local dev: leave `SITE_PASSWORD` unset to produce a plaintext build for
-quick preview. CI sets both via repo secrets.
+quick preview. CI sets both via repo secrets. The API source caches are
+held as encrypted Release assets — see `docs/15-data-sources.md`
+decision D7. To wire CI for API sources:
+1. Repo secret: `BM_API_KEY`.
+2. Repo secret: `BM_CACHE_PASSWORD` (or rely on `SITE_PASSWORD` fallback).
+3. Repo *variable* (Settings → Secrets and variables → Actions →
+   Variables): `BM_API_YEARS`, e.g., `2024,2025`.
 
 ## One-shot run
 

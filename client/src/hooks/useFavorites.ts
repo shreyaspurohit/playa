@@ -3,7 +3,7 @@
 // to storage events so a star toggle in tab A reflects live in tab B
 // (storage events fire on every OTHER tab of the same origin, never
 // on the writer — that case is covered by the local setFavs call).
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { readStringSet, writeStringSet } from '../utils/storage';
 
 export interface FavoritesApi {
@@ -16,6 +16,18 @@ export interface FavoritesApi {
 
 export function useFavorites(storageKey: string): FavoritesApi {
   const [favs, setFavs] = useState<Set<string>>(() => readStringSet(storageKey));
+
+  // Re-read when the storage key actually changes (data-source switch).
+  // The ref guard suppresses the no-op pass on first mount — useState
+  // already initialized from this key, and re-running setFavs there
+  // would clobber a state update that landed in the same render
+  // (which is what was tripping `useMeetSpots` test isolation).
+  const lastKeyRef = useRef<string>(storageKey);
+  useEffect(() => {
+    if (lastKeyRef.current === storageKey) return;
+    lastKeyRef.current = storageKey;
+    setFavs(readStringSet(storageKey));
+  }, [storageKey]);
 
   const toggle = useCallback(
     (id: string) => {

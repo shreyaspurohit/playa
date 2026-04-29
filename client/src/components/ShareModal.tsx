@@ -5,7 +5,7 @@
 // instead. Each time the modal opens it re-reads the latest nickname
 // from LS so an in-session edit is reflected immediately.
 import { useEffect, useState } from 'preact/hooks';
-import type { MeetSpot } from '../types';
+import type { MeetSpot, Source } from '../types';
 import { LS } from '../types';
 import { readString } from '../utils/storage';
 import { buildShareUrl, copyText } from '../utils/share';
@@ -18,6 +18,9 @@ interface Props {
   myCampId: string;
   /** Sender's rendezvous plans. */
   meetSpots: MeetSpot[];
+  /** Active source — embedded in the share so the receiver can route
+   *  the import into the matching per-source bucket. */
+  source: Source;
   onClose: () => void;
   /** Jumps the user to the nickname-edit UI in the header when they
    *  haven't set one yet. Keeps this modal focused on the "send" action. */
@@ -28,7 +31,8 @@ interface Props {
 type ShareStatus = 'idle' | 'shared' | 'copied' | 'fail';
 
 export function ShareModal({
-  open, campIds, eventIds, myCampId, meetSpots, onClose, onRequestNickname,
+  open, campIds, eventIds, myCampId, meetSpots, source,
+  onClose, onRequestNickname,
 }: Props) {
   const [nickname, setNickname] = useState(() => readString(LS.nickname, ''));
   const [url, setUrl] = useState('');
@@ -52,6 +56,7 @@ export function ShareModal({
       campIds, eventIds,
       ...(myCampId ? { myCampId } : {}),
       ...(meetSpots.length > 0 ? { meetSpots } : {}),
+      source,
     });
     setUrl(generated);
 

@@ -118,10 +118,12 @@ describe('applySnapshot + buildSnapshot round-trip', () => {
   });
 
   test('writes every field to LS and reads it back', () => {
+    // Snapshots are now per-source — the round-trip lands in the
+    // implicit default `directory` slot (`<base>/directory`).
     const original = parseSnapshot(snap())!;
     applySnapshot(original);
     assert.equal(readString(LS.nickname, ''), 'alice');
-    assert.equal(readString(LS.myCampId, ''), '123');
+    assert.equal(readString(LS.myCampId + '/directory', ''), '123');
 
     const rebuilt = buildSnapshot();
     assert.equal(rebuilt.nickname, 'alice');

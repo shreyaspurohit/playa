@@ -3,7 +3,7 @@
 // and wires it up.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Camp } from '../types';
-import { LS } from '../types';
+import { LS, scopedKey } from '../types';
 import { readEmbeddedPayload, indexHaystacks, haystackOf } from '../data';
 import type { Payload } from '../data';
 import { readString, writeString } from '../utils/storage';
@@ -16,6 +16,7 @@ import {
 import { useFavorites } from '../hooks/useFavorites';
 import { useFriends } from '../hooks/useFriends';
 import { useMeetSpots } from '../hooks/useMeetSpots';
+import { useSource, migrateLegacyKeysOnce } from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute } from '../hooks/useHashRoute';
 import { CampsView } from './CampsView';
@@ -69,18 +70,37 @@ export function App() {
   const { updateAvailable, latest: latestVersion } = useVersionCheck();
   const { pending: pendingReleaseNotes, dismiss: dismissReleaseNotes } = useReleaseNotes();
 
+  // One-shot LS migration: pre-multi-source builds wrote bare keys
+  // (bm-favs, bm-fav-events, …); copy each into its `/directory` slot
+  // so existing users see their data under the default source.
+  useMemo(() => migrateLegacyKeysOnce(), []);
+
+  const { source, setSource, available: availableSources } = useSource();
+
   const [camps, setCamps] = useState<Camp[] | null>(null);
   const [encEnvelope, setEncEnvelope] = useState<Payload | null>(null);
 
+  // Re-read the per-source data script whenever the source changes.
+  // Each script is already in the page (multi-source build embeds
+  // them all up front), so this is a synchronous parse — no fetch.
   useEffect(() => {
-    const p = readEmbeddedPayload();
-    if (p.kind === 'plain') {
-      indexHaystacks(p.camps);
-      setCamps(p.camps);
-    } else {
-      setEncEnvelope(p);
+    try {
+      const p = readEmbeddedPayload(source);
+      if (p.kind === 'plain') {
+        indexHaystacks(p.camps);
+        setCamps(p.camps);
+        setEncEnvelope(null);
+      } else {
+        setCamps(null);
+        setEncEnvelope(p);
+      }
+    } catch (err) {
+      // Switching to a source that wasn't embedded — degrade gracefully.
+      console.warn('readEmbeddedPayload failed:', err);
+      setCamps([]);
+      setEncEnvelope(null);
     }
-  }, []);
+  }, [source]);
 
   const onUnlock = useCallback((jsonText: string) => {
     const unlocked = JSON.parse(jsonText) as Camp[];
@@ -101,35 +121,47 @@ export function App() {
   const [webOnly, setWebOnly] = useState(false);
   const [focusKey, setFocusKey] = useState(0);
 
-  const campFavs = useFavorites(LS.favs);
-  const eventFavs = useFavorites(LS.favEvents);
-  const friends = useFriends();
-  const meetSpots = useMeetSpots();
+  // Per-source scoped LS keys — recomputed whenever `source` changes
+  // so the hooks below pick up the new slot and re-read.
+  const favsKey      = scopedKey(LS.favs, source);
+  const eventFavsKey = scopedKey(LS.favEvents, source);
+  const sharedKey    = scopedKey(LS.sharedFavs, source);
+  const meetSpotsKey = scopedKey(LS.meetSpots, source);
+  const myCampKey    = scopedKey(LS.myCampId, source);
+  const hiddenKey_   = scopedKey(LS.hiddenDays, source);
+
+  const campFavs = useFavorites(favsKey);
+  const eventFavs = useFavorites(eventFavsKey);
+  const friends = useFriends(sharedKey);
+  const meetSpots = useMeetSpots(meetSpotsKey);
 
   // The user's own home camp — single id, or '' when unset. Separate
   // from campFavs so setting it doesn't pollute the star list, and so
   // friends can see "Alice's camp is here" as a distinct marker on
   // the map after importing her share link.
   const [myCampId, setMyCampId] = useState<string>(
-    () => readString(LS.myCampId, ''),
+    () => readString(myCampKey, ''),
   );
   const onSetMyCamp = useCallback((id: string) => {
     const next = id === myCampId ? '' : id;   // click again to unset
-    writeString(LS.myCampId, next);
+    writeString(myCampKey, next);
     setMyCampId(next);
-  }, [myCampId]);
-  // Multi-tab sync for myCampId — another tab tapping "set as my camp"
-  // updates this one without a refresh.
+  }, [myCampId, myCampKey]);
+  // Re-read myCampId when source changes (and on storage events from
+  // other tabs writing the same scoped key).
+  useEffect(() => {
+    setMyCampId(readString(myCampKey, ''));
+  }, [myCampKey]);
   useEffect(() => {
     const win = typeof window !== 'undefined' ? window : null;
     if (!win) return;
     function onStorage(e: StorageEvent) {
-      if (e.key !== null && e.key !== LS.myCampId) return;
-      setMyCampId(readString(LS.myCampId, ''));
+      if (e.key !== null && e.key !== myCampKey) return;
+      setMyCampId(readString(myCampKey, ''));
     }
     win.addEventListener('storage', onStorage);
     return () => win.removeEventListener('storage', onStorage);
-  }, []);
+  }, [myCampKey]);
 
   // Long-lived password-share responder. After the gate unlocks, App
   // is the component that lives for the rest of the session — Gate is
@@ -171,7 +203,7 @@ export function App() {
   // Per-day hides for recurring events on the Schedule view. Keys are
   // `${eventId}|${iso}` so one localStorage key stores all (event, day)
   // pairs a user has opted out of.
-  const hiddenDays = useFavorites(LS.hiddenDays);
+  const hiddenDays = useFavorites(hiddenKey_);
   const hiddenKey = useCallback((id: string, iso: string) => `${id}|${iso}`, []);
   const isDayHidden = useCallback(
     (eventId: string, iso: string) => hiddenDays.has(hiddenKey(eventId, iso)),
@@ -261,16 +293,21 @@ export function App() {
    */
   const onImportAsSelf = useCallback(() => {
     if (!incomingShare) return;
-    writeString(LS.favs, JSON.stringify(incomingShare.campIds));
-    writeString(LS.favEvents, JSON.stringify(incomingShare.eventIds));
-    writeString(LS.myCampId, incomingShare.myCampId ?? '');
+    // Self-import targets the CURRENTLY-ACTIVE source. A share carrying
+    // its own `source` field (post-multi-source clients) lands in that
+    // source's bucket regardless of the importer's current view; the
+    // banner has already nudged the importer to switch first if the
+    // sources mismatch, so by here `source` is the right slot.
+    writeString(scopedKey(LS.favs, source), JSON.stringify(incomingShare.campIds));
+    writeString(scopedKey(LS.favEvents, source), JSON.stringify(incomingShare.eventIds));
+    writeString(scopedKey(LS.myCampId, source), incomingShare.myCampId ?? '');
     writeString(
-      LS.meetSpots,
+      scopedKey(LS.meetSpots, source),
       JSON.stringify(incomingShare.meetSpots ?? []),
     );
     clearShareFromUrl();
     location.reload();
-  }, [incomingShare]);
+  }, [incomingShare, source]);
 
   /**
    * Snapshot import flow. Picking the file is browser-native, but
@@ -283,8 +320,8 @@ export function App() {
    * `incomingShare` drives ImportBanner.
    */
   const onExportSnapshot = useCallback(() => {
-    downloadSnapshot(buildSnapshot());
-  }, []);
+    downloadSnapshot(buildSnapshot(source));
+  }, [source]);
 
   const [incomingSnapshot, setIncomingSnapshot] = useState<Snapshot | null>(null);
 
@@ -299,10 +336,10 @@ export function App() {
 
   const onApplySnapshotSelf = useCallback(() => {
     if (!incomingSnapshot) return;
-    applySnapshot(incomingSnapshot);
+    applySnapshot(incomingSnapshot, source);
     setIncomingSnapshot(null);
     location.reload();
-  }, [incomingSnapshot]);
+  }, [incomingSnapshot, source]);
 
   const onImportSnapshotAsFriend = useCallback(() => {
     if (!incomingSnapshot) return;
@@ -490,6 +527,9 @@ export function App() {
           onThemeChange={setTheme}
           onInfoClick={() => { setInfoPulse(false); setInfoOpen(true); }}
           infoPulse={infoPulse}
+          source={source}
+          availableSources={availableSources}
+          onSourceChange={setSource}
         />
         <TabBar view={view} onGoto={goto} scheduleBadge={scheduleBadge} />
         {updateAvailable && <UpdateBanner latest={latestVersion} />}
@@ -504,6 +544,9 @@ export function App() {
             payload={incomingShare}
             existing={friends.friends[incomingShare.name]}
             ownNickname={readString(LS.nickname, '').trim()}
+            currentSource={source}
+            availableSources={availableSources}
+            onSwitchSource={setSource}
             onImport={onImportFriend}
             onImportAsSelf={onImportAsSelf}
             onDismiss={onDismissImport}
@@ -625,6 +668,7 @@ export function App() {
         eventIds={[...eventFavs.favs]}
         myCampId={myCampId}
         meetSpots={meetSpots.spots}
+        source={source}
         onClose={() => setShareOpen(false)}
       />
     </>

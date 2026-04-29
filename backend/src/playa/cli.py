@@ -6,8 +6,12 @@ Subcommands:
     meta             Write data/meta.json from the current data/pages/.
     merge            Write data/camps.csv (tags blank).
     tag              Re-tag + write data/camps_tagged.csv.
-    build            Build site/index.html from data/pages/.
+    build            Build site/index.html. Defaults to directory only;
+                     `--sources directory,api-2024,api-2025` embeds more.
     all              fetch-all + meta + merge + tag + build  (nightly pipeline).
+    api-fetch --year YYYY
+                     Hit api.burningman.org and cache the response at
+                     data/api/<year>.json. Requires BM_API_KEY in env.
 """
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ from .config import Config
 from .fetcher import Fetcher
 from .merger import merge_csv, write_tagged_csv
 from .meta import write_meta
+from .sources.api import APISource
 from .tagger import Tagger
 
 
@@ -36,8 +41,34 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("meta",      help="write data/meta.json")
     sub.add_parser("merge",     help="write data/camps.csv")
     sub.add_parser("tag",       help="re-tag + write data/camps_tagged.csv")
-    sub.add_parser("build",     help="build site/index.html")
-    sub.add_parser("all",       help="full pipeline: fetch-all + meta + merge + tag + build")
+
+    sp_build = sub.add_parser("build", help="build site/index.html")
+    sp_build.add_argument(
+        "--sources", default=None,
+        help=("comma-separated source specs. Each is `directory` or "
+              "`api-YYYY`. First entry is the default selection. "
+              "When omitted, derives from BM_API_YEARS env "
+              "(e.g., `BM_API_YEARS=2024,2025` → "
+              "directory,api-2024,api-2025). Falls back to "
+              "`directory` only."),
+    )
+
+    sp_all = sub.add_parser(
+        "all", help="full pipeline: fetch-all + meta + merge + tag + build",
+    )
+    sp_all.add_argument(
+        "--sources", default=None,
+        help="forwarded to `build` (see `build --help`).",
+    )
+
+    sp_api = sub.add_parser(
+        "api-fetch",
+        help="cache an api.burningman.org year (camps + events). Requires BM_API_KEY.",
+    )
+    sp_api.add_argument(
+        "--year", type=int, required=True,
+        help="event year (e.g., 2024). Must be ≥ 2015 per the API spec.",
+    )
     return p
 
 
@@ -124,11 +155,11 @@ def cmd_tag(config: Config) -> None:
         print(f"  {name:20s} {n}")
 
 
-def cmd_build(config: Config) -> None:
-    SiteBuilder(config).build()
+def cmd_build(config: Config, sources: list[str] | None = None) -> None:
+    SiteBuilder(config, sources=sources).build()
 
 
-def cmd_all(config: Config) -> None:
+def cmd_all(config: Config, sources: list[str] | None = None) -> None:
     cmd_fetch_all(config)
     print("==> Writing meta")
     cmd_meta(config)
@@ -137,8 +168,33 @@ def cmd_all(config: Config) -> None:
     print("==> Tagging")
     cmd_tag(config)
     print("==> Building site")
-    cmd_build(config)
+    cmd_build(config, sources=sources)
     print("==> Done")
+
+
+def cmd_api_fetch(config: Config, year: int) -> None:
+    """Cache one year of api.burningman.org camps+events.
+
+    Two API calls (one per kind), persisted as a single JSON file at
+    `data/api/<year>.json`. `playa build --sources api-<year>` then
+    reads it. Re-run any time to refresh.
+    """
+    APISource(year=year).fetch_and_cache(config)
+
+
+def _resolve_sources(arg: str | None, config: Config) -> list[str]:
+    """Argument > BM_API_YEARS > default ['directory'].
+
+    Argument: comma-separated string ("directory,api-2024,api-2025").
+    Env: BM_API_YEARS=2024,2025 → ['directory', 'api-2024', 'api-2025'].
+    Default: ['directory'].
+    """
+    if arg is not None and arg.strip():
+        return [s.strip() for s in arg.split(",") if s.strip()]
+    years = config.parsed_api_years()
+    if years:
+        return ["directory"] + [f"api-{y}" for y in years]
+    return ["directory"]
 
 
 # --- entry point ----------------------------------------------------------
@@ -147,11 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     config = Config.from_env()
 
-    if args.cmd == "fetch":       cmd_fetch(config, args.page)
-    elif args.cmd == "fetch-all": cmd_fetch_all(config)
-    elif args.cmd == "meta":      cmd_meta(config)
-    elif args.cmd == "merge":     cmd_merge(config)
-    elif args.cmd == "tag":       cmd_tag(config)
-    elif args.cmd == "build":     cmd_build(config)
-    elif args.cmd == "all":       cmd_all(config)
+    if args.cmd == "fetch":         cmd_fetch(config, args.page)
+    elif args.cmd == "fetch-all":   cmd_fetch_all(config)
+    elif args.cmd == "meta":        cmd_meta(config)
+    elif args.cmd == "merge":       cmd_merge(config)
+    elif args.cmd == "tag":         cmd_tag(config)
+    elif args.cmd == "build":       cmd_build(config, _resolve_sources(args.sources, config))
+    elif args.cmd == "all":         cmd_all(config, _resolve_sources(args.sources, config))
+    elif args.cmd == "api-fetch":   cmd_api_fetch(config, args.year)
     return 0
