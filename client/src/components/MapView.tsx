@@ -9,16 +9,17 @@
 //   - Lat/lng → ft via haversine + compass rotation (see utils/address).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
-import type { Camp, MeetSpot } from '../types';
+import type { Camp, MeetSpot, Source } from '../types';
 import { LS } from '../types';
 import { readString, writeString } from '../utils/storage';
-import type { BrcPOI } from '../map/data';
-import { BRC, POIS } from '../map/data';
+import type { BrcMapData, BrcPOI } from '../map/data';
+import { POIS } from '../map/data';
 import {
   addressToSvgFeet, addressToLatLng, bearingDeg, haversineMeters,
   latLngToSvgFeet, latLngToAddress, parseAddress,
 } from '../map/address';
 import { useGeolocation } from '../hooks/useGeolocation';
+import { brcForSource } from '../hooks/useSource';
 import { friendChipStyle, friendHue } from '../utils/friendColor';
 import { MapInfoModal } from './MapInfoModal';
 import { MeetSpotEditor } from './MeetSpotEditor';
@@ -57,6 +58,8 @@ interface Props {
   initialTargetId?: string | null;
   onClearTarget?: () => void;
   onGotoCamp: (campId: string) => void;
+  /** Active data source — drives which year's BRC geometry to use. */
+  source: Source;
 }
 
 const VIEWBOX_RADIUS = 6000; // ft — ~50% buffer past K street (left/right/bottom)
@@ -93,7 +96,15 @@ export function MapView({
   myCampId, meetSpots, onAddMeetSpot, onRemoveMeetSpot,
   friendsRendezvous,
   initialTargetId = null, onClearTarget, onGotoCamp,
+  source,
 }: Props) {
+  // Per-year geometry constants for the active source. Memoized so the
+  // identity is stable across renders within one source (the underlying
+  // object is module-static; recomputing only matters when `source`
+  // flips, which is rare). Threaded into every address-math call so
+  // past-year API camps render against their own year's Golden Spike +
+  // street radii (ADR D11).
+  const brc = useMemo(() => brcForSource(source), [source]);
   // Unified multi-selection. Each entry is a typed key so a single Set
   // can hold camps, POIs, meet spots, friend camps, friend meet spots
   // concurrently. Tap-to-toggle: every tap on a pin or sidebar row
@@ -191,11 +202,11 @@ export function MapView({
   const myMeetPins = useMemo(() => {
     return meetSpots
       .map((spot, idx) => {
-        const pt = addressToSvgFeet(spot.address);
+        const pt = addressToSvgFeet(spot.address, brc);
         return pt ? { spot, idx, x: pt.x, y: pt.y } : null;
       })
       .filter(Boolean) as Array<{ spot: MeetSpot; idx: number; x: number; y: number }>;
-  }, [meetSpots]);
+  }, [meetSpots, brc]);
 
   // Friends' camps (from their imported myCampId + our camps list).
   const friendCampPins = useMemo(() => {
@@ -205,12 +216,12 @@ export function MapView({
       if (!fr.myCampId) continue;
       const camp = campsById.get(fr.myCampId);
       if (!camp) continue;
-      const pt = addressToSvgFeet(camp.location);
+      const pt = addressToSvgFeet(camp.location, brc);
       if (!pt) continue;
       out.push({ name: fr.name, camp, x: pt.x, y: pt.y });
     }
     return out;
-  }, [friendsRendezvous, camps]);
+  }, [friendsRendezvous, camps, brc]);
 
   // Friends' meet-spot pins, flattened across everyone. `idx` is the
   // position within THAT friend's own spots array — carries through to
@@ -219,13 +230,13 @@ export function MapView({
     const out: Array<{ name: string; spot: MeetSpot; idx: number; x: number; y: number }> = [];
     for (const fr of friendsRendezvous) {
       (fr.meetSpots ?? []).forEach((spot, idx) => {
-        const pt = addressToSvgFeet(spot.address);
+        const pt = addressToSvgFeet(spot.address, brc);
         if (!pt) return;
         out.push({ name: fr.name, spot, idx, x: pt.x, y: pt.y });
       });
     }
     return out;
-  }, [friendsRendezvous]);
+  }, [friendsRendezvous, brc]);
 
   // Static POI pins (Center Camp, Playa Info, etc. from map/data.ts).
   // Resolved once per BRC refresh — addresses don't change within a
@@ -233,20 +244,20 @@ export function MapView({
   const poiPins = useMemo(() => {
     return POIS
       .map((poi) => {
-        const pt = addressToSvgFeet(poi.address);
+        const pt = addressToSvgFeet(poi.address, brc);
         return pt ? { poi, x: pt.x, y: pt.y } : null;
       })
       .filter(Boolean) as Array<{ poi: BrcPOI; x: number; y: number }>;
-  }, []);
+  }, [brc]);
 
   // Your own camp, if set — rendered as a dedicated accent pin.
   const myCampPin = useMemo(() => {
     if (!myCampId) return null;
     const camp = camps.find((c) => c.id === myCampId);
     if (!camp) return null;
-    const pt = addressToSvgFeet(camp.location);
+    const pt = addressToSvgFeet(camp.location, brc);
     return pt ? { camp, x: pt.x, y: pt.y } : null;
-  }, [myCampId, camps]);
+  }, [myCampId, camps, brc]);
 
   // Single-spot view — populated only when exactly one non-camp item
   // is selected. Drives the legacy single-selection sidebar/SVG paths
@@ -314,7 +325,7 @@ export function MapView({
     return camps
       .filter((c) => favCampIds.has(c.id) || friendFavCampIds(c.id).length > 0)
       .map((camp) => {
-        const pt = addressToSvgFeet(camp.location);
+        const pt = addressToSvgFeet(camp.location, brc);
         if (!pt) return null;
         const mine = favCampIds.has(camp.id);
         const friends = friendFavCampIds(camp.id);
@@ -323,7 +334,7 @@ export function MapView({
       .filter(Boolean) as Array<{
         camp: Camp; x: number; y: number; mine: boolean; friends: string[];
       }>;
-  }, [camps, favCampIds, friendFavCampIds]);
+  }, [camps, favCampIds, friendFavCampIds, brc]);
 
   // Target resolution. Falls through three sources in priority order —
   // starred pins, my home camp, friends' home camps — so selecting any
@@ -488,13 +499,13 @@ export function MapView({
 
   // User GPS → SVG coordinates (only when we have a fix)
   const userSvg = geo.status === 'ready'
-    ? latLngToSvgFeet({ lat: geo.lat, lng: geo.lng })
+    ? latLngToSvgFeet({ lat: geo.lat, lng: geo.lng }, brc)
     : null;
 
   // User GPS → BRC address (e.g. "6:30 & B") for the situational-
   // awareness readout in the map header. Null when outside the rings.
   const userAddress = geo.status === 'ready'
-    ? latLngToAddress({ lat: geo.lat, lng: geo.lng })
+    ? latLngToAddress({ lat: geo.lat, lng: geo.lng }, brc)
     : null;
 
   // Walk + bike time at conservative playa speeds. Flat ground but
@@ -513,7 +524,7 @@ export function MapView({
   // only and went unused once we moved to inline expansion.)
 
   function externalMapsUrl(c: Camp) {
-    const ll = addressToLatLng(c.location);
+    const ll = addressToLatLng(c.location, brc);
     if (!ll) return null;
     return `https://www.google.com/maps?q=${ll.lat},${ll.lng}`;
   }
@@ -523,7 +534,7 @@ export function MapView({
   // Returns null when GPS isn't on or the address doesn't parse to lat/lng.
   function navFor(address: string): { meters: number; bearing: number } | null {
     if (geo.status !== 'ready') return null;
-    const ll = addressToLatLng(address);
+    const ll = addressToLatLng(address, brc);
     if (!ll) return null;
     return {
       meters: haversineMeters({ lat: geo.lat, lng: geo.lng }, ll),
@@ -561,9 +572,9 @@ export function MapView({
     <div class="map-wrap">
       <div class="map-head">
         <div>
-          <h3 class="map-title">Black Rock City {BRC.year}</h3>
+          <h3 class="map-title">Black Rock City {brc.year}</h3>
           <p class="map-sub">
-            The Man at <code>{BRC.center.lat.toFixed(6)}, {BRC.center.lng.toFixed(6)}</code>
+            The Man at <code>{brc.center.lat.toFixed(6)}, {brc.center.lng.toFixed(6)}</code>
             {' · '}<span>True North ≈ 4:30 axis</span>
           </p>
         </div>
@@ -1117,7 +1128,7 @@ export function MapView({
           <Svg
             pins={pins}
             target={target}
-            targetAddress={target ? parseAddress(target.camp.location) : null}
+            targetAddress={target ? parseAddress(target.camp.location, brc) : null}
             userSvg={userSvg}
             selection={selection}
             toggleKey={toggleKey}
@@ -1127,21 +1138,23 @@ export function MapView({
             friendCampPins={friendCampPins}
             friendMeetPins={friendMeetPins}
             activeSpot={activeSpot}
-            activeSpotAddress={activeSpot ? parseAddress(activeSpot.address) : null}
+            activeSpotAddress={activeSpot ? parseAddress(activeSpot.address, brc) : null}
             selectedItems={selectedItems}
             poiPins={poiPins}
             zoom={zoom}
             center={center}
             setCenter={setCenter}
             unit={unit}
+            brc={brc}
           />
         </>
       )}
-      <MapInfoModal open={infoOpen} onClose={() => setInfoOpen(false)} />
+      <MapInfoModal open={infoOpen} onClose={() => setInfoOpen(false)} brc={brc} />
       {addingSpot && (
         <MeetSpotEditor
           onSave={(spot) => { onAddMeetSpot(spot); setAddingSpot(false); }}
           onCancel={() => setAddingSpot(false)}
+          brc={brc}
         />
       )}
     </div>
@@ -1183,7 +1196,7 @@ function Svg({
   pins, target, targetAddress, userSvg, onClearSelection,
   myCampPin, myMeetPins, friendCampPins, friendMeetPins,
   selection, toggleKey, activeSpot, activeSpotAddress,
-  selectedItems, poiPins, zoom, center, setCenter, unit,
+  selectedItems, poiPins, zoom, center, setCenter, unit, brc,
 }: {
   pins: Array<{ camp: Camp; x: number; y: number; mine: boolean; friends: string[] }>;
   /** Single-select view — populated only when exactly one camp is in
@@ -1239,6 +1252,10 @@ function Svg({
   setCenter: (c: { x: number; y: number }) => void;
   /** Distance unit for the between-pins label (and any future readouts). */
   unit: DistanceUnit;
+  /** Per-year BRC geometry derived from the active source. Threaded
+   *  in from MapView so all the address-math + grid-rendering inside
+   *  Svg uses the right year's Golden Spike + radii. */
+  brc: BrcMapData;
 }) {
   // Radial streets we draw: 2:00 through 10:00. The arc is NOT a full
   // circle — the 6:00 side is open to the playa.
@@ -1341,7 +1358,7 @@ function Svg({
           with our y-inverted coord system, so we just iterate hour
           positions. Going through increasing hour from 2 to 10 traces
           3→4→…→9, which is the BRC-occupied arc. */}
-      {BRC.streetRadiiFeet.map((r, idx) => (
+      {brc.streetRadiiFeet.map((r, idx) => (
         <path
           key={idx}
           d={arcPolylinePath(2, 10, r)}
@@ -1351,8 +1368,8 @@ function Svg({
       ))}
       {/* radial streets: line from Esplanade (inner) out to K (outer) */}
       {radialHours.map((h) => {
-        const inner = hourToSvgPoint(h, BRC.streetRadiiFeet[0]);
-        const outer = hourToSvgPoint(h, BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1]);
+        const inner = hourToSvgPoint(h, brc.streetRadiiFeet[0]);
+        const outer = hourToSvgPoint(h, brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1]);
         return (
           <line
             key={h}
@@ -1366,7 +1383,7 @@ function Svg({
           Man out to Esplanade. Marks the ceremonial entry axis. The
           opposing 12:00 axis (deep playa) used to be drawn here too,
           but we cropped the top of the viewBox, so it's gone. */}
-      <line x1={0} y1={0} x2={hourToSvgPoint(6, BRC.streetRadiiFeet[0]).x} y2={hourToSvgPoint(6, BRC.streetRadiiFeet[0]).y} class="brc-street axis" />
+      <line x1={0} y1={0} x2={hourToSvgPoint(6, brc.streetRadiiFeet[0]).x} y2={hourToSvgPoint(6, brc.streetRadiiFeet[0]).y} class="brc-street axis" />
       {/* The Man */}
       <circle cx={0} cy={0} r={90} class="brc-man" />
       <text x={0} y={-150} class="brc-label man-label" text-anchor="middle">The Man</text>
@@ -1427,9 +1444,9 @@ function Svg({
           Esplanade label is the full word (not a single glyph), so it
           needs more radial breathing room than A–K to keep the text
           from crowding its own arc. */}
-      {BRC.streetLetters.map((letter, idx) => {
+      {brc.streetLetters.map((letter, idx) => {
         const offset = idx === 0 ? 240 : 50;
-        const r = BRC.streetRadiiFeet[idx] + offset;
+        const r = brc.streetRadiiFeet[idx] + offset;
         const p = hourToSvgPoint(10, r);
         return (
           <text
@@ -1442,7 +1459,7 @@ function Svg({
       })}
       {/* Clock hour labels at the outer ring */}
       {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((h) => {
-        const p = hourToSvgPoint(h, BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 350);
+        const p = hourToSvgPoint(h, brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 350);
         return (
           <text key={h} x={p.x} y={p.y} class="brc-label hour-label" text-anchor="middle">
             {h}:00
@@ -1454,7 +1471,7 @@ function Svg({
           camp highlights, but recolored via `.brc-highlight.spot`
           CSS so the violet meet-spot palette reads instead of orange. */}
       {!target && activeSpot && activeSpotAddress && (() => {
-        const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 150;
+        const outerR = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
         const radialEnd = hourToSvgPoint(activeSpotAddress.clockHour, outerR);
         const span = 0.6;
         const arcD = arcPolylinePath(
@@ -1479,7 +1496,7 @@ function Svg({
           a small ring-arc around it so the user can visually trace the
           (clock, letter) grid coordinate that its address maps to. */}
       {target && targetAddress && (() => {
-        const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 150;
+        const outerR = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
         const radialEnd = hourToSvgPoint(targetAddress.clockHour, outerR);
         // Arc segment: ±0.6 clock-hours around the camp's hour, at the
         // camp's radius. Narrow enough to point, wide enough to notice.
@@ -1532,7 +1549,7 @@ function Svg({
         const BEARING_TOL = 0.5;   // clock-hours
         type BGroup = { hr: number; items: Array<{ key: string; radius: number }> };
         const bearingGroups: BGroup[] = [];
-        const parsed = selectedItems.map((it) => ({ it, addr: parseAddress(it.address) }));
+        const parsed = selectedItems.map((it) => ({ it, addr: parseAddress(it.address, brc) }));
         for (const p of parsed) {
           if (!p.addr) continue;
           let g = bearingGroups.find((bg) => Math.abs(bg.hr - p.addr!.clockHour) < BEARING_TOL);
@@ -1594,9 +1611,9 @@ function Svg({
         // 3. Render — same per-item logic as before, but read the
         //    precomputed offsets instead of using fixed values.
         return selectedItems.map((item) => {
-          const addr = parseAddress(item.address);
+          const addr = parseAddress(item.address, brc);
           if (!addr) return null;
-          const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1] + 150;
+          const outerR = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
           const radialEnd = hourToSvgPoint(addr.clockHour, outerR);
           const span = 0.6;
           const arcD = arcPolylinePath(

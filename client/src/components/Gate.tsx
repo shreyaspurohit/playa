@@ -16,6 +16,7 @@ import { SS, type EncryptedPayload } from '../types';
 import {
   cachePassword, clearCachedPassword, loadCachedPassword,
 } from '../utils/secureStore';
+import { isGzipDecompressSupported } from '../utils/gzip';
 
 interface Props {
   enc: EncryptedPayload;
@@ -114,6 +115,27 @@ export function Gate({ enc, onUnlock }: Props) {
   }, [checkingCache]);
 
   if (checkingCache) return null;
+
+  // Compression-streams support is the floor for any encrypted build
+  // post-D12 (encrypted ciphers are gzipped first). If the user's
+  // browser doesn't have it AND the embedded payload is compressed,
+  // unlock would silently fail. Surface a clear upgrade prompt
+  // instead — same gate slot the password form would use.
+  if (enc.compressed && !isGzipDecompressSupported()) {
+    return (
+      <div class="gate">
+        <div class="gate-card">
+          <h2>Browser too old</h2>
+          <p>
+            This site needs the <code>DecompressionStream</code> Web API,
+            which shipped in Chrome 80 (Feb 2020), Safari 16.4 / iOS 16.4
+            (March 2023), and Firefox 113 (May 2023). Please update your
+            browser or OS — most devices made in the last few years can.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();

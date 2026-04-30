@@ -5,13 +5,18 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { MeetSpot } from '../types';
 import { parseAddress } from '../map/address';
+import type { BrcMapData } from '../map/data';
 
 interface Props {
   onSave: (spot: MeetSpot) => void;
   onCancel: () => void;
+  /** Per-year BRC geometry — drives the letter-set the address parser
+   *  accepts. Authoring a meet spot under a 2024 source allows
+   *  L-street addresses; under 2026 those would fail validation. */
+  brc: BrcMapData;
 }
 
-export function MeetSpotEditor({ onSave, onCancel }: Props) {
+export function MeetSpotEditor({ onSave, onCancel, brc }: Props) {
   const labelRef = useRef<HTMLInputElement | null>(null);
   const [label, setLabel] = useState('');
   const [address, setAddress] = useState('');
@@ -21,7 +26,7 @@ export function MeetSpotEditor({ onSave, onCancel }: Props) {
 
   // Parse the address on every keystroke so the "valid" hint updates
   // live. parseAddress is cheap — single regex + table lookup.
-  const parsed = address.trim() ? parseAddress(address.trim()) : null;
+  const parsed = address.trim() ? parseAddress(address.trim(), brc) : null;
   const addressValid = parsed !== null || address.trim() === '';
   const readyToSave = label.trim().length > 0 && parsed !== null;
 

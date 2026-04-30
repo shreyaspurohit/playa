@@ -11,16 +11,21 @@
 //   "None Listed"    camps that haven't picked a spot — returns null
 //   "" / "-"         same
 //
-// We parse case-insensitively and accept letter (A-K) or the full street
-// name. Anything we can't match returns null; callers handle gracefully.
-import { BRC } from './data';
+// We parse case-insensitively and accept letter (A-L; the set varies
+// per year) or the full street name. Anything we can't match returns
+// null; callers handle gracefully.
+//
+// Per-year geometry (ADR D11): every function takes an optional
+// `BrcMapData` to look up letter-set + radii + Golden Spike. Defaults
+// to the directory year's entry so legacy callers keep working.
+import { BRC, type BrcMapData } from './data';
 
 export interface PolarAddress {
   /** Clock hour as a decimal — 4:30 → 4.5, 7:45 → 7.75 */
   clockHour: number;
   /** Radius in feet from the Man (uses BRC.streetRadiiFeet). */
   radiusFeet: number;
-  /** Street letter — "Esplanade" or "A"–"K" */
+  /** Street letter — "Esplanade" or "A"–"L" (set varies per year) */
   street: string;
   /** Clock string, normalized — "4:30" not "4:30:00" */
   clock: string;
@@ -37,30 +42,32 @@ function parseClock(s: string): { hour: number; clock: string } | null {
   return { hour: h + min / 60, clock: `${h}:${m[2]}` };
 }
 
-function parseStreet(s: string): { street: string; radiusFeet: number } | null {
+function parseStreet(
+  s: string, brc: BrcMapData,
+): { street: string; radiusFeet: number } | null {
   const up = s.trim().toUpperCase();
-  // Single letter match
-  if (/^[A-K]$/.test(up)) {
-    const idx = BRC.streetLetters.indexOf(up);
-    if (idx >= 0) return { street: up, radiusFeet: BRC.streetRadiiFeet[idx] };
+  // Single letter match — accept any letter present in this year's set.
+  if (/^[A-Z]$/.test(up)) {
+    const idx = brc.streetLetters.indexOf(up);
+    if (idx >= 0) return { street: up, radiusFeet: brc.streetRadiiFeet[idx] };
   }
   // "Esplanade" or a full themed name
   const normalized = s.trim().toLowerCase();
-  const nameIdx = BRC.streetNames.findIndex((n) => n.toLowerCase() === normalized);
+  const nameIdx = brc.streetNames.findIndex((n) => n.toLowerCase() === normalized);
   if (nameIdx >= 0) {
     return {
-      street: BRC.streetLetters[nameIdx],
-      radiusFeet: BRC.streetRadiiFeet[nameIdx],
+      street: brc.streetLetters[nameIdx],
+      radiusFeet: brc.streetRadiiFeet[nameIdx],
     };
   }
   // "Esplanade" also matches even when not themed
   if (normalized === 'esplanade') {
-    return { street: 'Esplanade', radiusFeet: BRC.streetRadiiFeet[0] };
+    return { street: 'Esplanade', radiusFeet: brc.streetRadiiFeet[0] };
   }
   return null;
 }
 
-export function parseAddress(raw: string): PolarAddress | null {
+export function parseAddress(raw: string, brc: BrcMapData = BRC): PolarAddress | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed || trimmed === '-' || /none listed/i.test(trimmed)) return null;
@@ -71,7 +78,7 @@ export function parseAddress(raw: string): PolarAddress | null {
 
   for (const [a, b] of [parts, [parts[1], parts[0]]]) {
     const clock = parseClock(a);
-    const street = parseStreet(b);
+    const street = parseStreet(b, brc);
     if (clock && street) {
       return {
         clockHour: clock.hour,
@@ -86,13 +93,14 @@ export function parseAddress(raw: string): PolarAddress | null {
 
 /**
  * Compass bearing (degrees clockwise from True North) for a given BRC
- * clock position, looking outward from the Man. 12:00 bearing is the
- * year-specific constant `BRC.twelveBearingDeg` (225° in 2026).
+ * clock position, looking outward from the Man. 12:00 bearing comes
+ * from the year-specific `brc.twelveBearingDeg` (always 225° today,
+ * design-stable across years).
  */
-export function clockToCompass(clockHour: number): number {
+export function clockToCompass(clockHour: number, brc: BrcMapData = BRC): number {
   // Each hour on the BRC face = 30° clockwise. 12:00 = hour 12 = 0h offset.
   const hoursFrom12 = clockHour === 12 ? 0 : clockHour;
-  return (BRC.twelveBearingDeg + hoursFrom12 * 30) % 360;
+  return (brc.twelveBearingDeg + hoursFrom12 * 30) % 360;
 }
 
 const FEET_PER_METER = 3.28084;
@@ -149,12 +157,14 @@ export function bearingDeg(
 }
 
 /** Resolve an address string to real-world lat/lng via the Man + polar math. */
-export function addressToLatLng(raw: string): { lat: number; lng: number } | null {
-  const p = parseAddress(raw);
+export function addressToLatLng(
+  raw: string, brc: BrcMapData = BRC,
+): { lat: number; lng: number } | null {
+  const p = parseAddress(raw, brc);
   if (!p) return null;
-  const compass = clockToCompass(p.clockHour);
+  const compass = clockToCompass(p.clockHour, brc);
   return destinationPoint(
-    BRC.center.lat, BRC.center.lng, compass, p.radiusFeet,
+    brc.center.lat, brc.center.lng, compass, p.radiusFeet,
   );
 }
 
@@ -164,8 +174,10 @@ export function addressToLatLng(raw: string): { lat: number; lng: number } | nul
  * its own viewBox. Output in feet — consumer divides by `radiusFeet /
  * viewBoxRadius` to fit.
  */
-export function addressToSvgFeet(raw: string): { x: number; y: number } | null {
-  const p = parseAddress(raw);
+export function addressToSvgFeet(
+  raw: string, brc: BrcMapData = BRC,
+): { x: number; y: number } | null {
+  const p = parseAddress(raw, brc);
   if (!p) return null;
   // On our unit grid, "12:00 up" → clock-hour 0 → (0, +r). Clock position
   // rotates clockwise. sin/cos of hour-angle in radians, hour-angle grows
@@ -180,13 +192,13 @@ export function addressToSvgFeet(raw: string): { x: number; y: number } | null {
 /** Convert a GPS fix to SVG-feet coordinates, relative to the Man and with
     BRC 12:00 pointing up. Used to show the "you are here" dot. */
 export function latLngToSvgFeet(
-  fix: { lat: number; lng: number },
+  fix: { lat: number; lng: number }, brc: BrcMapData = BRC,
 ): { x: number; y: number } {
-  const compass = bearingDeg(BRC.center, fix);
-  const distMeters = haversineMeters(BRC.center, fix);
+  const compass = bearingDeg(brc.center, fix);
+  const distMeters = haversineMeters(brc.center, fix);
   const distFt = distMeters * FEET_PER_METER;
   // Compass bearing → clock-hour in BRC frame
-  let hourAngleDeg = compass - BRC.twelveBearingDeg; // degrees clockwise from 12:00
+  let hourAngleDeg = compass - brc.twelveBearingDeg; // degrees clockwise from 12:00
   hourAngleDeg = ((hourAngleDeg % 360) + 360) % 360;
   const theta = (hourAngleDeg * Math.PI) / 180;
   return {
@@ -202,23 +214,25 @@ export function latLngToSvgFeet(
  *  the outermost ring + a generous buffer (deep playa / off playa) —
  *  showing "12:00 & K" for a user at the Temple would be misleading. */
 export function latLngToAddress(
-  fix: { lat: number; lng: number },
+  fix: { lat: number; lng: number }, brc: BrcMapData = BRC,
 ): { clock: string; street: string; clockHour: number; radiusFeet: number } | null {
-  const compass = bearingDeg(BRC.center, fix);
-  const distMeters = haversineMeters(BRC.center, fix);
+  const compass = bearingDeg(brc.center, fix);
+  const distMeters = haversineMeters(brc.center, fix);
   const distFt = distMeters * FEET_PER_METER;
 
-  // A sanity buffer past K-street. Beyond this the user is clearly in
-  // open playa (Temple, art, deep-playa rangers) — no BRC address.
-  const outerR = BRC.streetRadiiFeet[BRC.streetRadiiFeet.length - 1];
+  // A sanity buffer past the outermost ring. Beyond this the user is
+  // clearly in open playa (Temple, art, deep-playa rangers) — no BRC
+  // address. The outermost ring varies by year (K in 2026, L in some
+  // earlier years), so we pull from the active brc table.
+  const outerR = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1];
   if (distFt > outerR + 1500) return null;
   // Too close to the Man to name a ring either — they're inside the
   // inner-Esplanade walk, which isn't a street.
-  if (distFt < BRC.streetRadiiFeet[0] - 600) return null;
+  if (distFt < brc.streetRadiiFeet[0] - 600) return null;
 
   // Hour-angle = compass bearing minus the BRC 12:00 anchor, mapped
   // back into [0, 360). Convert to decimal clock hour in [0, 12).
-  let hourAngleDeg = compass - BRC.twelveBearingDeg;
+  let hourAngleDeg = compass - brc.twelveBearingDeg;
   hourAngleDeg = ((hourAngleDeg % 360) + 360) % 360;
   const rawHour = (hourAngleDeg / 360) * 12;
   // Round to nearest 15-minute increment — matches the granularity
@@ -234,8 +248,8 @@ export function latLngToAddress(
   // Pick the nearest ring by radial distance.
   let bestIdx = 0;
   let bestDelta = Infinity;
-  for (let i = 0; i < BRC.streetRadiiFeet.length; i++) {
-    const delta = Math.abs(BRC.streetRadiiFeet[i] - distFt);
+  for (let i = 0; i < brc.streetRadiiFeet.length; i++) {
+    const delta = Math.abs(brc.streetRadiiFeet[i] - distFt);
     if (delta < bestDelta) {
       bestDelta = delta;
       bestIdx = i;
@@ -244,8 +258,8 @@ export function latLngToAddress(
 
   return {
     clock,
-    street: BRC.streetLetters[bestIdx],
+    street: brc.streetLetters[bestIdx],
     clockHour,
-    radiusFeet: BRC.streetRadiiFeet[bestIdx],
+    radiusFeet: brc.streetRadiiFeet[bestIdx],
   };
 }

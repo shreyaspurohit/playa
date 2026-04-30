@@ -14,6 +14,8 @@ import { friendChipStyle } from '../utils/friendColor';
 import { EyeIcon } from './EyeIcon';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { addressToLatLng, haversineMeters } from '../map/address';
+import { brcForSource } from '../hooks/useSource';
+import type { Source } from '../types';
 
 /** "Near me" proximity cutoff: ~1 km ≈ 15 min walk at 4 km/h. Events
  *  farther than this from the user's GPS fix get dropped when the
@@ -94,6 +96,9 @@ interface Props {
   onClearHidden: () => void;
   onGotoCamp: (campId: string) => void;
   youLabel?: string;
+  /** Active data source — drives the per-year BRC geometry used for
+   *  "near me" distance calculations on event camps. */
+  source: Source;
 }
 
 /** 12h pretty-print from "HH:MM" 24h. */
@@ -321,7 +326,9 @@ export function ScheduleView({
   camps, favEventIds, friendFavEventIds, burnStart, burnEnd,
   isDayHidden, onToggleDayHidden, hiddenCount, onClearHidden,
   onGotoCamp, youLabel = 'you',
+  source,
 }: Props) {
+  const brc = useMemo(() => brcForSource(source), [source]);
   const cells = useMemo(
     () => buildCalendarCells(burnStart ?? '', burnEnd ?? ''),
     [burnStart, burnEnd],
@@ -381,12 +388,12 @@ export function ScheduleView({
     const user = { lat: geo.lat, lng: geo.lng };
     const byEvent = new Map<string, boolean>();
     for (const camp of camps) {
-      const ll = addressToLatLng(camp.location);
+      const ll = addressToLatLng(camp.location, brc);
       const fits = ll ? haversineMeters(user, ll) <= NEAR_ME_METERS : false;
       for (const ev of camp.events ?? []) byEvent.set(ev.id, fits);
     }
     return byEvent;
-  }, [nearMeOnly, geo, camps]);
+  }, [nearMeOnly, geo, camps, brc]);
 
   function passesFilters(entry: ScheduleEntry, cellIso: string): boolean {
     if (nowOnly) {

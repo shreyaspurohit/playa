@@ -1,15 +1,20 @@
 // Explains the BRC map grid to a first-time visitor: what the clock
 // numbers and letter streets mean, and how to read a camp address.
 // Opened from the (i) button in MapView's header.
+//
+// Reads the active source's per-year geometry (passed in as `brc`) so
+// the "this year" annotations track the source switcher.
 import { useEffect, useRef } from 'preact/hooks';
-import { BRC } from '../map/data';
+import type { BrcMapData } from '../map/data';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Per-year BRC geometry — drives the year + themed-name examples. */
+  brc: BrcMapData;
 }
 
-export function MapInfoModal({ open, onClose }: Props) {
+export function MapInfoModal({ open, onClose, brc }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => { if (open) closeRef.current?.focus(); }, [open]);
 
@@ -61,10 +66,10 @@ export function MapInfoModal({ open, onClose }: Props) {
             &mdash; concentric rings. <code>Esplanade</code> is the innermost
             promenade, closest to the Man. <code>A</code> is one block out,
             then <code>B</code>, <code>C</code>&hellip; up to{' '}
-            <code>{BRC.streetLetters[BRC.streetLetters.length - 1]}</code> on the outer ring
+            <code>{brc.streetLetters[brc.streetLetters.length - 1]}</code> on the outer ring
             (~1 mile / 1.6 km from the Man). Each year has fun themed names
-            for the letters (this year: <em>{BRC.streetNames.slice(1, 4).join(', ')},
-            &hellip; {BRC.streetNames[BRC.streetNames.length - 1]}</em>) but
+            for the letters (this year: <em>{brc.streetNames.slice(1, 4).join(', ')},
+            &hellip; {brc.streetNames[brc.streetNames.length - 1]}</em>) but
             most Burners just use the letter.
           </p>
 
@@ -78,9 +83,9 @@ export function MapInfoModal({ open, onClose }: Props) {
           </p>
 
           <p>
-            <strong>Orientation:</strong> for {BRC.year}, True North runs along
+            <strong>Orientation:</strong> for {brc.year}, True North runs along
             the <code>4:30</code> axis, so <code>12:00</code> points SW
-            (bearing {BRC.twelveBearingDeg}&deg;) and <code>6:00</code> points NE.
+            (bearing {brc.twelveBearingDeg}&deg;) and <code>6:00</code> points NE.
           </p>
 
           <p>

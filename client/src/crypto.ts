@@ -1,9 +1,12 @@
 // Web Crypto decryption that mirrors the Python-side
-// `SiteBuilder.encrypt_payload()` (openssl -aes-256-cbc -salt -pbkdf2).
-// Key+IV are derived together as 48 bytes of PBKDF2-HMAC-SHA256, then
-// split: first 32 = AES-CBC key, last 16 = IV. See CLAUDE.md "Encryption
-// round-trip" for the contract.
+// `SiteBuilder.encrypt_payload()` (gzip → openssl -aes-256-cbc -salt
+// -pbkdf2). Key+IV are derived together as 48 bytes of PBKDF2-HMAC-SHA256,
+// then split: first 32 = AES-CBC key, last 16 = IV. After decrypt, if
+// the envelope's `compressed` flag is set, we pipe through
+// DecompressionStream('gzip') to reverse the build-time gzip step
+// (ADR D12). See CLAUDE.md "Encryption round-trip" for the contract.
 import type { EncryptedPayload } from './types';
+import { decompressGzip } from './utils/gzip';
 
 // TS 5.7 tightened Uint8Array<ArrayBufferLike> typing vs Web Crypto's
 // BufferSource, which insists on ArrayBuffer. We allocate backing
@@ -47,5 +50,9 @@ export async function decryptPayload(
   );
   const iv = derived.slice(32, 48);
   const plaintext = await crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, ct);
+  if (enc.compressed) {
+    const inflated = await decompressGzip(new Uint8Array(plaintext));
+    return new TextDecoder().decode(inflated);
+  }
   return new TextDecoder().decode(plaintext);
 }

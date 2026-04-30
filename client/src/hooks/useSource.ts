@@ -14,11 +14,32 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { LS, type Source } from '../types';
 import { readString, writeString } from '../utils/storage';
+import { DIRECTORY_YEAR, type BrcMapData, getBrcForYear } from '../map/data';
 
 const SCOPED_BASE_KEYS = [
   LS.favs, LS.favEvents, LS.sharedFavs,
   LS.myCampId, LS.meetSpots, LS.hiddenDays,
 ];
+
+/** Resolve a source identifier to the burn year its data represents.
+ *
+ *   `directory` → `DIRECTORY_YEAR` (the year being currently fetched —
+ *                   bumped by the /update-map skill at year rollover)
+ *   `api-YYYY`  → `YYYY`
+ *   anything else → DIRECTORY_YEAR (best-guess fallback)
+ *
+ * Drives the per-year map geometry lookup in MapView (ADR D11). */
+export function yearForSource(source: Source): number {
+  if (source === 'directory') return DIRECTORY_YEAR;
+  const m = /^api-(\d{4})$/.exec(source);
+  if (m) return parseInt(m[1], 10);
+  return DIRECTORY_YEAR;
+}
+
+/** Resolve a source identifier directly to its BRC geometry constants. */
+export function brcForSource(source: Source): BrcMapData {
+  return getBrcForYear(yearForSource(source));
+}
 
 /** Sources embedded in this build, in declaration order (first = default). */
 export function availableSources(): Source[] {

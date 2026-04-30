@@ -59,6 +59,16 @@ class Config:
     bm_api_key: str = ""
     bm_api_base_url: str = "https://api.burningman.org"
     bm_api_year_min: int = 2015   # spec exclusiveMinimum: 2014
+    # Bulk endpoints return ~MB of JSON in one shot — much slower than
+    # the directory's per-page fetches. Override via BM_API_TIMEOUT for
+    # extreme-payload years or rate-limited servers.
+    bm_api_timeout: int = 120
+    # Identify ourselves clearly to the API. Distinct from `user_agent`
+    # which mimics a browser for the directory HTML scrape — that
+    # string makes WAFs throttle JSON-endpoint clients on the
+    # assumption it's a scraper. A clean app/version + contact URL
+    # gets fast-pathed.
+    bm_api_user_agent: str = "playa-camps/1.0 (+https://playa.purohit.dev)"
 
     # Comma-separated years to auto-fetch + auto-include in the build
     # when --sources isn't passed explicitly. Empty → CLI default of
@@ -136,6 +146,7 @@ class Config:
             ).strip(),
             bm_api_years=os.environ.get("BM_API_YEARS", "").strip(),
             bm_cache_password=os.environ.get("BM_CACHE_PASSWORD", "").strip(),
+            bm_api_timeout=int(os.environ.get("BM_API_TIMEOUT", "120")),
         )
 
     # --- Derived settings --------------------------------------------------

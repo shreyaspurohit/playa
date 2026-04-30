@@ -646,6 +646,48 @@ on boot:
   confusion.
 - If `BURN_WINDOW_OPEN_FROM > BURN_WINDOW_OPEN_TO`, fail loud.
 
+**Access control for the manual dispatch** (verified against GitHub
+docs + discussions, 2026-04-29):
+
+- `workflow_dispatch` triggers — including the manual `BURN_OPEN`
+  override — are **owner-only on a public repo by default**. GitHub
+  requires *write* access on the repository to invoke
+  `workflow_dispatch`; non-collaborators don't even see the "Run
+  workflow" button. There is no separate "execute workflows"
+  permission today (GitHub community has been asking for one for
+  years; it's a recognized but unimplemented feature gap). For a
+  single-maintainer repo this is exactly what we want — only the
+  owner can flip the toggle, and the public-repo audience can't.
+- Forks cannot trigger upstream's `workflow_dispatch`. Fork
+  workflows run in the fork's own context, against the fork's own
+  (empty) secrets. A fork-author can't reach our `BM_API_KEY` or
+  `SITE_PASSWORD` via dispatch.
+- Pull requests from forks don't get access to repository secrets
+  by default. The `BURN_OPEN` step would just no-op (no
+  `BURN_OPEN`, no `BM_CACHE_PASSWORD`, no `SITE_PASSWORD` →
+  early-exit). No attacker-PR exfiltration vector.
+
+**Optional belt-and-suspenders** for if/when this changes — e.g., a
+second maintainer joins who shouldn't unilaterally flip the toggle:
+
+- Wrap the publish step in a [GitHub
+  Environment](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+  named `burn-open` with **required reviewers** = the operator. The
+  job can't access environment secrets until a reviewer approves it.
+  Mid-pipeline gate in addition to the pre-pipeline owner-only
+  dispatch.
+- Toggle "**Prevent self-review**" on the Environment if there are
+  ever ≥2 maintainers — forces a different reviewer than the
+  triggerer. Pointless for a one-person repo (can't approve your own
+  dispatch).
+- Tighten branch protection on `main` so `workflow_dispatch` can
+  only target `main` (default behavior anyway, but explicit).
+
+For this repo today (single owner, public): rely on the default
+write-access requirement. No extra config needed. Document the
+Environment + required-reviewers path here so it's easy to opt
+into later.
+
 ## Mechanism
 
 ### Build pipeline

@@ -22,6 +22,7 @@ Placeholders in the template:
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import os
 import subprocess
@@ -192,19 +193,31 @@ class SiteBuilder:
     # --- encryption -------------------------------------------------------
 
     def encrypt_payload(self, plaintext: bytes) -> dict:
-        """AES-256-CBC + PBKDF2-HMAC-SHA256 via openssl CLI.
+        """gzip → AES-256-CBC + PBKDF2-HMAC-SHA256 via openssl CLI.
 
-        Returns {salt, iter, ct} as base64. The browser decrypts this via
-        Web Crypto (see the JS in templates/site.html): PBKDF2 → 48-byte
-        key||iv split → AES-CBC decrypt.
+        The plaintext is gzipped BEFORE encryption (ADR D12) — encrypted
+        bytes are near-random and don't compress, so the order matters.
+        Camp/event JSON typically shrinks ~70% under gzip, dropping the
+        deployed page from ~2.7 MB to ~1 MB.
+
+        Returns `{salt, iter, ct, compressed: True}` as base64 strings.
+        The `compressed` flag tells the client to pipe the AES output
+        through `DecompressionStream('gzip')` before JSON.parse.
+        Older builds (missing the flag) decrypt to plaintext directly —
+        kept for one-build backward compat with cached SW shells.
         """
+        # gzip first. Default compression level (6) — slightly smaller
+        # than 1 (fastest) and ~5x faster than 9 for negligible size
+        # difference at this scale. Build cost matters less than page
+        # size for a one-shot nightly build.
+        compressed = gzip.compress(plaintext, compresslevel=6)
         proc = subprocess.run(
             [
                 "openssl", "enc", "-aes-256-cbc", "-salt", "-pbkdf2",
                 "-iter", str(self.config.pbkdf2_iter),
                 "-pass", f"pass:{self.config.site_password}",
             ],
-            input=plaintext, capture_output=True, check=True,
+            input=compressed, capture_output=True, check=True,
         )
         blob = proc.stdout
         if blob[:8] != b"Salted__":
@@ -215,6 +228,7 @@ class SiteBuilder:
             "salt": base64.b64encode(salt).decode("ascii"),
             "iter": self.config.pbkdf2_iter,
             "ct":   base64.b64encode(ciphertext).decode("ascii"),
+            "compressed": True,
         }
 
     # --- template + write -------------------------------------------------
@@ -229,11 +243,20 @@ class SiteBuilder:
         """Return (data_script_tag, mode_label) for one source.
 
         Script id format:
-          plaintext  → camps-data-<source>
-          encrypted  → camps-data-<source>-encrypted
+          plaintext  → camps-data-<source>          (gzip + base64)
+          encrypted  → camps-data-<source>-encrypted (gzip + AES-CBC,
+                                                      JSON envelope)
 
         The client's `readEmbeddedPayload(source)` reads whichever
         suffix is present.
+
+        Compression: ADR D12. Both modes gzip the payload before
+        embedding so the dev-preview disk size matches what users see
+        in production. Plaintext rides in `<script type="text/plain">`
+        as base64-encoded gzip bytes (the server can't compress
+        AES-on-the-wire either, so plaintext was the asymmetry).
+        Base64 doesn't contain `<` so the `</script>` escaping the
+        old raw-JSON path needed isn't necessary here.
         """
         # Compact JSON — strip indent + whitespace — for payload embedding.
         payload_bytes = json.dumps(
@@ -251,16 +274,18 @@ class SiteBuilder:
             )
             return tag, f"encrypted (PBKDF2 iter={self.config.pbkdf2_iter})"
 
-        # Plain <script type="application/json">. Escape "</" so a stray
-        # "</script>" in the data can't break the embed. JSON.parse handles
-        # "\/" transparently.
-        payload_text = payload_bytes.decode("utf-8").replace("</", "<\\/")
+        # gzip + base64 inline. The client decodes via
+        # `DecompressionStream('gzip')` — same code path the encrypted
+        # branch already uses post-AES.
+        compressed = gzip.compress(payload_bytes, compresslevel=6)
+        payload_b64 = base64.b64encode(compressed).decode("ascii")
         tag = (
-            f'<script id="camps-data-{source}" type="application/json">'
-            + payload_text
+            f'<script id="camps-data-{source}" '
+            f'type="application/x-gzip-base64">'
+            + payload_b64
             + "</script>"
         )
-        return tag, "plaintext"
+        return tag, "plaintext+gzip"
 
     def _read_bundle(self) -> str:
         """Load the Preact client bundle. Must exist; CI and Makefile

@@ -6,6 +6,7 @@ browser uses.
 """
 import base64
 import contextlib
+import gzip
 import io
 import json
 import os
@@ -50,8 +51,11 @@ class EncryptPayloadTests(unittest.TestCase, _TmpConfigMixin):
 
     def test_returns_expected_schema(self):
         enc = self.builder.encrypt_payload(b"x")
-        self.assertEqual(set(enc.keys()), {"salt", "iter", "ct"})
+        # `compressed: True` is the D12 flag — clients pipe through
+        # DecompressionStream after AES decode when it's set.
+        self.assertEqual(set(enc.keys()), {"salt", "iter", "ct", "compressed"})
         self.assertEqual(enc["iter"], 1000)
+        self.assertIs(enc["compressed"], True)
         # OpenSSL default salt length is 8 bytes.
         self.assertEqual(len(base64.b64decode(enc["salt"])), 8)
 
@@ -66,7 +70,8 @@ class EncryptPayloadTests(unittest.TestCase, _TmpConfigMixin):
              "-iter", "1000", "-pass", "pass:pw"],
             input=blob, capture_output=True, check=True,
         )
-        self.assertEqual(proc.stdout, data)
+        # AES output is gzipped — decompress to recover the original.
+        self.assertEqual(gzip.decompress(proc.stdout), data)
 
     def test_wrong_password_fails(self):
         enc = self.builder.encrypt_payload(b"data")
@@ -85,6 +90,30 @@ class EncryptPayloadTests(unittest.TestCase, _TmpConfigMixin):
         b = self.builder.encrypt_payload(b"same data")
         self.assertNotEqual(a["salt"], b["salt"])
         self.assertNotEqual(a["ct"], b["ct"])
+
+    def test_compression_actually_shrinks_realistic_payload(self):
+        """Sanity-check pipeline order: gzip BEFORE AES, not after.
+        Gzipping AES output (which is near-random) would produce a
+        ciphertext slightly LARGER than the plaintext — this regression
+        guard catches that mistake."""
+        # Realistic-shape JSON with repeated keys + English prose.
+        payload = json.dumps([
+            {"id": str(i), "name": f"Camp {i}",
+             "description": "free pancakes morning yoga gifting tea",
+             "events": [{"id": f"e{i}", "name": "thing", "time": "Mon 9am"}]}
+            for i in range(200)
+        ]).encode("utf-8")
+        enc = self.builder.encrypt_payload(payload)
+        ct_size = len(base64.b64decode(enc["ct"]))
+        # Allow up to 50% of plaintext post-compress + AES padding overhead.
+        # Real numbers are well under that (~25-30%) but the CI runner's
+        # gzip might produce slightly different output than local —
+        # don't make this brittle.
+        self.assertLess(
+            ct_size, len(payload) * 0.5,
+            f"expected encrypted+compressed output to be <50% of plaintext "
+            f"({len(payload)} bytes); got {ct_size}",
+        )
 
 
 class LoadDenylistTests(unittest.TestCase, _TmpConfigMixin):
@@ -243,7 +272,10 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         # Plaintext data payload — camp name is inside the JSON blob.
         # Per-source script id (multi-source architecture).
         self.assertIn('id="camps-data-directory"', html)
-        self.assertIn('Demo Camp', html)
+        # Plaintext payload is now gzip+base64 (ADR D12) — the camp
+        # name doesn't appear as substring anymore. Confirm the new
+        # script type instead.
+        self.assertIn('type="application/x-gzip-base64"', html)
         # Meta tags consumed by the client at startup.
         self.assertIn('name="bm-version"', html)
         self.assertIn('name="bm-fetched-date"', html)

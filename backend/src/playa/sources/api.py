@@ -39,11 +39,10 @@ Schema mapping notes:
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime
 from typing import Any
 
@@ -144,11 +143,18 @@ class APISource:
                 f"{config.bm_api_year_min} (per OpenAPI spec).",
             )
 
+        # 404 → empty list. Pre-burn current-year /api/event commonly
+        # returns 404 with `{"detail": "Event not found"}` — events
+        # haven't been published yet (Aug 9 release for camps, gates
+        # for art). Treat as zero events instead of failing the build.
+        # Same allowance for camps in case a year has none on file.
         camps = _request_json(
-            config, f"/api/camp", {"year": self.year},
+            config, "/api/camp", {"year": self.year},
+            default_on_404=[],
         )
         events = _request_json(
-            config, f"/api/event", {"year": self.year},
+            config, "/api/event", {"year": self.year},
+            default_on_404=[],
         )
         payload = {
             "fetched_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -174,51 +180,108 @@ class APISource:
 
 # --- HTTP -----------------------------------------------------------------
 
+_NO_DEFAULT = object()
+
+
 def _request_json(
     config: Config, path: str, params: dict[str, Any],
+    *, default_on_404: Any = _NO_DEFAULT,
 ) -> Any:
     """GET path with X-API-Key header, retry on 429 + 5xx with backoff.
 
     Returns parsed JSON. Raises on persistent failure.
+
+    `default_on_404`: when provided, a 404 response returns this value
+    instead of raising. The API documents 404 as "no items found for
+    the given filter" (per the OpenAPI spec) — this happens routinely
+    for the current-year events endpoint pre-burn, where camps already
+    exist but events haven't been published yet.
+
+    Why curl instead of urllib: api.burningman.org throttles HTTP/1.1
+    clients (urllib speaks 1.1 only) but fast-paths HTTP/2 clients
+    like curl. Empirically curl returns in <1s where urllib hangs
+    past 120s. Same shell-out model as openssl — curl ships on every
+    real machine + CI runner.
     """
+    if not shutil.which("curl"):
+        raise RuntimeError(
+            "curl not found on PATH — required for api.burningman.org. "
+            "Install it via your package manager (apt/brew/etc.).",
+        )
+
     url = config.bm_api_base_url.rstrip("/") + path
     if params:
         url = url + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={
-        "X-API-Key": config.bm_api_key,
-        "User-Agent": config.user_agent,
-        "Accept": "application/json",
-    })
-    last_err: Exception | None = None
+
+    last_err: str = ""
     for attempt in range(config.fetch_retries):
-        try:
-            with urllib.request.urlopen(req, timeout=config.fetch_timeout) as r:
-                return json.load(r)
-        except urllib.error.HTTPError as e:
-            # Honor server-supplied retry-after on 429; otherwise back off
-            # exponentially.
-            if e.code == 429:
-                ra = e.headers.get("Retry-After")
-                wait = float(ra) if ra and ra.isdigit() else (
-                    config.fetch_backoff ** attempt
-                )
-                print(f"  api: 429 rate limit, waiting {wait:.1f}s")
-                time.sleep(wait)
-                last_err = e
-                continue
-            if 500 <= e.code < 600:
-                wait = config.fetch_backoff ** attempt
-                print(f"  api: HTTP {e.code}, retrying in {wait:.1f}s")
-                time.sleep(wait)
-                last_err = e
-                continue
-            # 4xx other than 429 — won't retry, surface immediately.
-            raise
-        except urllib.error.URLError as e:
-            last_err = e
+        # `-w "\n%{http_code}"` appends the status code on its own
+        # line after the body. `--compressed` requests + transparently
+        # decodes gzip. `--http2` upgrades the TLS connection if the
+        # server supports it (most do; falls back to 1.1 cleanly).
+        proc = subprocess.run(
+            [
+                "curl",
+                "--silent", "--show-error",
+                "--max-time", str(config.bm_api_timeout),
+                "--compressed",
+                "--http2",
+                "-H", f"X-API-Key: {config.bm_api_key}",
+                "-H", f"User-Agent: {config.bm_api_user_agent}",
+                "-H", "Accept: application/json",
+                "-w", "\n%{http_code}",
+                url,
+            ],
+            capture_output=True, check=False,
+        )
+
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", "replace").strip()
+            last_err = f"curl exit {proc.returncode}: {stderr}"
             wait = config.fetch_backoff ** attempt
-            print(f"  api: network error ({e}), retrying in {wait:.1f}s")
+            print(f"  api: network error ({stderr}), retrying in {wait:.1f}s")
             time.sleep(wait)
+            continue
+
+        # Split body from the trailing status line.
+        out = proc.stdout
+        nl = out.rfind(b"\n")
+        if nl < 0:
+            raise RuntimeError(
+                f"unexpected curl output (no status line): {out[:200]!r}"
+            )
+        body = out[:nl]
+        try:
+            status = int(out[nl + 1:].strip())
+        except ValueError:
+            raise RuntimeError(
+                f"could not parse status from curl output: {out[nl + 1:]!r}"
+            )
+
+        if status == 200:
+            return json.loads(body)
+        if status == 429:
+            wait = config.fetch_backoff ** attempt
+            print(f"  api: 429 rate limit, waiting {wait:.1f}s")
+            time.sleep(wait)
+            last_err = "HTTP 429"
+            continue
+        if 500 <= status < 600:
+            wait = config.fetch_backoff ** attempt
+            print(f"  api: HTTP {status}, retrying in {wait:.1f}s")
+            time.sleep(wait)
+            last_err = f"HTTP {status}"
+            continue
+        # 4xx other than 429 — won't retry. 404 with a caller-provided
+        # default returns that default (no items for this filter is
+        # documented as a normal response). Anything else surfaces.
+        if status == 404 and default_on_404 is not _NO_DEFAULT:
+            return default_on_404
+        snippet = body.decode("utf-8", "replace")[:500]
+        raise RuntimeError(
+            f"api request to {url} failed with HTTP {status}: {snippet}",
+        )
+
     raise RuntimeError(
         f"api request to {url} failed after "
         f"{config.fetch_retries} attempts: {last_err}",

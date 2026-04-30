@@ -2,12 +2,16 @@
 // `/update-map` Claude skill can refresh them annually without touching
 // rendering code.
 //
-// Sources (2026):
-//   https://burningman.org/black-rock-city/black-rock-city-2026/2026-black-rock-city-plan/
-//   https://innovate.burningman.org/dataset/2026-golden-spike-and-general-city-map-data/
+// Multi-year support (ADR D11): `BRC_BY_YEAR` is the year → constants
+// map. Each year's geometry lives independently; addresses from a 2025
+// API source are rendered with 2025's Golden Spike + radii, addresses
+// from 2026 with 2026's, etc. Themed street names are NOT carried per
+// year — never displayed (the UI labels with the letter only).
 //
-// Last refreshed: 2026-04-23. When you refresh, bump `YEAR` + leave a
-// dated entry in `backend/CHANGELOG_MAP.md` (created by the skill).
+// Sources per year:
+//   2026: https://innovate.burningman.org/dataset/2026-golden-spike-and-general-city-map-data/
+//   2025: https://innovate.burningman.org/dataset/2025-golden-spike-and-general-city-map-data/
+//   (etc. — `/update-map` skill backfills via the GH innovate-GIS-data repo)
 
 export interface BrcMapData {
   year: number;
@@ -15,8 +19,11 @@ export interface BrcMapData {
   center: { lat: number; lng: number };
   /**
    * Compass bearing (degrees clockwise from True North) of the BRC 12:00
-   * radial, looking outward from the Man. 2026: True North aligns with
-   * the 4:30 axis, so 12:00 bearing = 360° − 4.5h × 30°/h = 225° (SW).
+   * radial, looking outward from the Man. True North aligns with the
+   * 4:30 axis (design constant since the city's earliest years), so
+   * 12:00 bearing is always 360° − 4.5h × 30°/h = 225° (SW). Encoded
+   * here for forward-compatibility in case a future year breaks the
+   * convention; today every year sets it to 225.
    */
   twelveBearingDeg: number;
   /** Concentric street radii from the Man, in feet. Parallel to `streetNames`. */
@@ -87,7 +94,7 @@ export const POIS: BrcPOI[] = [
  *   F→G, G→H, H→I: 250' each
  *   I→J, J→K: 150' each (narrower outer blocks)
  */
-export const BRC: BrcMapData = {
+const BRC_2026: BrcMapData = {
   year: 2026,
   center: { lat: 40.783242, lng: -119.207871 },
   twelveBearingDeg: 225,
@@ -129,3 +136,66 @@ export const BRC: BrcMapData = {
     { lat: 40.763558, lng: -119.208301 },
   ],
 };
+
+/**
+ * Per-year BRC geometry. New years are appended by the `/update-map`
+ * skill; old entries stay in place forever (~200 bytes each, harmless,
+ * still used when the user picks a past-year API source).
+ *
+ * **2025 NOT YET BACKFILLED** — placeholder using 2026 numbers.
+ * `parseAddress` against a 2025 camp address will currently use 2026
+ * geometry, which can be off by a block where depths shifted (and will
+ * fail outright if the camp's letter is in 2025's street set but not
+ * 2026's, e.g., an `L`-street address). Run `/update-map 2025` to
+ * fetch the real 2025 city plan before relying on `api-2025` mapping.
+ */
+export const BRC_BY_YEAR: Record<number, BrcMapData> = {
+  2026: BRC_2026,
+  // 2025: TODO — backfill via /update-map skill from
+  //   https://innovate.burningman.org/dataset/2025-golden-spike-and-general-city-map-data/
+  //   (KML for Golden Spike) plus burningmantech/innovate-GIS-data on GH
+  //   for radii / letter set / fence. Until then we fall back to 2026
+  //   below.
+};
+
+/**
+ * Year that the `directory` source represents. Bumped by the
+ * `/update-map` skill alongside `BRC_BY_YEAR` whenever a new burn
+ * year's plan is published. The directory scrape always reflects the
+ * current pre-burn year, so this and the `BRC_BY_YEAR` head should
+ * track the same value.
+ */
+export const DIRECTORY_YEAR = 2026;
+
+/**
+ * Resolve a year to its BRC constants. Falls back to the most recent
+ * known year when `year` is missing from `BRC_BY_YEAR` (e.g., the user
+ * has an `api-2027` source but `/update-map 2027` hasn't been run yet),
+ * with a one-time `console.warn`. Caller should never end up with `null`.
+ */
+export function getBrcForYear(year: number): BrcMapData {
+  const direct = BRC_BY_YEAR[year];
+  if (direct) return direct;
+  // Pick the highest known year as the fallback. For older missing
+  // years (e.g., a future api-2024 added before backfill), this still
+  // gives the user *something* to render — better than crashing.
+  const known = Object.keys(BRC_BY_YEAR).map(Number).sort((a, b) => b - a);
+  const fallback = known.length > 0 ? BRC_BY_YEAR[known[0]] : BRC_2026;
+  if (typeof console !== 'undefined') {
+    // One-line dev hint; production users won't hit this unless they're
+    // on a build that's missing geometry for one of its embedded sources.
+    console.warn(
+      `[BRC_BY_YEAR] no entry for year ${year}; falling back to ${fallback.year}.`
+      + ' Run /update-map for the missing year to remove this warning.',
+    );
+  }
+  return fallback;
+}
+
+/**
+ * Backward-compat default: code that doesn't yet know about per-year
+ * geometry imports `BRC` and gets the directory-year entry. New code
+ * that's source-aware should use `getBrcForYear(year)` /
+ * `getBrcForSource(source)` (in hooks/useSource).
+ */
+export const BRC: BrcMapData = getBrcForYear(DIRECTORY_YEAR);

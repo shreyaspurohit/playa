@@ -1,6 +1,6 @@
 .PHONY: help bootstrap install-backend client-install test test-py test-js \
         bundle bundle-watch fetch fetch-small build rebuild tag meta merge \
-        preview clean dev snapshot-pages
+        preview clean dev snapshot-pages fetch-api
 
 CLIENT_DIR  := client
 BACKEND_DIR := backend
@@ -16,6 +16,10 @@ help:
 	@echo "  dev             — fetch once if cache is empty, otherwise rebuild"
 	@echo "  fetch           — bundle + full pipeline (snapshot old, pull, tag, build site)"
 	@echo "  fetch-small     — pull just 3 pages (quick dev iteration)"
+	@echo "  fetch-api YEAR=YYYY"
+	@echo "                  — pull api.burningman.org camps + events for one year,"
+	@echo "                    encrypt + cache to data/api/YYYY.json. Requires"
+	@echo "                    BM_API_KEY env (and optionally BM_CACHE_PASSWORD)."
 	@echo "  rebuild         — bundle + regenerate site from existing data"
 	@echo "  build           — bundle + build_site only"
 	@echo "  tag             — retag + write data/camps_tagged.csv"
@@ -28,8 +32,48 @@ help:
 	@echo "Env overrides (all optional):"
 	@echo "  PAGES=N         number of listing pages to pull (default 30)"
 	@echo "  PARALLEL=N      parallel detail-fetch workers (default 5)"
-	@echo "  SITE_PASSWORD   encrypt the embedded JSON (plaintext build if unset)"
 	@echo "  CONTACT_EMAIL   address used in the footer mailto takedown link"
+	@echo ""
+	@echo "  -- Single-tier (legacy / dev) --"
+	@echo "  SITE_PASSWORD   encrypt the embedded JSON with one password."
+	@echo "                    Unset = plaintext build (still gzipped — same"
+	@echo "                    page size as encrypted)."
+	@echo ""
+	@echo "  -- Multi-tier access (ADR D10 — when implemented) --"
+	@echo "  SITE_TIERS      tier_pw=src1+src2,tier_pw2=src3,…  Each tier"
+	@echo "                    (password) unlocks the listed sources via"
+	@echo "                    envelope encryption. Three planned tiers:"
+	@echo "                      god-mode      directory + every api-YYYY"
+	@echo "                      demigod-mode  every api-YYYY (no directory)"
+	@echo "                      spirit-mode   only the latest api-YYYY"
+	@echo "                    Unset → falls back to SITE_PASSWORD."
+	@echo "                    Example with BM_API_YEARS=2025,2026:"
+	@echo "                      SITE_TIERS=\"\$$GOD_PW=directory+api-2025+api-2026,\\"
+	@echo "                                  \$$DEMIGOD_PW=api-2025+api-2026,\\"
+	@echo "                                  \$$SPIRIT_PW=api-2026\""
+	@echo "  GOD_PW          tier passwords for the SITE_TIERS string above."
+	@echo "  DEMIGOD_PW        Convention only — they're just env vars you"
+	@echo "  SPIRIT_PW         expand into SITE_TIERS so passwords don't"
+	@echo "                    appear literally in shell history / CI logs."
+	@echo ""
+	@echo "  -- Burn-window auto-unlock (ADR D13 — when implemented) --"
+	@echo "  BURN_OPEN=1     manual override: deploy site/burn-key.json so"
+	@echo "                    spirit-mode auto-unlocks (no password prompt)."
+	@echo "                    god-mode / demigod-mode stay password-gated."
+	@echo "  BURN_WINDOW_OPEN_FROM   ISO date (e.g., 2026-08-30). With"
+	@echo "  BURN_WINDOW_OPEN_TO     BURN_WINDOW_OPEN_TO set, the nightly"
+	@echo "                            cron auto-flips BURN_OPEN inside the"
+	@echo "                            window. Set-once-forget per burn year."
+	@echo ""
+	@echo "  -- API source plumbing --"
+	@echo "  BM_API_KEY      api.burningman.org access key (for fetch-api)"
+	@echo "  BM_CACHE_PASSWORD encrypts the on-disk API cache (falls back to"
+	@echo "                    SITE_PASSWORD; required for CI Release uploads)"
+	@echo "  BM_API_YEARS    comma-separated years to embed at build time, e.g."
+	@echo "                    BM_API_YEARS=2025,2026 (defaults to directory only)"
+	@echo "  BM_API_TIMEOUT  per-request timeout in seconds for the bulk API"
+	@echo "                    endpoints (default 120). Bump if a year's"
+	@echo "                    payload is unusually large or the server's slow."
 
 bootstrap: install-backend client-install
 	@echo "==> Ready. Try: make test"
@@ -79,6 +123,24 @@ fetch: install-backend bundle snapshot-pages
 
 fetch-small: install-backend bundle snapshot-pages
 	PAGES=3 python3 -m playa all
+
+# One-off API source fetch. Pulls /api/camp + /api/event for the
+# given year, encrypts (if BM_CACHE_PASSWORD or SITE_PASSWORD is
+# set), writes data/api/YEAR.json. Subsequent builds with
+# `BM_API_YEARS=YEAR` (or `--sources directory,api-YEAR`) read
+# from that file — no further API calls.
+#
+# Usage: BM_API_KEY=xxx make fetch-api YEAR=2025
+fetch-api: install-backend
+	@if [ -z "$(YEAR)" ]; then \
+		echo "==> Set YEAR (e.g., make fetch-api YEAR=2025)"; exit 1; \
+	fi
+	@if [ -z "$$BM_API_KEY" ]; then \
+		echo "==> Set BM_API_KEY in env first."; exit 1; \
+	fi
+	python3 -m playa api-fetch --year $(YEAR)
+	@echo "==> Cached at data/api/$(YEAR).json"
+	@echo "    Build with: BM_API_YEARS=$(YEAR) make rebuild"
 
 # One-command dev loop: first run fetches the full directory once;
 # subsequent runs reuse the cached data/pages and just rebuild the site.

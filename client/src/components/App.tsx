@@ -82,24 +82,31 @@ export function App() {
 
   // Re-read the per-source data script whenever the source changes.
   // Each script is already in the page (multi-source build embeds
-  // them all up front), so this is a synchronous parse — no fetch.
+  // them all up front). Async because plaintext now goes through
+  // DecompressionStream (gzip+base64 inline, ADR D12).
   useEffect(() => {
-    try {
-      const p = readEmbeddedPayload(source);
-      if (p.kind === 'plain') {
-        indexHaystacks(p.camps);
-        setCamps(p.camps);
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await readEmbeddedPayload(source);
+        if (cancelled) return;
+        if (p.kind === 'plain') {
+          indexHaystacks(p.camps);
+          setCamps(p.camps);
+          setEncEnvelope(null);
+        } else {
+          setCamps(null);
+          setEncEnvelope(p);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        // Switching to a source that wasn't embedded — degrade gracefully.
+        console.warn('readEmbeddedPayload failed:', err);
+        setCamps([]);
         setEncEnvelope(null);
-      } else {
-        setCamps(null);
-        setEncEnvelope(p);
       }
-    } catch (err) {
-      // Switching to a source that wasn't embedded — degrade gracefully.
-      console.warn('readEmbeddedPayload failed:', err);
-      setCamps([]);
-      setEncEnvelope(null);
-    }
+    })();
+    return () => { cancelled = true; };
   }, [source]);
 
   const onUnlock = useCallback((jsonText: string) => {
@@ -632,6 +639,7 @@ export function App() {
               hiddenCount={hiddenDays.size}
               onClearHidden={hiddenDays.clear}
               onGotoCamp={onGotoCamp}
+              source={source}
             />
           </div>
           <div hidden={view !== 'map'}>
@@ -649,6 +657,7 @@ export function App() {
               initialTargetId={mapTargetId}
               onClearTarget={() => setMapTargetId(null)}
               onGotoCamp={onGotoCamp}
+              source={source}
             />
           </div>
         </>

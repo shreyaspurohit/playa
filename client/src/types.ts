@@ -36,6 +36,11 @@ export interface EncryptedPayload {
   salt: string;                   // base64
   iter: number;                   // PBKDF2 iterations
   ct: string;                     // base64 ciphertext
+  /** Set true when the build gzipped the plaintext before AES (ADR D12).
+   *  Decryption pipes the AES output through DecompressionStream('gzip')
+   *  before JSON.parse. Missing on older builds → no decompression
+   *  (kept for one-build backward compat with cached SW shells). */
+  compressed?: boolean;
 }
 
 // LocalStorage keys — declared here so any refactor touches one place.
