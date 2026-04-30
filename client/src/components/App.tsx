@@ -2,10 +2,11 @@
 // fav-only filter, theme, info modal, current tab, map target, etc.)
 // and wires it up.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { Camp } from '../types';
+import type { Camp, EncryptedPayload, Source } from '../types';
 import { LS, scopedKey } from '../types';
 import { readEmbeddedPayload, indexHaystacks, haystackOf } from '../data';
-import type { Payload } from '../data';
+import type { EnvelopeSource } from '../data';
+import { decryptSource } from '../crypto';
 import { readString, writeString } from '../utils/storage';
 import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
@@ -20,6 +21,7 @@ import { useSource, migrateLegacyKeysOnce } from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute } from '../hooks/useHashRoute';
 import { CampsView } from './CampsView';
+import { EnvelopeGate } from './EnvelopeGate';
 import { Footer } from './Footer';
 import { Gate } from './Gate';
 import { Header } from './Header';
@@ -78,12 +80,23 @@ export function App() {
   const { source, setSource, available: availableSources } = useSource();
 
   const [camps, setCamps] = useState<Camp[] | null>(null);
-  const [encEnvelope, setEncEnvelope] = useState<Payload | null>(null);
+  const [encEnvelope, setEncEnvelope] = useState<EncryptedPayload | null>(null);
+  // Envelope-mode (D10) state. `envelopeSources` is the build-embedded
+  // ciphers + wrappers; `unlockedDeks` is what the password unlocked
+  // (one DEK+IV per source the user has access to). Both null in
+  // single-tier (legacy) builds.
+  const [envelopeSources, setEnvelopeSources] = useState<EnvelopeSource[] | null>(null);
+  const [unlockedDeks, setUnlockedDeks] = useState<Map<Source, Uint8Array> | null>(null);
+  // Memo cache: source → decrypted Camp[]. Avoids re-running
+  // decryptSource + JSON.parse + indexHaystacks on every flip back to
+  // a previously-viewed source. Ref instead of state because mutating
+  // the cache shouldn't trigger a re-render.
+  const decryptedRef = useRef<Map<Source, Camp[]>>(new Map());
 
-  // Re-read the per-source data script whenever the source changes.
-  // Each script is already in the page (multi-source build embeds
-  // them all up front). Async because plaintext now goes through
-  // DecompressionStream (gzip+base64 inline, ADR D12).
+  // Detect mode + (re)load source-specific data when source changes.
+  // Envelope mode reads ALL sources up front (one effect, not per
+  // source); the second effect below decrypts on source-change using
+  // cached DEK+IVs.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -94,9 +107,16 @@ export function App() {
           indexHaystacks(p.camps);
           setCamps(p.camps);
           setEncEnvelope(null);
-        } else {
+          setEnvelopeSources(null);
+        } else if (p.kind === 'encrypted') {
           setCamps(null);
-          setEncEnvelope(p);
+          setEncEnvelope(p.enc);
+          setEnvelopeSources(null);
+        } else {
+          // Envelope mode: stash all sources, wait for user password.
+          setCamps(null);
+          setEncEnvelope(null);
+          setEnvelopeSources(p.sources);
         }
       } catch (err) {
         if (cancelled) return;
@@ -104,10 +124,66 @@ export function App() {
         console.warn('readEmbeddedPayload failed:', err);
         setCamps([]);
         setEncEnvelope(null);
+        setEnvelopeSources(null);
       }
     })();
     return () => { cancelled = true; };
   }, [source]);
+
+  // Envelope-mode: when source changes (or user finishes unlocking),
+  // decrypt the active source's cipher with its cached DEK+IV.
+  useEffect(() => {
+    if (!envelopeSources || !unlockedDeks) return;
+    const dekIv = unlockedDeks.get(source);
+    if (!dekIv) {
+      // Active source wasn't unlocked by this user's password.
+      // SourceSwitcher narrows to unlocked sources, so this should
+      // be transient (e.g., persisted source from a richer tier
+      // session). Surface empty + let the user pick another.
+      setCamps([]);
+      return;
+    }
+    const cached = decryptedRef.current.get(source);
+    if (cached) {
+      setCamps(cached);
+      return;
+    }
+    const env = envelopeSources.find((s) => s.source === source);
+    if (!env) { setCamps([]); return; }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const jsonText = await decryptSource(env.cipher, dekIv);
+        if (cancelled) return;
+        const arr = JSON.parse(jsonText) as Camp[];
+        indexHaystacks(arr);
+        decryptedRef.current.set(source, arr);
+        setCamps(arr);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('decryptSource failed:', err);
+        setCamps([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [envelopeSources, unlockedDeks, source]);
+
+  // Source switcher should only offer sources the user actually
+  // unlocked. Falls back to the embedded list in non-envelope builds.
+  const effectiveAvailableSources: Source[] = unlockedDeks
+    ? availableSources.filter((s) => unlockedDeks.has(s))
+    : availableSources;
+
+  // If the user's persisted source isn't in their unlocked set
+  // (e.g., used to be on god-mode, now on spirit-mode), bump them
+  // to the first unlocked source. Runs once after unlock.
+  useEffect(() => {
+    if (!unlockedDeks) return;
+    if (unlockedDeks.has(source)) return;
+    const first = [...unlockedDeks.keys()][0];
+    if (first) setSource(first);
+  }, [unlockedDeks, source, setSource]);
 
   const onUnlock = useCallback((jsonText: string) => {
     const unlocked = JSON.parse(jsonText) as Camp[];
@@ -516,8 +592,20 @@ export function App() {
     ? '· filters: ' + [...activeTags].join(' + ')
     : '';
 
-  if (encEnvelope && encEnvelope.kind === 'encrypted') {
-    return <Gate enc={encEnvelope.enc} onUnlock={onUnlock} />;
+  // Envelope mode (D10): show the multi-tier gate until the user
+  // unlocks at least one source. Once unlocked, fall through to the
+  // main app — `unlockedDeks` survives the re-render and drives the
+  // source switcher's effective list.
+  if (envelopeSources && !unlockedDeks) {
+    return (
+      <EnvelopeGate
+        sources={envelopeSources}
+        onUnlock={setUnlockedDeks}
+      />
+    );
+  }
+  if (encEnvelope) {
+    return <Gate enc={encEnvelope} onUnlock={onUnlock} />;
   }
 
   return (
@@ -535,7 +623,7 @@ export function App() {
           onInfoClick={() => { setInfoPulse(false); setInfoOpen(true); }}
           infoPulse={infoPulse}
           source={source}
-          availableSources={availableSources}
+          availableSources={effectiveAvailableSources}
           onSourceChange={setSource}
         />
         <TabBar view={view} onGoto={goto} scheduleBadge={scheduleBadge} />

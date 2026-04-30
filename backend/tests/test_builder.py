@@ -116,6 +116,139 @@ class EncryptPayloadTests(unittest.TestCase, _TmpConfigMixin):
         )
 
 
+@unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
+class EnvelopeEncryptionTests(unittest.TestCase, _TmpConfigMixin):
+    """Round-trip envelope mode (D10): per-source DEK encrypts the
+    cipher; per-(source, tier) wrapper PBKDF2-encrypts the DEK+IV
+    against each tier's password."""
+
+    def setUp(self):
+        self.config = self._make_config(pbkdf2_iter=1000)
+        self.builder = SiteBuilder(self.config)
+
+    def test_aes_cbc_encrypt_round_trip(self):
+        """Raw key+iv path used to encrypt source data with the random DEK."""
+        key = b"\x01" * 32
+        iv = b"\x02" * 16
+        plaintext = b"hello, envelope world. " * 100
+        ct = self.builder._aes_cbc_encrypt(plaintext, key, iv)
+        # openssl -d with the same key + iv decrypts back.
+        proc = subprocess.run(
+            ["openssl", "enc", "-d", "-aes-256-cbc",
+             "-K", key.hex(), "-iv", iv.hex()],
+            input=ct, capture_output=True, check=True,
+        )
+        self.assertEqual(proc.stdout, plaintext)
+
+    def test_wrap_with_password_round_trip(self):
+        """PBKDF2 wrapper used to encrypt the 48-byte DEK+IV per tier."""
+        secret = b"R" * 48
+        wrapper = self.builder._wrap_with_password(secret, "tier-pw")
+        # Reconstruct the openssl-format blob and decrypt with -d.
+        salt = base64.b64decode(wrapper["salt"])
+        ct = base64.b64decode(wrapper["ct"])
+        blob = b"Salted__" + salt + ct
+        proc = subprocess.run(
+            ["openssl", "enc", "-d", "-aes-256-cbc", "-pbkdf2",
+             "-iter", "1000", "-pass", "pass:tier-pw"],
+            input=blob, capture_output=True, check=True,
+        )
+        self.assertEqual(proc.stdout, secret)
+
+    def test_envelope_emits_one_cipher_per_source(self):
+        """One source → one cipher script + one wrapper per tier."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("directory", camps)]
+        tiers = [
+            ("god-pw", ["directory"]),
+            ("demi-pw", ["directory"]),
+        ]
+        scripts, manifest_meta, modes = self.builder._envelope_data_scripts(
+            loaded, tiers,
+        )
+        # Cipher: exactly one for the source.
+        self.assertEqual(scripts.count('id="camps-data-directory-cipher"'), 1)
+        # Two wrappers (one per tier).
+        self.assertIn('id="cdk-directory-0"', scripts)
+        self.assertIn('id="cdk-directory-1"', scripts)
+        # Manifest lists both indices.
+        self.assertIn('content="directory:0,1"', manifest_meta)
+        # Mode log mentions wrapper count.
+        self.assertEqual(len(modes), 1)
+        self.assertIn("envelope", modes[0])
+        self.assertIn("2 wrappers", modes[0])
+
+    def test_envelope_two_sources_three_tiers(self):
+        """Mirrors the real god/demigod/spirit shape: directory in
+        god-only, api in all three. Wrapper counts must match."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("directory", camps), ("api-2026", camps)]
+        tiers = [
+            ("god-pw", ["directory", "api-2026"]),
+            ("demi-pw", ["api-2026"]),
+            ("spirit-pw", ["api-2026"]),
+        ]
+        scripts, manifest_meta, _ = self.builder._envelope_data_scripts(
+            loaded, tiers,
+        )
+        # directory: 1 wrapper. api-2026: 3 wrappers.
+        self.assertIn('id="camps-data-directory-cipher"', scripts)
+        self.assertIn('id="camps-data-api-2026-cipher"', scripts)
+        self.assertIn('id="cdk-directory-0"', scripts)
+        self.assertNotIn('id="cdk-directory-1"', scripts)
+        self.assertIn('id="cdk-api-2026-0"', scripts)
+        self.assertIn('id="cdk-api-2026-1"', scripts)
+        self.assertIn('id="cdk-api-2026-2"', scripts)
+        # Manifest reflects per-source wrapper indices.
+        self.assertIn("directory:0", manifest_meta)
+        self.assertIn("api-2026:0,1,2", manifest_meta)
+
+    def test_envelope_rejects_unknown_source_in_tier(self):
+        """Operator typo guard: tier listing a source not in --sources
+        fails the build loudly rather than silently dropping it."""
+        loaded = [("directory", [])]
+        tiers = [("pw", ["directory", "api-9999"])]
+        with self.assertRaises(RuntimeError) as cm:
+            self.builder._envelope_data_scripts(loaded, tiers)
+        self.assertIn("api-9999", str(cm.exception))
+
+
+class ConfigParsedTiersTests(unittest.TestCase, _TmpConfigMixin):
+    """SITE_TIERS env-var parsing — sanity checks at build time."""
+
+    def test_empty_returns_empty_list(self):
+        cfg = self._make_config(site_tiers="")
+        self.assertEqual(cfg.parsed_tiers(), [])
+
+    def test_parses_simple(self):
+        cfg = self._make_config(
+            site_tiers="god-pw=directory+api-2025,spirit-pw=api-2026",
+        )
+        self.assertEqual(cfg.parsed_tiers(), [
+            ("god-pw", ["directory", "api-2025"]),
+            ("spirit-pw", ["api-2026"]),
+        ])
+
+    def test_rejects_duplicate_password(self):
+        cfg = self._make_config(site_tiers="same=directory,same=api-2026")
+        with self.assertRaises(ValueError) as cm:
+            cfg.parsed_tiers()
+        self.assertIn("duplicate password", str(cm.exception))
+
+    def test_rejects_empty_source_list(self):
+        cfg = self._make_config(site_tiers="god-pw=")
+        with self.assertRaises(ValueError):
+            cfg.parsed_tiers()
+
+    def test_rejects_missing_equals(self):
+        cfg = self._make_config(site_tiers="god-pw-without-eq")
+        with self.assertRaises(ValueError) as cm:
+            cfg.parsed_tiers()
+        self.assertIn("missing '='", str(cm.exception))
+
+
 class LoadDenylistTests(unittest.TestCase, _TmpConfigMixin):
     def setUp(self):
         self.config = self._make_config()

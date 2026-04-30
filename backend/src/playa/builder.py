@@ -231,6 +231,147 @@ class SiteBuilder:
             "compressed": True,
         }
 
+    # --- D10 envelope encryption ------------------------------------------
+
+    def _aes_cbc_encrypt(
+        self, plaintext: bytes, key: bytes, iv: bytes,
+    ) -> bytes:
+        """Raw AES-256-CBC encrypt (no PBKDF2; key + iv supplied
+        directly). Used to encrypt source data with the random DEK in
+        the envelope scheme — the DEK is already full-entropy random,
+        so deriving from it via PBKDF2 would be ceremony.
+
+        openssl emits PKCS7 padding by default. Web Crypto's AES-CBC
+        decrypt strips it back transparently. Output is the raw
+        ciphertext (no `Salted__` prefix — that's only emitted with
+        `-salt`/`-pbkdf2` modes).
+        """
+        proc = subprocess.run(
+            [
+                "openssl", "enc", "-aes-256-cbc",
+                "-K", key.hex(),
+                "-iv", iv.hex(),
+            ],
+            input=plaintext, capture_output=True, check=True,
+        )
+        return proc.stdout
+
+    def _wrap_with_password(self, plaintext: bytes, password: str) -> dict:
+        """PBKDF2-derived AES-CBC encrypt, returning the standard
+        `{salt, iter, ct}` envelope used elsewhere. Reused for every
+        DEK wrapper in tiered builds — same primitive Gate.tsx and
+        crypto.ts already round-trip-test against. Note: `compressed`
+        flag is NOT set here (the wrapped payload is 48 raw bytes,
+        not gzip-able).
+        """
+        proc = subprocess.run(
+            [
+                "openssl", "enc", "-aes-256-cbc", "-salt", "-pbkdf2",
+                "-iter", str(self.config.pbkdf2_iter),
+                "-pass", f"pass:{password}",
+            ],
+            input=plaintext, capture_output=True, check=True,
+        )
+        blob = proc.stdout
+        if blob[:8] != b"Salted__":
+            raise RuntimeError(f"unexpected openssl output: {blob[:16]!r}")
+        return {
+            "salt": base64.b64encode(blob[8:16]).decode("ascii"),
+            "iter": self.config.pbkdf2_iter,
+            "ct":   base64.b64encode(blob[16:]).decode("ascii"),
+        }
+
+    def _envelope_data_scripts(
+        self,
+        loaded: list[tuple[str, list[Camp]]],
+        tiers: list[tuple[str, list[str]]],
+    ) -> tuple[str, str, list[str]]:
+        """Build all the per-source ciphers + per-(source, tier) DEK
+        wrappers + the manifest meta tag for envelope-mode deploys
+        (ADR D10).
+
+        Returns `(scripts_block, wrappers_meta_tag, modes)` where:
+          * `scripts_block` concatenates every embed (cipher + wrappers)
+          * `wrappers_meta_tag` is a single `<meta>` line listing
+            wrapper indices per source
+          * `modes` is a one-line summary for the build log
+
+        Raises if a tier lists a source not in `loaded` (typo guard).
+        """
+        loaded_specs = {spec for spec, _ in loaded}
+        for pw, srcs in tiers:
+            for s in srcs:
+                if s not in loaded_specs:
+                    raise RuntimeError(
+                        f"SITE_TIERS lists source {s!r} but it isn't in "
+                        f"the loaded set {sorted(loaded_specs)}. Either "
+                        "extend --sources or fix the tier definition.",
+                    )
+
+        parts: list[str] = []
+        wrappers_by_source: dict[str, list[int]] = {spec: [] for spec, _ in loaded}
+        # Track DEK+IV per source so wrappers can re-encrypt the same
+        # 48-byte blob multiple times (one per tier that includes the
+        # source).
+        source_keys: dict[str, tuple[bytes, bytes]] = {}
+
+        # 1) Encrypt each source's gzipped JSON with a fresh random DEK.
+        for spec, camps in loaded:
+            payload = json.dumps(
+                [c.to_dict() for c in camps],
+                ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8")
+            compressed = gzip.compress(payload, compresslevel=6)
+            dek = os.urandom(32)
+            iv = os.urandom(16)
+            ct = self._aes_cbc_encrypt(compressed, dek, iv)
+            cipher = {
+                "iv": base64.b64encode(iv).decode("ascii"),
+                "ct": base64.b64encode(ct).decode("ascii"),
+                "compressed": True,
+            }
+            parts.append(
+                f'<script id="camps-data-{spec}-cipher" '
+                f'type="application/json">'
+                + json.dumps(cipher, separators=(",", ":"))
+                + '</script>'
+            )
+            source_keys[spec] = (dek, iv)
+
+        # 2) For each (tier, source-in-tier) pair, wrap the source's
+        #    DEK+IV with the tier's password.
+        for pw, tier_srcs in tiers:
+            for spec in tier_srcs:
+                dek, iv = source_keys[spec]
+                wrapper = self._wrap_with_password(dek + iv, pw)
+                wrapper_idx = len(wrappers_by_source[spec])
+                parts.append(
+                    f'<script id="cdk-{spec}-{wrapper_idx}" '
+                    f'type="application/json">'
+                    + json.dumps(wrapper, separators=(",", ":"))
+                    + '</script>'
+                )
+                wrappers_by_source[spec].append(wrapper_idx)
+
+        # 3) Manifest. Sources with zero wrappers are omitted — they
+        #    can't be unlocked by any tier.
+        manifest_segs = []
+        for spec, _ in loaded:
+            idxs = wrappers_by_source[spec]
+            if idxs:
+                manifest_segs.append(f"{spec}:{','.join(str(i) for i in idxs)}")
+        wrappers_meta = (
+            f'<meta name="bm-tier-wrappers" '
+            f'content="{";".join(manifest_segs)}">'
+        )
+
+        modes = [
+            f"envelope ({len(tiers)} tiers, "
+            f"{len(loaded)} sources, "
+            f"{sum(len(v) for v in wrappers_by_source.values())} wrappers)"
+        ]
+        return "\n".join(parts), wrappers_meta, modes
+
     # --- template + write -------------------------------------------------
 
     @staticmethod
@@ -489,15 +630,31 @@ class SiteBuilder:
                 f"degraded build to overwrite the live site."
             )
         meta = self.load_meta()
-        # One <script> per source, concatenated. Newlines between are
-        # cosmetic (template's `__DATA_SCRIPT__` substitutes a string).
-        data_parts: list[str] = []
-        modes: list[str] = []
-        for spec, camps in loaded:
-            tag, mode = self._data_script(camps, spec)
-            data_parts.append(tag)
-            modes.append(f"{spec}={mode}")
-        data_script = "\n".join(data_parts)
+
+        # Three build modes:
+        #   1. SITE_TIERS set     → envelope encryption (D10)
+        #   2. SITE_PASSWORD set  → per-source single-tier encryption
+        #   3. neither            → per-source plaintext (gzip + base64)
+        try:
+            tiers = self.config.parsed_tiers()
+        except ValueError as e:
+            raise RuntimeError(f"SITE_TIERS misconfigured: {e}") from e
+
+        if tiers:
+            data_script, wrappers_meta, modes = self._envelope_data_scripts(
+                loaded, tiers,
+            )
+        else:
+            # Per-source single-tier emission (existing path).
+            data_parts: list[str] = []
+            modes = []
+            for spec, camps in loaded:
+                tag, mode = self._data_script(camps, spec)
+                data_parts.append(tag)
+                modes.append(f"{spec}={mode}")
+            data_script = "\n".join(data_parts)
+            wrappers_meta = ""   # no manifest in non-envelope builds
+
         # Comma-separated source list; client picks the first as
         # default if there's no `bm-source` in localStorage.
         sources_meta = (
@@ -533,16 +690,17 @@ class SiteBuilder:
         # so no separate week-map tag is needed.
         html = (
             self._read_template()
-            .replace("__DATA_SCRIPT__",   data_script)
-            .replace("__SOURCES_META__",  sources_meta)
-            .replace("__BUNDLE__",        bundle_js)
-            .replace("__RELEASE_NOTES__", notes_script)
-            .replace("__CONTACT_EMAIL__", self.config.contact_email)
-            .replace("__VERSION__",       meta.get("version", "v0.0.0"))
-            .replace("__FETCHED_DATE__",  meta.get("fetched_date", "unknown"))
-            .replace("__FETCHED_AT__",    meta.get("fetched_at", "unknown"))
-            .replace("__BURN_START__",    self._effective_start)
-            .replace("__BURN_END__",      self.config.burn_end)
+            .replace("__DATA_SCRIPT__",        data_script)
+            .replace("__SOURCES_META__",       sources_meta)
+            .replace("__TIER_WRAPPERS_META__", wrappers_meta)
+            .replace("__BUNDLE__",             bundle_js)
+            .replace("__RELEASE_NOTES__",      notes_script)
+            .replace("__CONTACT_EMAIL__",      self.config.contact_email)
+            .replace("__VERSION__",            meta.get("version", "v0.0.0"))
+            .replace("__FETCHED_DATE__",       meta.get("fetched_date", "unknown"))
+            .replace("__FETCHED_AT__",         meta.get("fetched_at", "unknown"))
+            .replace("__BURN_START__",         self._effective_start)
+            .replace("__BURN_END__",           self.config.burn_end)
         )
 
         self.config.site_html.parent.mkdir(parents=True, exist_ok=True)

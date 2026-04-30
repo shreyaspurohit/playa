@@ -76,6 +76,18 @@ class Config:
     #   BM_API_YEARS="2024,2025"  → sources = directory,api-2024,api-2025
     bm_api_years: str = ""
 
+    # Multi-tier access manifest (ADR D10). Format:
+    #   <pw1>=<src>+<src>,<pw2>=<src>+<src>,…
+    # Each tier (password) unlocks the listed sources via per-source
+    # envelope encryption — one source cipher + one wrapper per tier
+    # that should reach it. Empty → falls through to single-tier
+    # `site_password` behavior. Conventionally the operator sets:
+    #   SITE_TIERS="$GOD_PW=directory+api-2025+api-2026,
+    #               $DEMIGOD_PW=api-2025+api-2026,
+    #               $SPIRIT_PW=api-2026"
+    # so literal passwords don't sit in the workflow YAML.
+    site_tiers: str = ""
+
     # Password used to encrypt the cache assets uploaded to GitHub
     # Releases. Distinct from `site_password` so rotating the public-
     # facing site password doesn't force a re-fetch + re-upload of
@@ -147,6 +159,7 @@ class Config:
             bm_api_years=os.environ.get("BM_API_YEARS", "").strip(),
             bm_cache_password=os.environ.get("BM_CACHE_PASSWORD", "").strip(),
             bm_api_timeout=int(os.environ.get("BM_API_TIMEOUT", "120")),
+            site_tiers=os.environ.get("SITE_TIERS", "").strip(),
         )
 
     # --- Derived settings --------------------------------------------------
@@ -173,3 +186,46 @@ class Config:
             if y >= self.bm_api_year_min:
                 out.add(y)
         return sorted(out)
+
+    def parsed_tiers(self) -> list[tuple[str, list[str]]]:
+        """Parse `site_tiers` into [(password, [source, …]), …].
+
+        Format: `pw1=src1+src2,pw2=src3,…`.
+        Returns [] when the field is empty (single-tier fallback).
+
+        Sanity checks (raise ValueError on violation):
+          - duplicate passwords (ambiguous tier semantics)
+          - empty source list for any tier (pointless tier)
+          - empty password (shape error)
+        Format-bad entries (no `=`, etc.) raise ValueError too — silent
+        drop on a multi-tier config would be a foot-gun.
+        """
+        if not self.site_tiers.strip():
+            return []
+        seen_pws: set[str] = set()
+        out: list[tuple[str, list[str]]] = []
+        for raw in self.site_tiers.split(","):
+            entry = raw.strip()
+            if not entry:
+                continue
+            if "=" not in entry:
+                raise ValueError(
+                    f"SITE_TIERS entry missing '=': {entry!r}",
+                )
+            pw, srcs_raw = entry.split("=", 1)
+            pw = pw.strip()
+            if not pw:
+                raise ValueError(f"SITE_TIERS entry has empty password: {entry!r}")
+            if pw in seen_pws:
+                raise ValueError(
+                    f"SITE_TIERS has duplicate password — tier semantics "
+                    "would be ambiguous. Each tier needs a distinct password.",
+                )
+            seen_pws.add(pw)
+            srcs = [s.strip() for s in srcs_raw.split("+") if s.strip()]
+            if not srcs:
+                raise ValueError(
+                    f"SITE_TIERS tier has no sources listed: {entry!r}",
+                )
+            out.append((pw, srcs))
+        return out

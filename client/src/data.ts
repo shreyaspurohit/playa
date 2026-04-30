@@ -10,12 +10,27 @@
 // still finds its data. The legacy plain path also accepts raw JSON
 // content (pre-D12 builds) when the script's `type` is
 // `application/json` rather than the new gzip+base64 type.
-import type { Camp, EncryptedPayload, Source } from './types';
+import type {
+  Camp, EncryptedPayload, Source, SourceCipher,
+} from './types';
 import { decompressGzip } from './utils/gzip';
+
+/** Per-source bits in an envelope-mode build (ADR D10). The cipher is
+ *  decrypted only after one of the wrappers unwraps successfully with
+ *  the user's tier password. */
+export interface EnvelopeSource {
+  source: Source;
+  cipher: SourceCipher;
+  /** Wrapper envelopes in declaration order, indexed parallel to the
+   *  manifest meta tag's content. Each is a normal PBKDF2+AES-CBC
+   *  envelope wrapping the 48-byte DEK+IV blob. */
+  wrappers: EncryptedPayload[];
+}
 
 export type Payload =
   | { kind: 'plain'; camps: Camp[] }
-  | { kind: 'encrypted'; enc: EncryptedPayload };
+  | { kind: 'encrypted'; enc: EncryptedPayload }
+  | { kind: 'envelope'; sources: EnvelopeSource[] };
 
 const GZIP_B64_TYPE = 'application/x-gzip-base64';
 
@@ -44,9 +59,68 @@ async function readPlain(el: HTMLElement): Promise<Camp[]> {
   return JSON.parse(text || '[]') as Camp[];
 }
 
+/** Parse `<meta name="bm-tier-wrappers">` if present.
+ *
+ *  Format: `<source>:<idx>,<idx>,…;<source>:<idx>,…`
+ *  e.g.    `directory:0;api-2025:0,1;api-2026:0,1,2`
+ *
+ *  Returns null when the meta is absent (non-envelope build) or empty.
+ *  Each map entry's value is the list of wrapper indices to read for
+ *  `<script id="cdk-<source>-<idx>">`. */
+function readTierManifest(): Map<Source, number[]> | null {
+  if (typeof document === 'undefined') return null;
+  const m = document.querySelector('meta[name="bm-tier-wrappers"]');
+  const raw = (m?.getAttribute('content') ?? '').trim();
+  if (!raw) return null;
+  const out = new Map<Source, number[]>();
+  for (const seg of raw.split(';')) {
+    const piece = seg.trim();
+    if (!piece) continue;
+    const colon = piece.indexOf(':');
+    if (colon < 0) continue;
+    const source = piece.slice(0, colon).trim();
+    const idxs = piece.slice(colon + 1).split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n));
+    if (source && idxs.length > 0) out.set(source, idxs);
+  }
+  return out.size > 0 ? out : null;
+}
+
+/** Read the cipher + wrappers for one source out of the DOM. */
+function readEnvelopeSource(
+  source: Source, idxs: number[],
+): EnvelopeSource | null {
+  const cipherEl = document.getElementById(`camps-data-${source}-cipher`);
+  if (!cipherEl) return null;
+  const cipher = JSON.parse(cipherEl.textContent ?? '{}') as SourceCipher;
+  const wrappers: EncryptedPayload[] = [];
+  for (const idx of idxs) {
+    const el = document.getElementById(`cdk-${source}-${idx}`);
+    if (!el) continue;
+    wrappers.push(JSON.parse(el.textContent ?? '{}') as EncryptedPayload);
+  }
+  return { source, cipher, wrappers };
+}
+
 export async function readEmbeddedPayload(
   source: Source = 'directory',
 ): Promise<Payload> {
+  // Envelope mode (D10) overrides everything — the source-specific
+  // cipher/wrapper scripts are the only camp data on the page.
+  const manifest = readTierManifest();
+  if (manifest) {
+    const sources: EnvelopeSource[] = [];
+    for (const [src, idxs] of manifest) {
+      const env = readEnvelopeSource(src, idxs);
+      if (env) sources.push(env);
+    }
+    if (sources.length === 0) {
+      throw new Error('envelope manifest present but no sources resolved');
+    }
+    return { kind: 'envelope', sources };
+  }
+
   // Per-source ids first.
   const plain = document.getElementById(`camps-data-${source}`);
   if (plain) {

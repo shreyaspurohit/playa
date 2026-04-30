@@ -43,6 +43,16 @@ export interface EncryptedPayload {
   compressed?: boolean;
 }
 
+/** Per-source cipher in envelope-mode builds (ADR D10). The key+iv
+ *  needed to decrypt this come from a wrapper, not from the user's
+ *  password directly. */
+export interface SourceCipher {
+  iv: string;                     // base64 — 16 bytes
+  ct: string;                     // base64 — gzipped JSON, AES-CBC encrypted
+  /** Always true today (build-time gzip is unconditional in D10). */
+  compressed?: boolean;
+}
+
 // LocalStorage keys — declared here so any refactor touches one place.
 export const LS = {
   theme:     'bm-theme',
