@@ -17,23 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       burn_open:
-        description: >-
-          Override D13 burn-window auto-unlock for spirit-mode.
-          'force-open' deploys site/burn-key.json regardless of dates;
-          'force-closed' removes it. Blank uses the date check
-          against vars.BURN_WINDOW_OPEN_FROM/TO.
+        description: 'Spirit-mode auto-unlock override'
         required: false
         type: choice
         default: ''
         options: ['', 'force-open', 'force-closed']
       refresh_api_years:
-        description: >-
-          Comma-separated years to force-refresh from api.burningman.org.
-          Each listed year's Release (data-api-YYYY) is deleted before
-          the cache step, so the next fetch hits the API fresh and
-          re-uploads. Blank → caches are reused as today (no API hits
-          for past years). Example: 2026 (current year only) or
-          2025,2026 (both).
+        description: 'Years to force-refresh (e.g. 2026 or 2025,2026)'
         required: false
         default: ''
 
