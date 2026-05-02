@@ -262,7 +262,9 @@ jobs:
               # override; if you want to extend, bump BURN_WINDOW_OPEN_TO.
               effective=0
               echo "burn-window: today=${today_utc} past TO=${BURN_WINDOW_OPEN_TO} → BURN_OPEN=0 (password mode resumed)"
-            elif [[ "$today_utc" >= "$BURN_WINDOW_OPEN_FROM" ]]; then
+            elif [[ ! "$today_utc" < "$BURN_WINDOW_OPEN_FROM" ]]; then
+              # Bash [[ ]] has no `>=` operator — express "on or after
+              # FROM" as "NOT before FROM". ISO dates sort lex.
               effective=1
               echo "burn-window: today=${today_utc} inside [${BURN_WINDOW_OPEN_FROM}, ${BURN_WINDOW_OPEN_TO}] → BURN_OPEN=1"
             elif [[ -n "${PLAYA_GO_LIVE:-}" && "${PLAYA_GO_LIVE,,}" != "0" \
