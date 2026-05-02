@@ -126,14 +126,80 @@ const BRC_2026: BrcMapData = {
     '9:00', '9:15', '9:30', '9:45',
     '10:00',
   ],
-  // Fence vertices carried over from 2023 as a visual-only baseline.
-  // Real 2026 fence coordinates release mid-July; skill refreshes then.
+  // Trash-fence pentagon — official 2026 vertices from the
+  // Measurements PDF (https://bm-innovate.s3.amazonaws.com/2026/
+  // 2026%20BRC%20Measurements.pdf). The PDF labels the first vertex
+  // without a "P1" tag but ordering matches P1-P5 from prior years.
   fencePentagon: [
-    { lat: 40.782814, lng: -119.233566 },
-    { lat: 40.807028, lng: -119.217274 },
-    { lat: 40.802722, lng: -119.181931 },
-    { lat: 40.775857, lng: -119.176407 },
-    { lat: 40.763558, lng: -119.208301 },
+    { lat: 40.779710, lng: -119.237421 }, // P1 (W)
+    { lat: 40.803523, lng: -119.221409 }, // P2 (NW)
+    { lat: 40.799290, lng: -119.186670 }, // P3 (NE)
+    { lat: 40.772883, lng: -119.181237 }, // P4 (SE)
+    { lat: 40.760786, lng: -119.212582 }, // P5 (S)
+  ],
+};
+
+/**
+ * 2025 BRC, theme "Tomorrow Today" (sci-fi authors A→K). Block depths
+ * match the 2026 / 2023-baseline layout. Golden Spike + fence pentagon
+ * are 2025-specific (the city moved ~1,400 ft NE between 2025 and 2026).
+ *
+ *   Esp→A: 400'     (wide entry block)
+ *   A→B, B→C, C→D, D→E: 250' each
+ *   E→F: 450'       (mid-city double for Ellison↔Farmer plazas)
+ *   F→G, G→H, H→I: 250' each
+ *   I→J, J→K: 150' each
+ *
+ * Sources:
+ *   - Golden Spike + fence: 2025 BRC Measurements (S3 mirror — webassets
+ *     CDN 403s to curl):
+ *     https://bm-innovate.s3.amazonaws.com/2025/2025%20BRC%20Measurements.doc.pdf
+ *   - Themed names: 2025 city plan / Survival Guide. Note: GIS spells
+ *     it "Jemison" but author N.K. Jemisin's name is the source of
+ *     truth — Survival Guide spelling wins.
+ *   - Radial clock positions: 2025 GIS street_lines.geojson — every
+ *     15-min position 2:00–10:00 has a radial (full radials at :00/:30,
+ *     outer-block-only at :15/:45).
+ */
+const BRC_2025: BrcMapData = {
+  year: 2025,
+  center: { lat: 40.786958, lng: -119.202994 },
+  twelveBearingDeg: 225,
+  streetRadiiFeet: [
+    2500,                          // Esplanade
+    2900,                          // A  Atwood     (+400)
+    3150, 3400, 3650, 3900,        // B C D E       (+250 each)
+    4350,                          // F  Farmer     (+450, mid-city double)
+    4600, 4850, 5100,              // G H I         (+250 each)
+    5250, 5400,                    // J K           (+150 each)
+  ],
+  streetLetters: [
+    'Esplanade', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K',
+  ],
+  streetNames: [
+    'Esplanade', 'Atwood', 'Bradbury', 'Cherryh', 'Dick', 'Ellison',
+    'Farmer', 'Gibson', 'Herbert', 'Ishiguro', 'Jemisin', 'Kilgore',
+  ],
+  // Every 15 minutes 2:00–10:00. :00 / :30 are full radials reaching
+  // Esplanade; :15 / :45 are outer-block (Farmer–Kilgore) radials only.
+  radialClockPositions: [
+    '2:00', '2:15', '2:30', '2:45',
+    '3:00', '3:15', '3:30', '3:45',
+    '4:00', '4:15', '4:30', '4:45',
+    '5:00', '5:15', '5:30', '5:45',
+    '6:00', '6:15', '6:30', '6:45',
+    '7:00', '7:15', '7:30', '7:45',
+    '8:00', '8:15', '8:30', '8:45',
+    '9:00', '9:15', '9:30', '9:45',
+    '10:00',
+  ],
+  // Trash-fence pentagon — official P1–P5 from the 2025 measurements PDF.
+  fencePentagon: [
+    { lat: 40.783388, lng: -119.232725 }, // P1 (W)
+    { lat: 40.807354, lng: -119.216621 }, // P2 (NW)
+    { lat: 40.803107, lng: -119.181667 }, // P3 (NE)
+    { lat: 40.776557, lng: -119.176181 }, // P4 (SE)
+    { lat: 40.764363, lng: -119.207719 }, // P5 (S)
   ],
 };
 
@@ -141,21 +207,10 @@ const BRC_2026: BrcMapData = {
  * Per-year BRC geometry. New years are appended by the `/update-map`
  * skill; old entries stay in place forever (~200 bytes each, harmless,
  * still used when the user picks a past-year API source).
- *
- * **2025 NOT YET BACKFILLED** — placeholder using 2026 numbers.
- * `parseAddress` against a 2025 camp address will currently use 2026
- * geometry, which can be off by a block where depths shifted (and will
- * fail outright if the camp's letter is in 2025's street set but not
- * 2026's, e.g., an `L`-street address). Run `/update-map 2025` to
- * fetch the real 2025 city plan before relying on `api-2025` mapping.
  */
 export const BRC_BY_YEAR: Record<number, BrcMapData> = {
+  2025: BRC_2025,
   2026: BRC_2026,
-  // 2025: TODO — backfill via /update-map skill from
-  //   https://innovate.burningman.org/dataset/2025-golden-spike-and-general-city-map-data/
-  //   (KML for Golden Spike) plus burningmantech/innovate-GIS-data on GH
-  //   for radii / letter set / fence. Until then we fall back to 2026
-  //   below.
 };
 
 /**

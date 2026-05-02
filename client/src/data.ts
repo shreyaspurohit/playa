@@ -25,6 +25,14 @@ export interface EnvelopeSource {
    *  manifest meta tag's content. Each is a normal PBKDF2+AES-CBC
    *  envelope wrapping the 48-byte DEK+IV blob. */
   wrappers: EncryptedPayload[];
+  /** Parallel-indexed flags: `trusted[i]` is true when wrapper `i` was
+   *  emitted for the `god-mode` tier (per `bm-trusted-wrappers`).
+   *  When the user's password unwraps a trusted wrapper, the client
+   *  applies per-tier privileges (e.g., bypassing the pre-burn
+   *  location embargo) without ever knowing the tier's name. Empty
+   *  array when the source has no trusted wrappers, or when the
+   *  build didn't emit a trusted manifest at all. */
+  trusted: boolean[];
 }
 
 export type Payload =
@@ -59,17 +67,18 @@ async function readPlain(el: HTMLElement): Promise<Camp[]> {
   return JSON.parse(text || '[]') as Camp[];
 }
 
-/** Parse `<meta name="bm-tier-wrappers">` if present.
+/** Parse a `<meta name="<name>">` manifest if present.
  *
  *  Format: `<source>:<idx>,<idx>,…;<source>:<idx>,…`
  *  e.g.    `directory:0;api-2025:0,1;api-2026:0,1,2`
  *
- *  Returns null when the meta is absent (non-envelope build) or empty.
- *  Each map entry's value is the list of wrapper indices to read for
- *  `<script id="cdk-<source>-<idx>">`. */
-function readTierManifest(): Map<Source, number[]> | null {
+ *  Returns null when the meta is absent or empty. Each map entry's
+ *  value is the list of wrapper indices for that source. Used for
+ *  both `bm-tier-wrappers` (every wrapper) and `bm-trusted-wrappers`
+ *  (god-mode wrappers only). */
+function readWrapperManifest(name: string): Map<Source, number[]> | null {
   if (typeof document === 'undefined') return null;
-  const m = document.querySelector('meta[name="bm-tier-wrappers"]');
+  const m = document.querySelector(`meta[name="${name}"]`);
   const raw = (m?.getAttribute('content') ?? '').trim();
   if (!raw) return null;
   const out = new Map<Source, number[]>();
@@ -87,20 +96,28 @@ function readTierManifest(): Map<Source, number[]> | null {
   return out.size > 0 ? out : null;
 }
 
-/** Read the cipher + wrappers for one source out of the DOM. */
+/** Read the cipher + wrappers for one source out of the DOM.
+ *
+ *  `trustedIdxs` is the set of wrapper indices flagged trusted by the
+ *  build's `bm-trusted-wrappers` manifest. The returned `trusted[]`
+ *  array is parallel-indexed with `wrappers[]`, so a successful
+ *  unwrap at position `i` reveals whether the wrapping tier was
+ *  god-mode without us ever naming it. */
 function readEnvelopeSource(
-  source: Source, idxs: number[],
+  source: Source, idxs: number[], trustedIdxs: Set<number>,
 ): EnvelopeSource | null {
   const cipherEl = document.getElementById(`camps-data-${source}-cipher`);
   if (!cipherEl) return null;
   const cipher = JSON.parse(cipherEl.textContent ?? '{}') as SourceCipher;
   const wrappers: EncryptedPayload[] = [];
+  const trusted: boolean[] = [];
   for (const idx of idxs) {
     const el = document.getElementById(`cdk-${source}-${idx}`);
     if (!el) continue;
     wrappers.push(JSON.parse(el.textContent ?? '{}') as EncryptedPayload);
+    trusted.push(trustedIdxs.has(idx));
   }
-  return { source, cipher, wrappers };
+  return { source, cipher, wrappers, trusted };
 }
 
 export async function readEmbeddedPayload(
@@ -108,11 +125,13 @@ export async function readEmbeddedPayload(
 ): Promise<Payload> {
   // Envelope mode (D10) overrides everything — the source-specific
   // cipher/wrapper scripts are the only camp data on the page.
-  const manifest = readTierManifest();
+  const manifest = readWrapperManifest('bm-tier-wrappers');
   if (manifest) {
+    const trustedManifest = readWrapperManifest('bm-trusted-wrappers');
     const sources: EnvelopeSource[] = [];
     for (const [src, idxs] of manifest) {
-      const env = readEnvelopeSource(src, idxs);
+      const trustedIdxs = new Set(trustedManifest?.get(src) ?? []);
+      const env = readEnvelopeSource(src, idxs, trustedIdxs);
       if (env) sources.push(env);
     }
     if (sources.length === 0) {

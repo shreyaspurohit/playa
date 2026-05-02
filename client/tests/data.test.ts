@@ -79,6 +79,72 @@ describe('readEmbeddedPayload', () => {
   test('throws when neither script is in the page', async () => {
     await assert.rejects(readEmbeddedPayload(), /No camps data/);
   });
+
+  test('envelope mode: trusted manifest tags only the listed wrapper indices', async () => {
+    // Build a minimal envelope DOM: 2 wrappers per source, with only
+    // wrapper 0 flagged trusted.
+    const meta1 = document.createElement('meta');
+    meta1.setAttribute('name', 'bm-tier-wrappers');
+    meta1.setAttribute('content', 'api-2026:0,1');
+    document.head.appendChild(meta1);
+
+    const meta2 = document.createElement('meta');
+    meta2.setAttribute('name', 'bm-trusted-wrappers');
+    meta2.setAttribute('content', 'api-2026:0');
+    document.head.appendChild(meta2);
+
+    const cipherEl = document.createElement('script');
+    cipherEl.id = 'camps-data-api-2026-cipher';
+    cipherEl.type = 'application/json';
+    cipherEl.textContent = JSON.stringify({ iv: 'AA', ct: 'BB', compressed: true });
+    document.body.appendChild(cipherEl);
+
+    for (const idx of [0, 1]) {
+      const w = document.createElement('script');
+      w.id = `cdk-api-2026-${idx}`;
+      w.type = 'application/json';
+      w.textContent = JSON.stringify({ salt: 'AAAA', iter: 1000, ct: 'BBBB' });
+      document.body.appendChild(w);
+    }
+
+    const p = await readEmbeddedPayload('api-2026');
+    assert.equal(p.kind, 'envelope');
+    if (p.kind === 'envelope') {
+      assert.equal(p.sources.length, 1);
+      const src = p.sources[0];
+      assert.equal(src.source, 'api-2026');
+      assert.equal(src.wrappers.length, 2);
+      // Trusted flag is parallel-indexed with wrappers[]: 0 trusted, 1 not.
+      assert.deepEqual(src.trusted, [true, false]);
+    }
+  });
+
+  test('envelope mode: missing trusted manifest → all wrappers untrusted', async () => {
+    const meta = document.createElement('meta');
+    meta.setAttribute('name', 'bm-tier-wrappers');
+    meta.setAttribute('content', 'api-2026:0,1');
+    document.head.appendChild(meta);
+    // No bm-trusted-wrappers — operator never set up god-mode.
+
+    const cipherEl = document.createElement('script');
+    cipherEl.id = 'camps-data-api-2026-cipher';
+    cipherEl.type = 'application/json';
+    cipherEl.textContent = JSON.stringify({ iv: 'AA', ct: 'BB', compressed: true });
+    document.body.appendChild(cipherEl);
+    for (const idx of [0, 1]) {
+      const w = document.createElement('script');
+      w.id = `cdk-api-2026-${idx}`;
+      w.type = 'application/json';
+      w.textContent = JSON.stringify({ salt: 'AAAA', iter: 1000, ct: 'BBBB' });
+      document.body.appendChild(w);
+    }
+
+    const p = await readEmbeddedPayload('api-2026');
+    assert.equal(p.kind, 'envelope');
+    if (p.kind === 'envelope') {
+      assert.deepEqual(p.sources[0].trusted, [false, false]);
+    }
+  });
 });
 
 describe('indexHaystacks', () => {

@@ -5,6 +5,15 @@
 CLIENT_DIR  := client
 BACKEND_DIR := backend
 
+# Auto-load `.env` if present at the repo root. Lets local dev keep
+# year-specific values (BURN_START, BURN_END, BM_API_KEY, etc.) out
+# of shell history without polluting the Makefile or shell rc.
+# `.env` is gitignored — see top of .gitignore.
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
 help:
 	@echo "============================================================"
 	@echo "  PIPELINE TARGETS — fetch + build + serve"
@@ -80,6 +89,18 @@ help:
 	@echo "  BUILD          site assembly"
 	@echo "                 used by: build, rebuild, dev, fetch, fetch-small"
 	@echo ""
+	@echo "    -- Required dates (no code defaults — set per burn year) --"
+	@echo "    BURN_WINDOW_OPEN_FROM   REQUIRED. ISO date, gate-open day"
+	@echo "                              (e.g., 2026-08-30). Drives BOTH:"
+	@echo "                              · the schedule view's calendar start"
+	@echo "                              · the location-embargo cutoff (D8)"
+	@echo "                              · the spirit-mode public-access"
+	@echo "                                window's open edge (D13)"
+	@echo "    BURN_WINDOW_OPEN_TO     REQUIRED. ISO date, end of burn"
+	@echo "                              (e.g., 2026-09-07). Calendar end +"
+	@echo "                              public-access window's close edge."
+	@echo ""
+	@echo "    -- Other build knobs --"
 	@echo "    CONTACT_EMAIL       footer mailto takedown link"
 	@echo "                          (default bm-camps@example.com)"
 	@echo "    SITE_PASSWORD       single-tier encryption (legacy / dev)."
@@ -92,30 +113,35 @@ help:
 	@echo "                          building. Same key set by fetch-api."
 	@echo ""
 	@echo "    -- Multi-tier (ADR D10) --"
-	@echo "    SITE_TIERS          tier_pw=src1+src2,tier_pw2=src3,…"
-	@echo "                          Each tier (password) unlocks listed"
-	@echo "                          sources via envelope encryption."
-	@echo "                          Three planned tiers:"
+	@echo "    SITE_TIERS          name1:pw1=src1+src2,name2:pw2=src3,…"
+	@echo "                          Each named tier (password + source list)"
+	@echo "                          unlocks its sources via envelope"
+	@echo "                          encryption. Three planned tiers:"
 	@echo "                            god-mode      directory + every api-YYYY"
 	@echo "                            demigod-mode  every api-YYYY (no directory)"
 	@echo "                            spirit-mode   only the latest api-YYYY"
+	@echo "                          The build identifies spirit by NAME"
+	@echo "                          ('spirit-mode' is reserved); other names"
+	@echo "                          are arbitrary. Tier order doesn't"
+	@echo "                          matter — lookup is by name."
 	@echo "                          Unset → falls back to SITE_PASSWORD."
 	@echo "                          Example (BM_API_YEARS=2025,2026):"
-	@echo "                            SITE_TIERS=\"\$$GOD_PW=directory+api-2025+api-2026,\\"
-	@echo "                                        \$$DEMIGOD_PW=api-2025+api-2026,\\"
-	@echo "                                        \$$SPIRIT_PW=api-2026\""
+	@echo "                            SITE_TIERS=\"god-mode:\$$GOD_PW=directory+api-2025+api-2026,\\"
+	@echo "                                        demigod-mode:\$$DEMIGOD_PW=api-2025+api-2026,\\"
+	@echo "                                        spirit-mode:\$$SPIRIT_PW=api-2026\""
 	@echo "    GOD_PW              Convention-only: tier passwords composed"
 	@echo "    DEMIGOD_PW            into SITE_TIERS so they don't appear"
 	@echo "    SPIRIT_PW             literally in shell history / CI logs."
 	@echo ""
-	@echo "    -- Burn-window auto-unlock (ADR D13 — not yet implemented) --"
-	@echo "    BURN_OPEN=1         deploy site/burn-key.json so spirit-mode"
-	@echo "                          auto-unlocks (no password prompt)."
-	@echo "                          god-mode / demigod-mode stay gated."
-	@echo "    BURN_WINDOW_OPEN_FROM    ISO date. With OPEN_TO set, the"
-	@echo "    BURN_WINDOW_OPEN_TO        nightly cron auto-flips BURN_OPEN"
-	@echo "                                inside the window."
-	@echo "                                Set-once-forget per burn year."
+	@echo "    -- Public access window + location embargo (D8 / D13) --"
+	@echo "    PLAYA_GO_LIVE       (truthy / blank) — when set, spirit-mode"
+	@echo "                          auto-unlocks BEFORE BURN_WINDOW_OPEN_FROM"
+	@echo "                          (early go-live). Locations stay hidden"
+	@echo "                          until OPEN_FROM regardless. Doesn't"
+	@echo "                          override the post-OPEN_TO closure."
+	@echo "    BURN_OPEN=1         (workflow_dispatch input) one-shot manual"
+	@echo "                          override of the date logic — force-open"
+	@echo "                          / force-closed via the Actions UI."
 
 bootstrap: install-backend client-install
 	@echo "==> Ready. Try: make test"

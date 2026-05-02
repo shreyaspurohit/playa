@@ -670,14 +670,19 @@ export function MapView({
         </div>
       </div>
 
-      {pins.length === 0 && !myCampPin && myMeetPins.length === 0 && friendCampPins.length === 0 && friendMeetPins.length === 0 ? (
+      {pins.length === 0 && !myCampPin && myMeetPins.length === 0 && friendCampPins.length === 0 && friendMeetPins.length === 0 && (
         <div class="empty-state">
-          No camps or meet spots to plot yet. Star a camp or event (auto-stars
-          its camp), mark one as <strong>my camp</strong>, or add a meet spot
-          below — any of those will pin here.
+          Nothing pinned yet. Star a camp or event (auto-stars its camp),
+          mark one as <strong>my camp</strong>, or add a meet spot below —
+          any of those will pin to the map.
         </div>
-      ) : (
-        <>
+      )}
+      {/* Always render the rendezvous box + SVG so the BRC grid + POIs
+          (Center Camp, Playa Info) stay visible even when no camps have
+          resolvable addresses (e.g., the current-year API source pre-
+          location-release). The hint above is a contextual nudge, not a
+          replacement for the map. */}
+      <>
           {/* Rendezvous layer — pulled ABOVE the map SVG so the newest
               feature (my-camp + meet spots + friends' plans) is the
               first thing a user sees when they open the Map tab, not
@@ -1148,7 +1153,6 @@ export function MapView({
             brc={brc}
           />
         </>
-      )}
       <MapInfoModal open={infoOpen} onClose={() => setInfoOpen(false)} brc={brc} />
       {addingSpot && (
         <MeetSpotEditor

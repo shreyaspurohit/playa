@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -27,17 +28,25 @@ HAS_OPENSSL = shutil.which("openssl") is not None
 
 
 class _TmpConfigMixin:
-    """Shared tmp-root fixture. Subclass via plain inheritance in setUp."""
+    """Shared tmp-root fixture. Subclass via plain inheritance in setUp.
+
+    Production `Config` has empty burn-date defaults (CI repo vars
+    are the source of truth — no hardcoded years in code). Tests
+    that exercise the build path need real dates, so this fixture
+    seeds 2026 placeholders. Override via `_make_config(burn_start=…)`."""
 
     def _make_config(self, **overrides) -> Config:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
-        base = Config(root=root)
+        defaults = {
+            "burn_start": "2026-08-30",
+            "burn_end":   "2026-09-07",
+        }
+        defaults.update(overrides)
+        base = Config(root=root, **defaults)
         (root / "data").mkdir()
         (root / "data" / "pages").mkdir()
-        if overrides:
-            base = replace(base, **overrides)
         return base
 
 
@@ -161,12 +170,17 @@ class EnvelopeEncryptionTests(unittest.TestCase, _TmpConfigMixin):
                       description="", website="", url="", events=[])]
         loaded = [("directory", camps)]
         tiers = [
-            ("god-pw", ["directory"]),
-            ("demi-pw", ["directory"]),
+            ("god-mode", "god-pw", ["directory"]),
+            ("demigod-mode", "demi-pw", ["directory"]),
         ]
-        scripts, manifest_meta, modes = self.builder._envelope_data_scripts(
+        scripts, manifest_meta, modes, source_keys = self.builder._envelope_data_scripts(
             loaded, tiers,
         )
+        # source_keys returned for D13's BURN_OPEN path. 32-byte DEK
+        # + 16-byte IV per source.
+        self.assertIn("directory", source_keys)
+        self.assertEqual(len(source_keys["directory"][0]), 32)  # DEK
+        self.assertEqual(len(source_keys["directory"][1]), 16)  # IV
         # Cipher: exactly one for the source.
         self.assertEqual(scripts.count('id="camps-data-directory-cipher"'), 1)
         # Two wrappers (one per tier).
@@ -186,11 +200,11 @@ class EnvelopeEncryptionTests(unittest.TestCase, _TmpConfigMixin):
                       description="", website="", url="", events=[])]
         loaded = [("directory", camps), ("api-2026", camps)]
         tiers = [
-            ("god-pw", ["directory", "api-2026"]),
-            ("demi-pw", ["api-2026"]),
-            ("spirit-pw", ["api-2026"]),
+            ("god-mode", "god-pw", ["directory", "api-2026"]),
+            ("demigod-mode", "demi-pw", ["api-2026"]),
+            ("spirit-mode", "spirit-pw", ["api-2026"]),
         ]
-        scripts, manifest_meta, _ = self.builder._envelope_data_scripts(
+        scripts, manifest_meta, _, _ = self.builder._envelope_data_scripts(
             loaded, tiers,
         )
         # directory: 1 wrapper. api-2026: 3 wrappers.
@@ -209,10 +223,212 @@ class EnvelopeEncryptionTests(unittest.TestCase, _TmpConfigMixin):
         """Operator typo guard: tier listing a source not in --sources
         fails the build loudly rather than silently dropping it."""
         loaded = [("directory", [])]
-        tiers = [("pw", ["directory", "api-9999"])]
+        tiers = [("god-mode", "pw", ["directory", "api-9999"])]
         with self.assertRaises(RuntimeError) as cm:
             self.builder._envelope_data_scripts(loaded, tiers)
         self.assertIn("api-9999", str(cm.exception))
+
+    def test_trusted_manifest_lists_only_god_mode_wrappers(self):
+        """`bm-trusted-wrappers` should expose ONLY the wrappers
+        belonging to the `god-mode` tier — never demigod or spirit.
+        Lets the client grant per-tier privileges (today: bypassing
+        the pre-burn location embargo) without leaking tier names
+        into the DOM."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("directory", camps), ("api-2026", camps)]
+        tiers = [
+            ("god-mode", "god-pw", ["directory", "api-2026"]),
+            ("demigod-mode", "demi-pw", ["api-2026"]),
+            ("spirit-mode", "spirit-pw", ["api-2026"]),
+        ]
+        _, manifest_meta, _, _ = self.builder._envelope_data_scripts(
+            loaded, tiers,
+        )
+        # Tier name must NOT appear anywhere in the meta tags — the
+        # manifest's whole point is to grant tier privileges by
+        # wrapper position, not by name.
+        self.assertNotIn("god-mode", manifest_meta)
+        self.assertNotIn("demigod-mode", manifest_meta)
+        self.assertNotIn("spirit-mode", manifest_meta)
+        # Trusted manifest exists and lists god-mode's slots:
+        # directory: only god (idx 0)
+        # api-2026: god is the FIRST tier so it owns idx 0; demigod=1, spirit=2.
+        self.assertIn('name="bm-trusted-wrappers"', manifest_meta)
+        # Inspect only the trusted-manifest tag — bm-tier-wrappers
+        # legitimately lists the full set including 1,2.
+        trusted_tag = manifest_meta.split('bm-trusted-wrappers"', 1)[1]
+        self.assertIn("directory:0", trusted_tag)
+        self.assertIn("api-2026:0", trusted_tag)
+        # demigod (1) and spirit (2) MUST NOT appear in the trusted
+        # api-2026 slot list.
+        self.assertNotIn("api-2026:0,1", trusted_tag)
+        self.assertNotIn("api-2026:0,2", trusted_tag)
+        self.assertNotIn("api-2026:0,1,2", trusted_tag)
+
+    def test_no_trusted_manifest_when_god_mode_absent(self):
+        """If the operator doesn't define a `god-mode` tier, the
+        trusted meta tag is omitted entirely — every tier remains
+        ToS-bound to honor §6.2."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("api-2026", camps)]
+        tiers = [
+            ("demigod-mode", "demi-pw", ["api-2026"]),
+            ("spirit-mode", "spirit-pw", ["api-2026"]),
+        ]
+        _, manifest_meta, _, _ = self.builder._envelope_data_scripts(
+            loaded, tiers,
+        )
+        self.assertIn('name="bm-tier-wrappers"', manifest_meta)
+        self.assertNotIn("bm-trusted-wrappers", manifest_meta)
+
+    def test_trusted_manifest_position_independent(self):
+        """Trust is by tier NAME, not order — moving god-mode to the
+        last slot still flags only that wrapper as trusted."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("api-2026", camps)]
+        tiers = [
+            ("demigod-mode", "demi-pw", ["api-2026"]),
+            ("spirit-mode", "spirit-pw", ["api-2026"]),
+            ("god-mode", "god-pw", ["api-2026"]),
+        ]
+        _, manifest_meta, _, _ = self.builder._envelope_data_scripts(
+            loaded, tiers,
+        )
+        # god-mode is now wrapper idx 2 (third tier).
+        self.assertIn('name="bm-trusted-wrappers"', manifest_meta)
+        self.assertIn("api-2026:2", manifest_meta)
+        # No spurious other indices.
+        self.assertNotIn("api-2026:0", manifest_meta.split('bm-trusted-wrappers"')[1])
+        self.assertNotIn("api-2026:1", manifest_meta.split('bm-trusted-wrappers"')[1])
+
+
+@unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
+class BurnOpenTests(unittest.TestCase, _TmpConfigMixin):
+    """ADR D13: BURN_OPEN=1 deploys site/burn-key.json so the
+    `spirit-mode` tier auto-unlocks. The spirit tier is identified
+    by NAME (not position) — operator labels each entry in
+    SITE_TIERS so the build can validate setup."""
+
+    def _camp(self) -> Camp:
+        return Camp(
+            id="1", name="X", location="6:00 & A",
+            description="", website="", url="", events=[],
+        )
+
+    def _make_builder(self, **cfg) -> SiteBuilder:
+        config = self._make_config(pbkdf2_iter=1000, **cfg)
+        # Pre-create page so MIN_CAMPS rail can be bypassed in `build()`.
+        (config.pages_dir / "page_01.json").write_text(
+            json.dumps([self._camp().to_dict()]),
+        )
+        config.site_dir.mkdir(parents=True, exist_ok=True)
+        return SiteBuilder(config, sources=["directory"])
+
+    def _drop_bundle(self, builder: SiteBuilder) -> None:
+        bundle_dir = builder.config.root / "client" / "dist"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_dir.joinpath("bundle.js").write_text(
+            '"use strict";(()=>{})();',
+        )
+
+    def test_burn_open_writes_burn_key_json(self):
+        builder = self._make_builder(
+            site_tiers="god-mode:god-pw=directory,spirit-mode:spirit-pw=directory",
+        )
+        self._drop_bundle(builder)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
+            builder.build()
+        burn_path = builder.config.site_dir / "burn-key.json"
+        self.assertTrue(burn_path.exists(), "burn-key.json should be written")
+        data = json.loads(burn_path.read_text())
+        # Spirit identified by name (`spirit-mode`). Its sources land
+        # in burn-key.json; god-mode's don't.
+        self.assertEqual(set(data.keys()), {"directory"})
+        # Value is base64 of (32 DEK + 16 IV) = 48 bytes → 64 b64 chars.
+        self.assertEqual(len(base64.b64decode(data["directory"])), 48)
+
+    def test_burn_open_unset_removes_stale_burn_key(self):
+        """Previous BURN_OPEN=1 build left site/burn-key.json behind;
+        the next BURN_OPEN-unset build must clean it up so the deploy
+        is closed."""
+        builder = self._make_builder(
+            site_tiers="god-mode:god-pw=directory,spirit-mode:spirit-pw=directory",
+        )
+        self._drop_bundle(builder)
+        # Pre-seed a stale burn-key.json.
+        stale = builder.config.site_dir / "burn-key.json"
+        stale.write_text('{"directory": "stale"}')
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}, clear=False):
+            os.environ.pop("BURN_OPEN", None)
+            builder.build()
+        self.assertFalse(stale.exists(), "stale burn-key.json should be cleaned up")
+
+    def test_burn_open_without_tiers_fails_loud(self):
+        """ADR D13 sanity check: BURN_OPEN with no SITE_TIERS = no
+        spirit tier exists. Build refuses rather than silently writing
+        nothing."""
+        builder = self._make_builder()  # no SITE_TIERS
+        self._drop_bundle(builder)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
+            with self.assertRaises(RuntimeError) as cm:
+                builder.build()
+        self.assertIn("BURN_OPEN", str(cm.exception))
+        self.assertIn("SITE_TIERS", str(cm.exception))
+
+    def test_burn_open_only_exposes_spirit_tier_sources(self):
+        """Three tiers (god/demigod/spirit). spirit-mode is identified
+        by NAME — only its sources land in burn-key.json, not god's
+        or demigod's. Order in SITE_TIERS doesn't matter for this."""
+        # Use directory + api-2026 sources. Mock the api-2026 source
+        # to load some camps so envelope generation can run.
+        builder = self._make_builder(
+            site_tiers=(
+                "god-mode:god-pw=directory+api-2026,"
+                "demigod-mode:demigod-pw=api-2026,"
+                "spirit-mode:spirit-pw=api-2026"
+            ),
+        )
+        self._drop_bundle(builder)
+        # Drop a fake api cache so api-2026 source loads.
+        api_payload = {
+            "fetched_at": "2026-04-29T00:00:00Z",
+            "year": 2026,
+            "camps": [{
+                "uid": "uX", "name": "Y", "year": 2026,
+                "location_string": "6:00 & A",
+            }],
+            "events": [],
+        }
+        builder.config.api_dir.mkdir(parents=True, exist_ok=True)
+        builder.config.api_payload_file(2026).write_text(json.dumps(api_payload))
+        builder.source_specs = ["directory", "api-2026"]
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
+            builder.build()
+        burn_path = builder.config.site_dir / "burn-key.json"
+        data = json.loads(burn_path.read_text())
+        # spirit-mode lists only api-2026 → only that source exposed.
+        self.assertEqual(set(data.keys()), {"api-2026"})
+
+    def test_burn_open_without_spirit_tier_fails_loud(self):
+        """SITE_TIERS exists but no `spirit-mode` tier → BURN_OPEN=1
+        has no target. Build must refuse with a clear message rather
+        than silently picking the wrong tier."""
+        builder = self._make_builder(
+            site_tiers="god-mode:god-pw=directory,demigod-mode:demi-pw=directory",
+        )
+        self._drop_bundle(builder)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
+            with self.assertRaises(RuntimeError) as cm:
+                builder.build()
+        self.assertIn("spirit-mode", str(cm.exception))
 
 
 class ConfigParsedTiersTests(unittest.TestCase, _TmpConfigMixin):
@@ -224,29 +440,57 @@ class ConfigParsedTiersTests(unittest.TestCase, _TmpConfigMixin):
 
     def test_parses_simple(self):
         cfg = self._make_config(
-            site_tiers="god-pw=directory+api-2025,spirit-pw=api-2026",
+            site_tiers="god-mode:god-pw=directory+api-2025,spirit-mode:spirit-pw=api-2026",
         )
         self.assertEqual(cfg.parsed_tiers(), [
-            ("god-pw", ["directory", "api-2025"]),
-            ("spirit-pw", ["api-2026"]),
+            ("god-mode", "god-pw", ["directory", "api-2025"]),
+            ("spirit-mode", "spirit-pw", ["api-2026"]),
         ])
 
+    def test_password_with_colon(self):
+        """First `:` separates name from rest, so colons inside the
+        password are preserved. (Equals signs inside the password
+        would NOT survive — first `=` is the pw/sources separator.)"""
+        cfg = self._make_config(
+            site_tiers="god-mode:p:as:s=directory",
+        )
+        self.assertEqual(cfg.parsed_tiers(), [
+            ("god-mode", "p:as:s", ["directory"]),
+        ])
+
+    def test_rejects_duplicate_name(self):
+        cfg = self._make_config(
+            site_tiers="god-mode:a=directory,god-mode:b=api-2026",
+        )
+        with self.assertRaises(ValueError) as cm:
+            cfg.parsed_tiers()
+        self.assertIn("duplicate tier name", str(cm.exception))
+
     def test_rejects_duplicate_password(self):
-        cfg = self._make_config(site_tiers="same=directory,same=api-2026")
+        cfg = self._make_config(
+            site_tiers="god-mode:same=directory,spirit-mode:same=api-2026",
+        )
         with self.assertRaises(ValueError) as cm:
             cfg.parsed_tiers()
         self.assertIn("duplicate password", str(cm.exception))
 
     def test_rejects_empty_source_list(self):
-        cfg = self._make_config(site_tiers="god-pw=")
+        cfg = self._make_config(site_tiers="god-mode:god-pw=")
         with self.assertRaises(ValueError):
             cfg.parsed_tiers()
 
-    def test_rejects_missing_equals(self):
-        cfg = self._make_config(site_tiers="god-pw-without-eq")
+    def test_rejects_missing_colon(self):
+        """Old-format (no tier name) must fail with helpful message."""
+        cfg = self._make_config(site_tiers="god-pw=directory")
         with self.assertRaises(ValueError) as cm:
             cfg.parsed_tiers()
-        self.assertIn("missing '='", str(cm.exception))
+        self.assertIn("name:password", str(cm.exception))
+
+    def test_rejects_missing_equals(self):
+        cfg = self._make_config(site_tiers="god-mode-without-eq")
+        with self.assertRaises(ValueError) as cm:
+            cfg.parsed_tiers()
+        self.assertIn("name:password", str(cm.exception))
 
 
 class LoadDenylistTests(unittest.TestCase, _TmpConfigMixin):

@@ -20,10 +20,14 @@ import { isGzipDecompressSupported } from '../utils/gzip';
 
 interface Props {
   sources: EnvelopeSource[];
-  /** Called with the per-source DEK+IV map after a successful unlock.
-   *  An empty map is never passed — onUnlock only fires when at least
-   *  one wrapper successfully unwraps. */
-  onUnlock: (unlocked: Map<Source, Uint8Array>) => void;
+  /** Called with the per-source DEK+IV map after a successful unlock,
+   *  plus a `trusted` flag indicating whether any of the wrappers
+   *  that unlocked was flagged trusted by the build (god-mode tier,
+   *  per `bm-trusted-wrappers`). The flag drives per-tier privileges
+   *  (e.g., bypassing the pre-burn location embargo) without exposing
+   *  the tier's name. An empty map is never passed — onUnlock only
+   *  fires when at least one wrapper successfully unwraps. */
+  onUnlock: (unlocked: Map<Source, Uint8Array>, trusted: boolean) => void;
 }
 
 const PW_CHANNEL = 'playa-camps-pw';
@@ -43,22 +47,26 @@ export function EnvelopeGate({ sources, onUnlock }: Props) {
     channelRef.current = channel;
 
     /** Try a password against every (source, wrapper) pair. Returns
-     *  the unlocked map if any source unlocked, else null. Walks
-     *  wrappers in order; first success per source wins. */
+     *  the unlocked map + a trusted flag if any source unlocked, else
+     *  null. Walks wrappers in order; first success per source wins.
+     *  `trusted` flips on whenever ANY unlocking wrapper was flagged
+     *  trusted by the build (parallel to `wrappers[]`). */
     async function tryPassword(
       pw: string,
-    ): Promise<Map<Source, Uint8Array> | null> {
+    ): Promise<{ unlocked: Map<Source, Uint8Array>; trusted: boolean } | null> {
       const unlocked = new Map<Source, Uint8Array>();
+      let trusted = false;
       for (const src of sources) {
-        for (const wrapper of src.wrappers) {
-          const dekIv = await unwrapDek(wrapper, pw);
+        for (let i = 0; i < src.wrappers.length; i++) {
+          const dekIv = await unwrapDek(src.wrappers[i], pw);
           if (dekIv) {
             unlocked.set(src.source, dekIv);
+            if (src.trusted[i]) trusted = true;
             break;     // first wrapper-success is enough for this source
           }
         }
       }
-      return unlocked.size > 0 ? unlocked : null;
+      return unlocked.size > 0 ? { unlocked, trusted } : null;
     }
 
     if (channel) {
@@ -70,10 +78,10 @@ export function EnvelopeGate({ sources, onUnlock }: Props) {
           if (pw) channel.postMessage({ type: 'share', pw });
         } else if (msg.type === 'share' && typeof msg.pw === 'string') {
           if (cancelled) return;
-          const m = await tryPassword(msg.pw);
-          if (m) {
+          const result = await tryPassword(msg.pw);
+          if (result) {
             await cachePassword(msg.pw);
-            onUnlock(m);
+            onUnlock(result.unlocked, result.trusted);
           }
         }
       };
@@ -91,9 +99,9 @@ export function EnvelopeGate({ sources, onUnlock }: Props) {
         } catch { /* private mode etc */ }
       }
       if (remembered) {
-        const m = await tryPassword(remembered);
-        if (m) {
-          if (!cancelled) onUnlock(m);
+        const result = await tryPassword(remembered);
+        if (result) {
+          if (!cancelled) onUnlock(result.unlocked, result.trusted);
           return;
         }
         clearCachedPassword();
@@ -143,11 +151,13 @@ export function EnvelopeGate({ sources, onUnlock }: Props) {
     const pw = inputRef.current?.value ?? '';
     if (!pw) return;
     const unlocked = new Map<Source, Uint8Array>();
+    let trusted = false;
     for (const src of sources) {
-      for (const wrapper of src.wrappers) {
-        const dekIv = await unwrapDek(wrapper, pw);
+      for (let i = 0; i < src.wrappers.length; i++) {
+        const dekIv = await unwrapDek(src.wrappers[i], pw);
         if (dekIv) {
           unlocked.set(src.source, dekIv);
+          if (src.trusted[i]) trusted = true;
           break;
         }
       }
@@ -159,7 +169,7 @@ export function EnvelopeGate({ sources, onUnlock }: Props) {
     }
     await cachePassword(pw);
     try { channelRef.current?.postMessage({ type: 'share', pw }); } catch {}
-    onUnlock(unlocked);
+    onUnlock(unlocked, trusted);
   }
 
   return (

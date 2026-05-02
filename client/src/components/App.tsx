@@ -7,6 +7,7 @@ import { LS, scopedKey } from '../types';
 import { readEmbeddedPayload, indexHaystacks, haystackOf } from '../data';
 import type { EnvelopeSource } from '../data';
 import { decryptSource } from '../crypto';
+import { applyLocationEmbargo, isLocationEmbargoed } from '../utils/embargo';
 import { readString, writeString } from '../utils/storage';
 import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
@@ -21,6 +22,7 @@ import { useSource, migrateLegacyKeysOnce } from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute } from '../hooks/useHashRoute';
 import { CampsView } from './CampsView';
+import { EmbargoLiftedBanner } from './EmbargoLiftedBanner';
 import { EnvelopeGate } from './EnvelopeGate';
 import { Footer } from './Footer';
 import { Gate } from './Gate';
@@ -44,9 +46,10 @@ interface Meta {
   fetchedAt: string;
   version: string;
   contactEmail: string;
-  /** Effective calendar window (ISO YYYY-MM-DD). `burnStart` is the
-   *  earliest fetched event date; `burnEnd` is Config.burn_end.
-   *  ScheduleView walks this window to build one column per day. */
+  /** Burn window (ISO YYYY-MM-DD). `burnStart` is the gate-open day —
+   *  also the location-embargo cutoff (D8) and the spirit-mode
+   *  auto-unlock window's open edge (D13). The schedule view uses
+   *  the [burnStart, burnEnd] range as its calendar window. */
   burnStart: string;
   burnEnd: string;
 }
@@ -81,12 +84,37 @@ export function App() {
 
   const [camps, setCamps] = useState<Camp[] | null>(null);
   const [encEnvelope, setEncEnvelope] = useState<EncryptedPayload | null>(null);
+  // True if any ingest pass during this session masked locations
+  // under the pre-burn embargo. Drives the EmbargoLiftedBanner — we
+  // only nudge the user to refresh when their in-memory camps were
+  // actually masked at some point. Stays sticky once flipped on.
+  const [embargoActiveAtIngest, setEmbargoActiveAtIngest] = useState(false);
+  const [embargoLifted, setEmbargoLifted] = useState(false);
   // Envelope-mode (D10) state. `envelopeSources` is the build-embedded
-  // ciphers + wrappers; `unlockedDeks` is what the password unlocked
+  // ciphers + wrappers; `unlocked.deks` is what the password unlocked
   // (one DEK+IV per source the user has access to). Both null in
   // single-tier (legacy) builds.
+  //
+  // `unlocked.trusted` flips on when the password unwrapped a wrapper
+  // flagged trusted by the build (`bm-trusted-wrappers`, today =
+  // god-mode). Trusted users bypass the pre-burn location embargo
+  // — see `isLocationEmbargoed`. Burn-key auto-unlock (spirit-mode)
+  // leaves it false; god-mode is reached only via password.
+  //
+  // Bundled into ONE state object so trust + deks land in the same
+  // render atomically. Previously two separate setState calls; if
+  // they didn't batch (Preact 10 is usually OK but async-callback
+  // ordering isn't 100% guaranteed), the decrypt effect could fire
+  // with old trust + new deks, mask locations, and cache them in
+  // `decryptedRef` — leaving god-mode users stuck behind the
+  // embargo until reload.
   const [envelopeSources, setEnvelopeSources] = useState<EnvelopeSource[] | null>(null);
-  const [unlockedDeks, setUnlockedDeks] = useState<Map<Source, Uint8Array> | null>(null);
+  const [unlocked, setUnlocked] = useState<{
+    deks: Map<Source, Uint8Array>;
+    trusted: boolean;
+  } | null>(null);
+  const unlockedDeks = unlocked?.deks ?? null;
+  const unlockedTrusted = unlocked?.trusted ?? false;
   // Memo cache: source → decrypted Camp[]. Avoids re-running
   // decryptSource + JSON.parse + indexHaystacks on every flip back to
   // a previously-viewed source. Ref instead of state because mutating
@@ -104,8 +132,16 @@ export function App() {
         const p = await readEmbeddedPayload(source);
         if (cancelled) return;
         if (p.kind === 'plain') {
-          indexHaystacks(p.camps);
-          setCamps(p.camps);
+          // Apply pre-burn location embargo (D8). For api-<burn_year>
+          // pre-burn-start, this clears `camp.location` on every camp;
+          // outside the embargo window (or for trusted/god-mode users)
+          // it's a no-op.
+          if (isLocationEmbargoed(source, meta.burnStart, new Date(), unlockedTrusted)) {
+            setEmbargoActiveAtIngest(true);
+          }
+          const masked = applyLocationEmbargo(p.camps, source, meta.burnStart, new Date(), unlockedTrusted);
+          indexHaystacks(masked);
+          setCamps(masked);
           setEncEnvelope(null);
           setEnvelopeSources(null);
         } else if (p.kind === 'encrypted') {
@@ -156,7 +192,14 @@ export function App() {
       try {
         const jsonText = await decryptSource(env.cipher, dekIv);
         if (cancelled) return;
-        const arr = JSON.parse(jsonText) as Camp[];
+        const raw = JSON.parse(jsonText) as Camp[];
+        // Apply pre-burn embargo before haystack indexing so the
+        // location strings can't show up in search results either.
+        // Trusted (god-mode) unlocks bypass the embargo entirely.
+        if (isLocationEmbargoed(source, meta.burnStart, new Date(), unlockedTrusted)) {
+          setEmbargoActiveAtIngest(true);
+        }
+        const arr = applyLocationEmbargo(raw, source, meta.burnStart, new Date(), unlockedTrusted);
         indexHaystacks(arr);
         decryptedRef.current.set(source, arr);
         setCamps(arr);
@@ -185,12 +228,100 @@ export function App() {
     if (first) setSource(first);
   }, [unlockedDeks, source, setSource]);
 
+  // ADR D13: burn-window auto-unlock. When the build deployed
+  // `site/burn-key.json`, fetch it on boot, parse the per-source
+  // DEK+IV blobs, and seed `unlockedDeks` directly — skipping the
+  // password prompt. Outside the window the file 404s and we fall
+  // through to the normal EnvelopeGate flow.
+  //
+  // Other tiers (god, demigod) stay password-gated regardless: only
+  // sources listed in burn-key.json are auto-unlocked, and only the
+  // last tier in SITE_TIERS (conventionally spirit) writes there.
+  useEffect(() => {
+    if (!envelopeSources || unlockedDeks) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('./burn-key.json', { cache: 'no-store' });
+        if (!r.ok) return;
+        const raw = await r.json() as Record<string, string>;
+        if (cancelled || !raw || typeof raw !== 'object') return;
+        const map = new Map<Source, Uint8Array>();
+        for (const [src, b64] of Object.entries(raw)) {
+          if (typeof b64 !== 'string') continue;
+          // base64 → 48-byte DEK+IV. Anything malformed skips that
+          // source rather than aborting the whole burn-open path.
+          try {
+            const bin = atob(b64);
+            if (bin.length !== 48) continue;
+            const bytes = new Uint8Array(48);
+            for (let i = 0; i < 48; i++) bytes[i] = bin.charCodeAt(i);
+            map.set(src, bytes);
+          } catch { /* skip malformed entry */ }
+        }
+        // Burn-key auto-unlock is spirit-mode only by design — never
+        // trusted. Embargo continues to apply (relevant only between
+        // PLAYA_GO_LIVE and burn-start; trusted=false is correct).
+        if (!cancelled && map.size > 0) setUnlocked({ deks: map, trusted: false });
+      } catch { /* network error / not deployed → fall through to gate */ }
+    })();
+    return () => { cancelled = true; };
+  }, [envelopeSources, unlockedDeks]);
+
+  // ADR D8 follow-up: nudge the user to refresh once the embargo
+  // lifts mid-session. Conditions:
+  //   1. Their in-memory camps were masked at ingest
+  //      (`embargoActiveAtIngest`). If they loaded fresh post-burn,
+  //      this stays false and the banner never fires.
+  //   2. The cutoff (`meta.burnStart`) has passed — checked on a
+  //      1-min poll so a tab open across midnight UTC catches it.
+  //   3. Per-burn-year LS flag isn't already set (one-shot per device).
+  // Cleared by either button on the banner; refresh re-loads with
+  // the masked state false, so the banner won't reappear.
+  const embargoYear = meta.burnStart
+    ? meta.burnStart.slice(0, 4)
+    : '';
+  const embargoAckKey = `${LS.embargoLiftAcked}/${embargoYear}`;
+  useEffect(() => {
+    if (!embargoActiveAtIngest) return;
+    if (embargoLifted) return;
+    if (!embargoYear) return;
+    if (readString(embargoAckKey, '') === '1') return;
+
+    const liftTime = new Date(meta.burnStart + 'T00:00:00Z').getTime();
+    if (Number.isNaN(liftTime)) return;
+
+    function check() {
+      if (Date.now() >= liftTime) {
+        setEmbargoLifted(true);
+        return true;
+      }
+      return false;
+    }
+    if (check()) return;
+    // Poll every minute. Long enough to be cheap; short enough that
+    // crossing the cutoff while the tab's foregrounded triggers the
+    // banner within a minute.
+    const interval = setInterval(() => {
+      if (check()) clearInterval(interval);
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [embargoActiveAtIngest, embargoLifted, embargoYear, embargoAckKey, meta.burnStart]);
+
+  function ackEmbargoLift() {
+    writeString(embargoAckKey, '1');
+  }
+
   const onUnlock = useCallback((jsonText: string) => {
-    const unlocked = JSON.parse(jsonText) as Camp[];
+    const raw = JSON.parse(jsonText) as Camp[];
+    if (isLocationEmbargoed(source, meta.burnStart)) {
+      setEmbargoActiveAtIngest(true);
+    }
+    const unlocked = applyLocationEmbargo(raw, source, meta.burnStart);
     indexHaystacks(unlocked);
     setCamps(unlocked);
     setEncEnvelope(null);
-  }, []);
+  }, [source, meta.burnStart]);
 
   const [query, setQuery] = useState('');
   const queryLower = query.toLowerCase().trim();
@@ -600,7 +731,7 @@ export function App() {
     return (
       <EnvelopeGate
         sources={envelopeSources}
-        onUnlock={setUnlockedDeks}
+        onUnlock={(deks, trusted) => setUnlocked({ deks, trusted })}
       />
     );
   }
@@ -627,6 +758,12 @@ export function App() {
           onSourceChange={setSource}
         />
         <TabBar view={view} onGoto={goto} scheduleBadge={scheduleBadge} />
+        {embargoLifted && (
+          <EmbargoLiftedBanner
+            onRefresh={() => { ackEmbargoLift(); location.reload(); }}
+            onDismiss={() => { ackEmbargoLift(); setEmbargoLifted(false); }}
+          />
+        )}
         {updateAvailable && <UpdateBanner latest={latestVersion} />}
         {pendingReleaseNotes.length > 0 && (
           <ReleaseNotesBanner

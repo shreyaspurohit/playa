@@ -63,6 +63,23 @@ class SiteBuilder:
         tagger: Tagger | None = None,
         sources: list[str] | None = None,
     ):
+        # Year-specific dates have NO code defaults — operator sets
+        # them via repo variables in CI (BURN_WINDOW_OPEN_FROM /
+        # BURN_WINDOW_OPEN_TO) or `.env` locally. Fail loud here
+        # rather than later with an unhelpful "Invalid isoformat: ''"
+        # deep in the event parser. One date drives the calendar
+        # edges, the public-access window, and the location-embargo
+        # cutoff — see Config docstring.
+        if not config.burn_start or not config.burn_end:
+            raise RuntimeError(
+                "BURN_WINDOW_OPEN_FROM and BURN_WINDOW_OPEN_TO must "
+                "both be set (repo variables in CI; `export "
+                "BURN_WINDOW_OPEN_FROM=YYYY-MM-DD "
+                "BURN_WINDOW_OPEN_TO=YYYY-MM-DD` locally, or in "
+                "`.env` at the repo root). "
+                f"Currently: BURN_WINDOW_OPEN_FROM={config.burn_start!r}, "
+                f"BURN_WINDOW_OPEN_TO={config.burn_end!r}.",
+            )
         self.config = config
         self.tagger = tagger or Tagger()
         # Populated by _enrich_event_times. The calendar window is derived
@@ -126,6 +143,11 @@ class SiteBuilder:
         differ between directory's numeric ids and the API's SFDC
         uids). The builder then runs Tagger + event-time enrichment
         uniformly across whatever the source returned.
+
+        Note: pre-burn location embargo is enforced **client-side**,
+        not here. Build artifacts retain full location data; the UI
+        hides locations for `api-<burn_year>` until `burn_start`.
+        See `client/src/utils/embargo.ts` and ADR D8.
         """
         source: Source = make_source(spec)
         camps = source.load_camps(self.config)
@@ -284,28 +306,39 @@ class SiteBuilder:
     def _envelope_data_scripts(
         self,
         loaded: list[tuple[str, list[Camp]]],
-        tiers: list[tuple[str, list[str]]],
-    ) -> tuple[str, str, list[str]]:
+        tiers: list[tuple[str, str, list[str]]],
+    ) -> tuple[str, str, list[str], dict[str, tuple[bytes, bytes]]]:
         """Build all the per-source ciphers + per-(source, tier) DEK
-        wrappers + the manifest meta tag for envelope-mode deploys
+        wrappers + the manifest meta tag(s) for envelope-mode deploys
         (ADR D10).
 
-        Returns `(scripts_block, wrappers_meta_tag, modes)` where:
+        Returns `(scripts_block, wrappers_meta_tag, modes, source_keys)` where:
           * `scripts_block` concatenates every embed (cipher + wrappers)
-          * `wrappers_meta_tag` is a single `<meta>` line listing
-            wrapper indices per source
+          * `wrappers_meta_tag` is one or two `<meta>` lines: always
+            `bm-tier-wrappers` (per-source wrapper indices), plus
+            `bm-trusted-wrappers` when a `god-mode` tier exists. The
+            trusted manifest lists which (source, wrapper_idx) pairs
+            were emitted for `god-mode` so the client can grant that
+            tier's user a per-tier privilege (today: bypassing the
+            pre-burn location embargo) without leaking the tier NAME
+            into the DOM. Demigod / spirit / unnamed tiers are not
+            listed — they remain ToS-bound.
           * `modes` is a one-line summary for the build log
+          * `source_keys` is the `{source: (DEK, IV)}` map — needed by
+            D13's `BURN_OPEN` path to expose the spirit-mode DEK in
+            `site/burn-key.json`. Caller MUST NOT leak this otherwise.
 
         Raises if a tier lists a source not in `loaded` (typo guard).
         """
         loaded_specs = {spec for spec, _ in loaded}
-        for pw, srcs in tiers:
+        for name, _pw, srcs in tiers:
             for s in srcs:
                 if s not in loaded_specs:
                     raise RuntimeError(
-                        f"SITE_TIERS lists source {s!r} but it isn't in "
-                        f"the loaded set {sorted(loaded_specs)}. Either "
-                        "extend --sources or fix the tier definition.",
+                        f"SITE_TIERS tier {name!r} lists source {s!r} "
+                        f"but it isn't in the loaded set "
+                        f"{sorted(loaded_specs)}. Either extend "
+                        "--sources or fix the tier definition.",
                     )
 
         parts: list[str] = []
@@ -314,6 +347,11 @@ class SiteBuilder:
         # 48-byte blob multiple times (one per tier that includes the
         # source).
         source_keys: dict[str, tuple[bytes, bytes]] = {}
+        # Wrapper indices that belong to the `god-mode` tier — emitted
+        # in a parallel manifest so the client can grant per-tier
+        # privileges without exposing tier names. Stays empty if no
+        # tier is named `god-mode`.
+        trusted_by_source: dict[str, list[int]] = {spec: [] for spec, _ in loaded}
 
         # 1) Encrypt each source's gzipped JSON with a fresh random DEK.
         for spec, camps in loaded:
@@ -340,7 +378,7 @@ class SiteBuilder:
 
         # 2) For each (tier, source-in-tier) pair, wrap the source's
         #    DEK+IV with the tier's password.
-        for pw, tier_srcs in tiers:
+        for name, pw, tier_srcs in tiers:
             for spec in tier_srcs:
                 dek, iv = source_keys[spec]
                 wrapper = self._wrap_with_password(dek + iv, pw)
@@ -352,8 +390,10 @@ class SiteBuilder:
                     + '</script>'
                 )
                 wrappers_by_source[spec].append(wrapper_idx)
+                if name == "god-mode":
+                    trusted_by_source[spec].append(wrapper_idx)
 
-        # 3) Manifest. Sources with zero wrappers are omitted — they
+        # 3) Manifest(s). Sources with zero wrappers are omitted — they
         #    can't be unlocked by any tier.
         manifest_segs = []
         for spec, _ in loaded:
@@ -365,12 +405,27 @@ class SiteBuilder:
             f'content="{";".join(manifest_segs)}">'
         )
 
+        # Trusted manifest: only emit when god-mode is configured AND
+        # actually owns wrappers. Format mirrors `bm-tier-wrappers` so
+        # the client's parser can be reused. Empty god-mode (no
+        # sources) silently skips — same as a missing tier.
+        trusted_segs = []
+        for spec, _ in loaded:
+            idxs = trusted_by_source[spec]
+            if idxs:
+                trusted_segs.append(f"{spec}:{','.join(str(i) for i in idxs)}")
+        if trusted_segs:
+            wrappers_meta += (
+                f'\n<meta name="bm-trusted-wrappers" '
+                f'content="{";".join(trusted_segs)}">'
+            )
+
         modes = [
             f"envelope ({len(tiers)} tiers, "
             f"{len(loaded)} sources, "
             f"{sum(len(v) for v in wrappers_by_source.values())} wrappers)"
         ]
-        return "\n".join(parts), wrappers_meta, modes
+        return "\n".join(parts), wrappers_meta, modes, source_keys
 
     # --- template + write -------------------------------------------------
 
@@ -593,6 +648,7 @@ class SiteBuilder:
         return notes
 
     def build(self) -> Path:
+        # `__init__` already validated BURN_START / BURN_END are set.
         # Load each configured source. The MIN_CAMPS rail applies to
         # the FIRST (default) source — that's the "is the primary
         # data path broken?" signal CI uses to refuse a degraded
@@ -640,10 +696,51 @@ class SiteBuilder:
         except ValueError as e:
             raise RuntimeError(f"SITE_TIERS misconfigured: {e}") from e
 
+        burn_open = os.environ.get("BURN_OPEN", "").strip() in (
+            "1", "true", "yes", "on",
+        )
+        burn_key_path = self.config.site_dir / "burn-key.json"
+
         if tiers:
-            data_script, wrappers_meta, modes = self._envelope_data_scripts(
-                loaded, tiers,
+            data_script, wrappers_meta, modes, source_keys = (
+                self._envelope_data_scripts(loaded, tiers)
             )
+            # D13: write site/burn-key.json with the spirit-mode
+            # source(s)' DEK+IV when BURN_OPEN=1. Spirit is identified
+            # by tier NAME (`spirit-mode`) — operator labels each
+            # entry in SITE_TIERS so the build can validate setup
+            # rather than relying on a fragile last-position
+            # convention.
+            if burn_open:
+                spirit_tier = next(
+                    (t for t in tiers if t[0] == "spirit-mode"),
+                    None,
+                )
+                if spirit_tier is None:
+                    raise RuntimeError(
+                        "BURN_OPEN=1 requires a tier named 'spirit-mode' "
+                        "in SITE_TIERS. Got tier names: "
+                        f"{[t[0] for t in tiers]}.",
+                    )
+                _name, _pw, spirit_sources = spirit_tier
+                burn_data = {
+                    s: base64.b64encode(
+                        source_keys[s][0] + source_keys[s][1]
+                    ).decode("ascii")
+                    for s in spirit_sources
+                }
+                self.config.site_dir.mkdir(parents=True, exist_ok=True)
+                burn_key_path.write_text(
+                    json.dumps(burn_data, separators=(",", ":")),
+                )
+                modes.append(
+                    f"BURN_OPEN: spirit-mode auto-unlocks "
+                    f"{','.join(spirit_sources)}"
+                )
+            elif burn_key_path.exists():
+                # Stale file from a previous BURN_OPEN=1 build —
+                # remove so this deploy is closed.
+                burn_key_path.unlink()
         else:
             # Per-source single-tier emission (existing path).
             data_parts: list[str] = []
@@ -654,6 +751,17 @@ class SiteBuilder:
                 modes.append(f"{spec}={mode}")
             data_script = "\n".join(data_parts)
             wrappers_meta = ""   # no manifest in non-envelope builds
+            if burn_open:
+                # ADR D13 sanity check: BURN_OPEN without SITE_TIERS
+                # means there's no spirit-mode tier to auto-unlock —
+                # operator confusion. Fail loud.
+                raise RuntimeError(
+                    "BURN_OPEN=1 requires SITE_TIERS to be set "
+                    "(no spirit-mode tier to auto-unlock).",
+                )
+            elif burn_key_path.exists():
+                # Same staleness sweep for non-envelope builds.
+                burn_key_path.unlink()
 
         # Comma-separated source list; client picks the first as
         # default if there's no `bm-source` in localStorage.

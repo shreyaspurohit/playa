@@ -33,18 +33,25 @@ class Config:
     parallel: int = 5
 
     # Burn week window (ISO YYYY-MM-DD).
-    #  * burn_end is authoritative — fixed end of the calendar, from
-    #    the ticketing page (2026: Mon Sep 7).
-    #  * burn_start is a fallback. In practice the builder overrides it
-    #    with the EARLIEST fetched event date (volunteers + early crews
-    #    run events before gates) via timeparser.effective_burn_start.
-    #    The configured value is only used when the corpus has no
-    #    dated events yet, or when fetched dates are out of phase with
-    #    this year's calendar.
-    # Override via BURN_START / BURN_END env vars at build time, or
-    # refresh the defaults annually via the /update-map skill.
-    burn_start: str = "2026-08-30"
-    burn_end:   str = "2026-09-07"
+    #
+    # `burn_start` = gate-open day, also the location-embargo cutoff
+    # (D8) and the spirit-mode auto-unlock window's open edge (D13).
+    # `burn_end` = end of the public-access window (D13) and the
+    # calendar's last column.
+    #
+    # In practice the builder may further override `burn_start` to
+    # the EARLIEST fetched event date (volunteers + early crews run
+    # events before gates) via `timeparser.effective_burn_start`.
+    # The configured value is the safety-net default when no dated
+    # events have been fetched.
+    #
+    # Both REQUIRED at build time — set via env
+    # (`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`) which CI
+    # sources from repo variables. No hardcoded year-specific
+    # defaults; bumping to a new burn year is a CI variable change,
+    # not a code change.
+    burn_start: str = ""
+    burn_end:   str = ""
 
     # HTTP client settings (directory + API share these).
     base_url: str = "https://directory.burningman.org"
@@ -77,15 +84,26 @@ class Config:
     bm_api_years: str = ""
 
     # Multi-tier access manifest (ADR D10). Format:
-    #   <pw1>=<src>+<src>,<pw2>=<src>+<src>,…
-    # Each tier (password) unlocks the listed sources via per-source
-    # envelope encryption — one source cipher + one wrapper per tier
-    # that should reach it. Empty → falls through to single-tier
-    # `site_password` behavior. Conventionally the operator sets:
-    #   SITE_TIERS="$GOD_PW=directory+api-2025+api-2026,
-    #               $DEMIGOD_PW=api-2025+api-2026,
-    #               $SPIRIT_PW=api-2026"
-    # so literal passwords don't sit in the workflow YAML.
+    #   <name1>:<pw1>=<src>+<src>,<name2>:<pw2>=<src>+<src>,…
+    # Each tier (name + password) unlocks the listed sources via
+    # per-source envelope encryption — one source cipher + one
+    # wrapper per tier that should reach it.
+    #
+    # Tier names are required + identify the role explicitly so the
+    # build can validate setup. Reserved name `spirit-mode` is
+    # recognized by D13: when BURN_OPEN=1, that tier's source DEKs
+    # are written to `site/burn-key.json` for password-less unlock.
+    # Other names (`god-mode`, `demigod-mode`, …) are arbitrary
+    # identifiers — operator can pick anything.
+    #
+    # Conventionally:
+    #   SITE_TIERS="god-mode:$GOD_PW=directory+api-2025+api-2026,
+    #               demigod-mode:$DEMIGOD_PW=api-2025+api-2026,
+    #               spirit-mode:$SPIRIT_PW=api-2026"
+    # — literal passwords stay out of workflow YAML via per-tier
+    # secrets, and tier order doesn't matter (lookup is by name).
+    #
+    # Empty → falls through to single-tier `site_password` behavior.
     site_tiers: str = ""
 
     # Password used to encrypt the cache assets uploaded to GitHub
@@ -150,8 +168,15 @@ class Config:
             pbkdf2_iter=int(os.environ.get("PBKDF2_ITER", "200000")),
             pages=int(os.environ.get("PAGES", "30")),
             parallel=int(os.environ.get("PARALLEL", "5")),
-            burn_start=os.environ.get("BURN_START", "2026-08-30").strip(),
-            burn_end=os.environ.get("BURN_END", "2026-09-07").strip(),
+            # No hardcoded fallback — operator MUST set the burn-window
+            # repo variables in CI (or `export BURN_WINDOW_OPEN_FROM=…
+            # BURN_WINDOW_OPEN_TO=…` locally). Empty values surface as
+            # a build-time error in SiteBuilder.__init__ rather than
+            # silently producing a broken site. One date semantically
+            # serves multiple roles (calendar window edges + access
+            # window + embargo cutoff) — see Config docstring above.
+            burn_start=os.environ.get("BURN_WINDOW_OPEN_FROM", "").strip(),
+            burn_end=os.environ.get("BURN_WINDOW_OPEN_TO", "").strip(),
             bm_api_key=os.environ.get("BM_API_KEY", "").strip(),
             bm_api_base_url=os.environ.get(
                 "BM_API_BASE_URL", "https://api.burningman.org",
@@ -187,45 +212,64 @@ class Config:
                 out.add(y)
         return sorted(out)
 
-    def parsed_tiers(self) -> list[tuple[str, list[str]]]:
-        """Parse `site_tiers` into [(password, [source, …]), …].
+    def parsed_tiers(self) -> list[tuple[str, str, list[str]]]:
+        """Parse `site_tiers` into [(name, password, [source, …]), …].
 
-        Format: `pw1=src1+src2,pw2=src3,…`.
+        Format: `name1:pw1=src1+src2,name2:pw2=src3,…`.
         Returns [] when the field is empty (single-tier fallback).
 
         Sanity checks (raise ValueError on violation):
-          - duplicate passwords (ambiguous tier semantics)
-          - empty source list for any tier (pointless tier)
-          - empty password (shape error)
-        Format-bad entries (no `=`, etc.) raise ValueError too — silent
-        drop on a multi-tier config would be a foot-gun.
+          - duplicate tier names or passwords (ambiguous semantics)
+          - empty tier name, password, or source list
+          - missing `:` (no tier name) — operator must label tiers
+            explicitly so the build can identify spirit-mode by name
+            (was position-based, fragile across operator edits)
+        Format-bad entries raise ValueError — silent drop on a multi-
+        tier config would be a foot-gun.
+
+        Splitting is lenient: split on FIRST `:` for name, then FIRST
+        `=` for pw / sources. Passwords containing `:` or `=` chars
+        survive intact.
         """
         if not self.site_tiers.strip():
             return []
+        seen_names: set[str] = set()
         seen_pws: set[str] = set()
-        out: list[tuple[str, list[str]]] = []
+        out: list[tuple[str, str, list[str]]] = []
         for raw in self.site_tiers.split(","):
             entry = raw.strip()
             if not entry:
                 continue
-            if "=" not in entry:
+            if ":" not in entry or "=" not in entry:
                 raise ValueError(
-                    f"SITE_TIERS entry missing '=': {entry!r}",
+                    f"SITE_TIERS entry must be 'name:password=src1+src2': "
+                    f"{entry!r} (missing ':' or '=')",
                 )
-            pw, srcs_raw = entry.split("=", 1)
+            name, rest = entry.split(":", 1)
+            pw, srcs_raw = rest.split("=", 1)
+            name = name.strip()
             pw = pw.strip()
+            if not name:
+                raise ValueError(f"SITE_TIERS entry has empty name: {entry!r}")
             if not pw:
-                raise ValueError(f"SITE_TIERS entry has empty password: {entry!r}")
+                raise ValueError(
+                    f"SITE_TIERS tier {name!r} has empty password",
+                )
+            if name in seen_names:
+                raise ValueError(
+                    f"SITE_TIERS has duplicate tier name {name!r}",
+                )
             if pw in seen_pws:
                 raise ValueError(
                     f"SITE_TIERS has duplicate password — tier semantics "
                     "would be ambiguous. Each tier needs a distinct password.",
                 )
+            seen_names.add(name)
             seen_pws.add(pw)
             srcs = [s.strip() for s in srcs_raw.split("+") if s.strip()]
             if not srcs:
                 raise ValueError(
-                    f"SITE_TIERS tier has no sources listed: {entry!r}",
+                    f"SITE_TIERS tier {name!r} has no sources listed",
                 )
-            out.append((pw, srcs))
+            out.append((name, pw, srcs))
         return out

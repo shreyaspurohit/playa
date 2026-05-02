@@ -14,7 +14,28 @@ on:
   schedule:
     # 08:00 UTC daily (≈ 01:00 PT / 00:00 PST).
     - cron: '0 8 * * *'
-  workflow_dispatch:  # "Actions → Refresh camps directory → Run workflow"
+  workflow_dispatch:
+    inputs:
+      burn_open:
+        description: >-
+          Override D13 burn-window auto-unlock for spirit-mode.
+          'force-open' deploys site/burn-key.json regardless of dates;
+          'force-closed' removes it. Blank uses the date check
+          against vars.BURN_WINDOW_OPEN_FROM/TO.
+        required: false
+        type: choice
+        default: ''
+        options: ['', 'force-open', 'force-closed']
+      refresh_api_years:
+        description: >-
+          Comma-separated years to force-refresh from api.burningman.org.
+          Each listed year's Release (data-api-YYYY) is deleted before
+          the cache step, so the next fetch hits the API fresh and
+          re-uploads. Blank → caches are reused as today (no API hits
+          for past years). Example: 2026 (current year only) or
+          2025,2026 (both).
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -107,17 +128,54 @@ jobs:
         working-directory: client
 
       # ===============================================================
+      # Optional pre-step: delete specific years' Releases so the
+      # cache step below sees a miss and re-fetches.
+      #
+      # Triggered only when `inputs.refresh_api_years` is set on a
+      # `workflow_dispatch` run — e.g., '2026' to grab a fresh
+      # current-year snapshot mid-week, or '2025,2026' for both.
+      # Nightly cron runs leave caches alone (no extra API hits).
+      # ===============================================================
+      - name: Force-refresh selected API year caches
+        if: github.event_name == 'workflow_dispatch' && inputs.refresh_api_years != ''
+        env:
+          REFRESH_YEARS: ${{ inputs.refresh_api_years }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra YEARS <<< "$REFRESH_YEARS"
+          for raw in "${YEARS[@]}"; do
+            year="$(echo "$raw" | tr -d '[:space:]')"
+            [ -z "$year" ] && continue
+            tag="data-api-${year}"
+            echo "::group::force-refresh ${tag}"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release delete "$tag" --yes
+              # Also drop the underlying tag so a clean release-create
+              # works on the upload step (gh keeps the tag around even
+              # after `release delete` unless --cleanup-tag is used,
+              # but explicit is more portable across gh versions).
+              git push --delete origin "$tag" 2>/dev/null || true
+              echo "deleted release ${tag}; cache step will re-fetch"
+            else
+              echo "no existing release ${tag}; cache step will fetch fresh"
+            fi
+            echo "::endgroup::"
+          done
+
+      # ===============================================================
       # API source caches.
       #
       # For each year in `vars.BM_API_YEARS` (repo-level variable, e.g.
-      # "2024,2025"), try to download the encrypted cache from the
+      # "2025,2026"), try to download the encrypted cache from the
       # `data-api-<year>` Release. Cache miss → fetch from
       # api.burningman.org once, encrypt, attach as the Release asset.
       #
       # To force a re-fetch for a year (e.g., a corrected dataset
-      # mid-year): delete the corresponding Release manually
-      # (`gh release delete data-api-2024 --yes`) and re-run the
-      # workflow.
+      # mid-year): use the `refresh_api_years` workflow_dispatch
+      # input (above) — it deletes the Release(s) before this step
+      # runs. Manual alternative: `gh release delete data-api-2025
+      # --yes` and re-run the workflow.
       # ===============================================================
       - name: Refresh API source caches
         env:
@@ -170,12 +228,86 @@ jobs:
             echo "::endgroup::"
           done
 
+      # ===============================================================
+      # ADR D13: resolve `BURN_OPEN` for the build step.
+      #
+      # Order of precedence:
+      #   1. workflow_dispatch input (`force-open` / `force-closed`)
+      #      always wins — operator override.
+      #   2. After BURN_WINDOW_OPEN_TO: BURN_OPEN=0 ALWAYS. Spirit
+      #      requires the password again — even PLAYA_GO_LIVE can't
+      #      override a closed burn (the operator's "we're done" signal).
+      #   3. Inside [BURN_WINDOW_OPEN_FROM, BURN_WINDOW_OPEN_TO]:
+      #      BURN_OPEN=1.
+      #   4. Before BURN_WINDOW_OPEN_FROM but `vars.PLAYA_GO_LIVE`
+      #      is truthy: BURN_OPEN=1 (early go-live for spirit-mode).
+      #      Note: locations stay hidden until `BURN_WINDOW_OPEN_FROM`
+      #      regardless — only the password gate is bypassed early.
+      #   5. Default: BURN_OPEN=0 (closed). Site builds normally.
+      #
+      # Comparison is done in UTC at day granularity. Worst-case
+      # boundary skew is ~7h vs Black-Rock midnight, which is
+      # operationally fine — the cron only runs once a day anyway.
+      # ===============================================================
+      - name: Resolve BURN_OPEN from date window
+        env:
+          DISPATCH_INPUT: ${{ inputs.burn_open }}
+          BURN_WINDOW_OPEN_FROM: ${{ vars.BURN_WINDOW_OPEN_FROM }}
+          BURN_WINDOW_OPEN_TO: ${{ vars.BURN_WINDOW_OPEN_TO }}
+          PLAYA_GO_LIVE: ${{ vars.PLAYA_GO_LIVE }}
+        run: |
+          set -euo pipefail
+          effective=0
+          today_utc="$(date -u +%Y-%m-%d)"
+
+          if [[ "$DISPATCH_INPUT" == "force-open" ]]; then
+            effective=1
+            echo "burn-window: dispatch input force-open → BURN_OPEN=1"
+          elif [[ "$DISPATCH_INPUT" == "force-closed" ]]; then
+            effective=0
+            echo "burn-window: dispatch input force-closed → BURN_OPEN=0"
+          elif [[ -n "${BURN_WINDOW_OPEN_FROM:-}" && -n "${BURN_WINDOW_OPEN_TO:-}" ]]; then
+            if [[ "$today_utc" > "$BURN_WINDOW_OPEN_TO" ]]; then
+              # Past TO — definitively closed. PLAYA_GO_LIVE doesn't
+              # override; if you want to extend, bump BURN_WINDOW_OPEN_TO.
+              effective=0
+              echo "burn-window: today=${today_utc} past TO=${BURN_WINDOW_OPEN_TO} → BURN_OPEN=0 (password mode resumed)"
+            elif [[ "$today_utc" >= "$BURN_WINDOW_OPEN_FROM" ]]; then
+              effective=1
+              echo "burn-window: today=${today_utc} inside [${BURN_WINDOW_OPEN_FROM}, ${BURN_WINDOW_OPEN_TO}] → BURN_OPEN=1"
+            elif [[ -n "${PLAYA_GO_LIVE:-}" && "${PLAYA_GO_LIVE,,}" != "0" \
+                    && "${PLAYA_GO_LIVE,,}" != "false" \
+                    && "${PLAYA_GO_LIVE,,}" != "no" ]]; then
+              effective=1
+              echo "burn-window: today=${today_utc} pre-FROM but PLAYA_GO_LIVE=${PLAYA_GO_LIVE} → BURN_OPEN=1 (early go-live; locations still embargoed until ${BURN_WINDOW_OPEN_FROM})"
+            else
+              effective=0
+              echo "burn-window: today=${today_utc} before FROM=${BURN_WINDOW_OPEN_FROM}, no PLAYA_GO_LIVE → BURN_OPEN=0"
+            fi
+          elif [[ -n "${PLAYA_GO_LIVE:-}" && "${PLAYA_GO_LIVE,,}" != "0" \
+                  && "${PLAYA_GO_LIVE,,}" != "false" \
+                  && "${PLAYA_GO_LIVE,,}" != "no" ]]; then
+            # No window vars set, but operator forced go-live.
+            effective=1
+            echo "burn-window: vars unset, PLAYA_GO_LIVE=${PLAYA_GO_LIVE} → BURN_OPEN=1"
+          else
+            echo "burn-window: vars unset, no dispatch input, no PLAYA_GO_LIVE → BURN_OPEN=0 (closed)"
+          fi
+          echo "BURN_OPEN=${effective}" >> "$GITHUB_ENV"
+
       - name: Fetch + build site
         env:
           # Pulled from repo secrets. Blank → plaintext build with the
           # placeholder email. Set both before the first real deploy.
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
+          # Burn-week dates — REQUIRED. One pair drives all calendar
+          # edges + public-access window + location-embargo cutoff
+          # (see Config.burn_start / burn_end). No code-side default;
+          # if the operator hasn't set these repo vars, the build
+          # fails loud rather than producing a site with stale dates.
+          BURN_WINDOW_OPEN_FROM: ${{ vars.BURN_WINDOW_OPEN_FROM }}
+          BURN_WINDOW_OPEN_TO: ${{ vars.BURN_WINDOW_OPEN_TO }}
           # API source plumbing. BM_API_YEARS drives both the cache
           # step above AND `_resolve_sources()` in playa.cli — the
           # same value picks the years to fetch and the years to
@@ -183,6 +315,12 @@ jobs:
           BM_API_KEY: ${{ secrets.BM_API_KEY }}
           BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
+          # D10 multi-tier passwords + source manifest. Operator
+          # composes SITE_TIERS from the per-tier secrets so literal
+          # passwords don't sit in the workflow YAML.
+          SITE_TIERS: ${{ secrets.SITE_TIERS }}
+          # BURN_OPEN comes from $GITHUB_ENV via the Resolve step
+          # above (D13). The Python builder reads it directly.
         run: python3 -m playa all
 
       # Uploads site/ (index.html + CNAME + robots.txt + .nojekyll) from

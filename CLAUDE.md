@@ -1041,13 +1041,32 @@ switch-over; none are optional.
       as of the rename to "Playa Camps"). Must appear "in a prominent
       location within your App and on any webpage from which your App
       may be downloaded."
-- [ ] **§6.2 location embargo**: when pulling from the live API, strip
-      per-camp `location` fields out of the payload until 12:01 am on
-      the Sunday of the week before the burn (camp locations), and
-      strip per-art locations until gate-open on Day 1 (art). Wire
-      the dates into `Config` next to `burn_start` / `burn_end` and
-      gate the data in `SiteBuilder.load_camps` based on
-      `datetime.now(tz=ZoneInfo("America/Los_Angeles"))`.
+- [x] **§6.2 location embargo (camps)**: enforced **client-side**
+      in `client/src/utils/embargo.ts` (`isLocationEmbargoed` +
+      `applyLocationEmbargo`). When the source is `api-<burn_year>`
+      AND today (UTC, day-granularity) is strictly before
+      `<meta name="bm-burn-start">`, `App.tsx` masks
+      `camp.location = ''` on every camp at decrypt-time. Downstream
+      consumers (CampCard, ScheduleView, MapView) see empty strings
+      and naturally hide the data. Build artifacts (`index.html`,
+      cache JSONs) keep full location data; the embargo is a UX
+      gate, not a security boundary — relies on ToS §6.2's "shown
+      to your users" wording rather than "stored anywhere". A user
+      keeping the page open across burn-start needs to refresh to
+      see locations appear (acceptable trade-off vs. ticking-clock
+      state). Directory and past-year API sources are untouched.
+      Conservative cutoff — uses gate-open rather than the ToS-
+      allowed first Sunday of build week (~7 days earlier).
+      **Per-tier bypass**: god-mode (inner circle) sees locations
+      pre-burn — see ADR D8 in `docs/15-data-sources.md`. The build
+      emits a parallel `<meta name="bm-trusted-wrappers">` so the
+      client knows which wrappers earn the bypass without exposing
+      tier names in the DOM. demigod / spirit / single-tier
+      `SITE_PASSWORD` builds keep the embargo on.
+- [ ] **§6.2 location embargo (art)**: not yet relevant — we don't
+      surface art. When art is added, mirror the camp-embargo path
+      but use gate-open (Day 1) as the cutoff instead of build-week
+      Sunday.
 - [ ] **§7.2 trademark**: app name must not contain "Burning Man",
       "Black Rock City", "Decompression", or "Playa Events". Current
       name is "Playa Camps" — OK. If renaming again, check this rule.

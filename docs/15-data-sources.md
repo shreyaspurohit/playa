@@ -225,6 +225,23 @@ without addresses on the map.
 For phase 1 we **do not** include `api-2026` (or any current-year API
 source). Past years (2024, 2025) have no embargo.
 
+**Per-tier bypass for `god-mode`** (added 2026-04-28). The embargo is
+a UX gate, not a security boundary — full location data is in the
+encrypted bundle so a god-mode user (inner circle) can see locations
+before gate-open. `demigod-mode` and `spirit-mode` continue to honor
+the embargo.
+
+To grant the privilege without leaking tier names into the DOM, the
+build emits a parallel `<meta name="bm-trusted-wrappers">` listing
+the wrapper indices that belong to `god-mode` (alongside the existing
+`bm-tier-wrappers`). When the user's password unwraps a trusted
+wrapper, `App.tsx` flips `unlockedTrusted=true` and
+`isLocationEmbargoed`/`applyLocationEmbargo` short-circuit. Burn-key
+auto-unlock (D13, spirit-mode only) leaves trust at false — embargo
+still applies. Only the literal tier name `god-mode` is privileged;
+operator-defined synonyms aren't recognized (rename or add another
+trusted-flag layer if that ever becomes desired).
+
 ### D9 — Denylist becomes per-source
 
 `data/denylist.txt` keys on numeric directory IDs. SFDC uids won't match
@@ -264,17 +281,23 @@ Tier ids are local CI labels — they never appear in the page. Bundle
 embeds use opaque sequential indices for wrapper script ids so the DOM
 doesn't disclose tier names or count.
 
-**Configuration** (env var, parsed at build time). For 2026 with the
-initial year window (`BM_API_YEARS=2025,2026`):
+**Configuration** (env var, parsed at build time). Format:
+`name1:pw1=src1+src2,name2:pw2=src3,…`. Each tier is explicitly
+labeled — the build identifies `spirit-mode` by NAME, not by
+position, so operator edits can't accidentally point burn-key.json
+at the wrong tier. For 2026 with the initial year window
+(`BM_API_YEARS=2025,2026`):
 
 ```
-SITE_TIERS="$GOD_PW=directory+api-2025+api-2026,$DEMIGOD_PW=api-2025+api-2026,$SPIRIT_PW=api-2026"
+SITE_TIERS="god-mode:$GOD_PW=directory+api-2025+api-2026,demigod-mode:$DEMIGOD_PW=api-2025+api-2026,spirit-mode:$SPIRIT_PW=api-2026"
 ```
 
 CI fills `$GOD_PW` / `$DEMIGOD_PW` / `$SPIRIT_PW` from repo secrets so
-literal passwords never appear in the workflow YAML. Backward-compat:
-`SITE_TIERS` unset + `SITE_PASSWORD` set falls through to today's
-"single tier covering every embedded source".
+literal passwords never appear in the workflow YAML. Tier names
+`god-mode` / `demigod-mode` are arbitrary identifiers — only
+`spirit-mode` is reserved (D13's `BURN_OPEN=1` looks up that exact
+name). Backward-compat: `SITE_TIERS` unset + `SITE_PASSWORD` set
+falls through to today's "single tier covering every embedded source".
 
 **Initial year window**: 2026 ships with `BM_API_YEARS=2025,2026`.
 2024 has data (~1300 camps verified) but adds no immediate value for
