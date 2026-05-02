@@ -419,8 +419,12 @@ truth per year:
 - Radii + letter set + fence: `burningmantech/innovate-GIS-data` GitHub
   (historical KMZ + GeoJSON).
 
-The skill runs once per year (or once retroactively to backfill 2024 +
-2025) and commits a new entry to `BRC_BY_YEAR`.
+The skill runs once per year and commits a new entry to `BRC_BY_YEAR`.
+2025 was backfilled in 2026-05 (real Golden Spike + fence + sci-fi
+author themed names "Tomorrow Today"). 2024 remains a deferred
+backfill — out of the current rolling year window so map pins for
+api-2024 would fall back to the latest known year's geometry with a
+console warning.
 
 **Failure mode**: addresses that don't parse against any year's letter
 set (e.g., "Rod's Ring Road") still fall through to "list-only, no
@@ -847,8 +851,9 @@ Phase 3 work (decisions D10–D13, planned not yet implemented):
   walks wrappers and lazy-decrypts ciphers.
 - Per-year map geometry (D11) — `BRC_BY_YEAR` map, year-parameterized
   `parseAddress`/`addressToSvgFeet`, `/update-map` skill upgraded to
-  *append* a year. Backfill 2025 from `burningmantech/innovate-GIS-data`
-  once (2024 deferred per current year-window scope).
+  *append* a year. 2025 + 2026 currently backfilled (real Golden Spike,
+  fence pentagon, themed names). 2024 deferred per current year-window
+  scope.
 - Compress before encrypt (D12) — gzip in the build pipeline,
   `DecompressionStream('gzip')` on unlock, "browser too old" gate
   fallback for the <1 % below the support floor.

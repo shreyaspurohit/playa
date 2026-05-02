@@ -140,6 +140,14 @@ section.
   names change ("Ararat", "Bodhi", etc.). `parseAddress` matches
   letter codes (A–K) AND the year's themed names — so old cached
   shares with last-year's names still resolve when the data refresh.
+- **Empty pin set still renders the map.** When zero camps have
+  resolvable addresses (e.g., the current-year API source pre-
+  location-release), the SVG grid + POIs (Center Camp, Playa Info)
+  still draw — the city is the primary value of the view. A small
+  contextual hint sits above the map suggesting how to pin
+  (star a camp, set my-camp, add a meet spot) but does NOT replace
+  the map. Copy is tier-agnostic — doesn't reference the source
+  switcher since not every tier has multi-source access.
 
 ## Code references
 

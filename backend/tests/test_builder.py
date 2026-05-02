@@ -83,16 +83,35 @@ class EncryptPayloadTests(unittest.TestCase, _TmpConfigMixin):
         self.assertEqual(gzip.decompress(proc.stdout), data)
 
     def test_wrong_password_fails(self):
-        enc = self.builder.encrypt_payload(b"data")
+        # The check has two valid outcomes — wrong password is "wrong"
+        # if EITHER:
+        #   1. openssl rejects the ciphertext at PKCS7 padding
+        #      validation (most common — exits non-zero), OR
+        #   2. (~0.4% chance) PKCS7 validates by luck on a random
+        #      last-byte, openssl exits 0 with garbage stdout, but
+        #      the garbage isn't valid gzip of our plaintext.
+        # Asserting only outcome #1 (CalledProcessError) makes this test
+        # flaky on CI; encrypted payload is just `b"data"` → 1-2 AES
+        # blocks → small enough that the random PKCS7-pass happens
+        # occasionally. Accept either signal.
+        plaintext = b"data"
+        enc = self.builder.encrypt_payload(plaintext)
         salt = base64.b64decode(enc["salt"])
         ct = base64.b64decode(enc["ct"])
         blob = b"Salted__" + salt + ct
-        with self.assertRaises(subprocess.CalledProcessError):
-            subprocess.run(
+        try:
+            proc = subprocess.run(
                 ["openssl", "enc", "-aes-256-cbc", "-d", "-pbkdf2",
                  "-iter", "1000", "-pass", "pass:wrong"],
                 input=blob, capture_output=True, check=True,
             )
+        except subprocess.CalledProcessError:
+            return  # outcome #1 — openssl rejected wrong password
+        # outcome #2 — openssl returned 0 by chance; the output must
+        # NOT be the plaintext (or any gzipped form of it).
+        self.assertNotEqual(proc.stdout, plaintext)
+        with self.assertRaises(Exception):
+            gzip.decompress(proc.stdout)
 
     def test_fresh_salt_each_call(self):
         a = self.builder.encrypt_payload(b"same data")
