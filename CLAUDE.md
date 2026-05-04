@@ -114,14 +114,16 @@ The **server-side fetcher/builder** (Python) pulls the directory,
 assembles the HTML template, and injects the bundle + data payload.
 
 ```
-npm run build             → client/dist/bundle.js   (~34 KB minified)
-python -m playa fetch <N>   → data/pages/page_NN.json
-python -m playa fetch-all   → all 30 pages in parallel (ThreadPoolExecutor)
-python -m playa meta         → data/meta.json
-python -m playa merge        → data/camps.csv
-python -m playa tag          → data/camps_tagged.csv
-python -m playa build        → site/index.html            (injects bundle)
-python -m playa all          → nightly pipeline (bundle must already exist)
+npm run build                  → client/dist/bundle.js  (~34 KB minified)
+python -m playa fetch <N>      → data/pages/page_NN.json
+python -m playa fetch-all      → all camp pages in parallel
+python -m playa fetch-art <N>  → data/art_pages/art_NN.json
+python -m playa fetch-art-all  → all art pages in parallel
+python -m playa meta           → data/meta.json
+python -m playa merge          → data/camps.csv + data/art.csv
+python -m playa tag            → data/camps_tagged.csv + data/art_tagged.csv
+python -m playa build          → site/index.html  (injects bundle + camps + art)
+python -m playa all            → nightly pipeline (bundle must already exist)
 ```
 
 `make fetch`, `make rebuild`, `make build` all include the bundle step
@@ -423,15 +425,29 @@ print(t.tag("your test string here"))
 
 ## Site UI (backend/src/playa/builder.py + templates/site.html)
 
-- Data embed, two modes:
-  - **Plaintext:** `<script id="camps-data" type="application/json">` with
-    `</` escaped as `<\/` (so stray `</script>` in data can't break it).
-  - **Encrypted:** `<script id="camps-data-encrypted" type="application/json">`
-    holding `{salt, iter, ct}` (all base64). The in-page JS shows a
-    password gate, derives key||iv via `crypto.subtle.deriveBits`
-    (PBKDF2-HMAC-SHA256, `iter` iterations, 48 bytes), and decrypts with
-    `AES-CBC`. Successful password cached in `sessionStorage` (per-tab,
-    auto-clears on close).
+- Data embed, two modes (parallel scripts for camps + art per source):
+  - **Plaintext:** `<script id="camps-data-<source>"
+    type="application/x-gzip-base64">` and the parallel
+    `art-data-<source>` for art. Decoded via `DecompressionStream('gzip')`
+    + JSON.parse on the client.
+  - **Encrypted (single-tier):** `<script
+    id="camps-data-<source>-encrypted">` holding `{salt, iter, ct}`
+    + the parallel `art-data-<source>-encrypted`. The in-page JS
+    shows a password gate, derives key||iv via
+    `crypto.subtle.deriveBits` (PBKDF2-HMAC-SHA256, `iter` iterations,
+    48 bytes), and decrypts both with `AES-CBC`.
+  - **Envelope (multi-tier, ADR D10):** per-source `camps-data-…
+    -cipher` and `art-data-…-cipher` reuse the same DEK with
+    distinct IVs (CBC IV-reuse-across-plaintexts avoided). The
+    wrapper carries the DEK + camps-IV; the art cipher carries its
+    own IV in the script tag. `decryptSource` reads `cipher.iv`
+    when present.
+- The Art tab is a parallel surface to Camps: same star/fav model,
+  same per-source LS keys (`bm-fav-art/<source>`), same Tagger
+  taxonomy (with `tag_art` + `art_haystack` adding artist /
+  category / program to the input). Art appears on the Map only
+  when the user (or a friend) has starred it — otherwise the map
+  doesn't pin it.
 - Theming: 5 themes (paper / daylight / dusk / night / eclipse), pill of
   emoji buttons in header, applied pre-body via inline script in `<head>`
   to avoid flash of wrong theme, persisted in `localStorage`.

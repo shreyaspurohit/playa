@@ -47,8 +47,9 @@ export function ImportBanner({
   currentSource, availableSources, onSwitchSource,
   onImport, onImportAsSelf, onDismiss,
 }: Props) {
-  const { name, campIds, eventIds, myCampId, meetSpots, source: shareSource } = payload;
-  const total = campIds.length + eventIds.length;
+  const { name, campIds, eventIds, artIds, myCampId, meetSpots, source: shareSource } = payload;
+  const artLen = artIds?.length ?? 0;
+  const total = campIds.length + eventIds.length + artLen;
   const isSelf =
     !!ownNickname && !!name && ownNickname.trim() === name.trim()
     && !!onImportAsSelf;
@@ -74,8 +75,13 @@ export function ImportBanner({
       <div class="import-banner-body">
         <p>
           <strong>{name}</strong> shared{' '}
-          <strong>{campIds.length}</strong> camp{campIds.length === 1 ? '' : 's'} and{' '}
+          <strong>{campIds.length}</strong> camp{campIds.length === 1 ? '' : 's'},{' '}
           <strong>{eventIds.length}</strong> event{eventIds.length === 1 ? '' : 's'}
+          {artLen > 0 && (
+            <>
+              ,{' '}<strong>{artLen}</strong> art{artLen === 1 ? ' piece' : ' pieces'}
+            </>
+          )}
           {myCampId && <>, plus <strong>their camp</strong></>}
           {meetSpots && meetSpots.length > 0 && (
             <>
@@ -158,7 +164,10 @@ export function ImportBanner({
             <p class="import-conflict">
               You already have a friend called <strong>"{name}"</strong>{' '}
               ({existing.campIds.length} camp{existing.campIds.length === 1 ? '' : 's'} +{' '}
-              {existing.eventIds.length} event{existing.eventIds.length === 1 ? '' : 's'}).
+              {existing.eventIds.length} event{existing.eventIds.length === 1 ? '' : 's'}
+              {(existing.artIds?.length ?? 0) > 0 && (
+                <> + {existing.artIds!.length} art{existing.artIds!.length === 1 ? '' : ' pieces'}</>
+              )}).
               The latest share is treated as their current state.
             </p>
             <div class="import-banner-actions">

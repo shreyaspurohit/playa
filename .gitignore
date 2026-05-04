@@ -9,6 +9,15 @@ data/meta.json
 data/camps.csv
 data/camps_tagged.csv
 data/logs/
+# Art parallel to camps. `data/art_pages/art_NN.json` are the per-
+# page fetches off `directory.burningman.org/artwork/`; the CSVs are
+# regenerated downstream by `playa merge` / `playa tag`. Same ToS
+# stance as camps — the directory's content lives in CI/runtime, not
+# in git. The committed `data/denylist-art.txt` (and its API sibling)
+# stay tracked since they're just IDs, no fetched text.
+data/art_pages/
+data/art.csv
+data/art_tagged.csv
 # api.burningman.org cache — Phase 1 stores fetched payloads on the
 # local filesystem (see docs/15-data-sources.md, decision D7). Phase 2
 # moves this into GitHub Releases; the gitignore stays either way.

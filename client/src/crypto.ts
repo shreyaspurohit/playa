@@ -115,9 +115,20 @@ export async function unwrapDek(
 /** Decrypt a source cipher with the unwrapped DEK+IV.
  *
  *  No PBKDF2 step — the DEK is full-entropy random from the build,
- *  used as the AES-CBC key directly. Output is gunzipped if the
- *  cipher's `compressed` flag is set (always today; kept as a flag
- *  for forward-compat). */
+ *  used as the AES-CBC key directly. The IV comes from `cipher.iv`
+ *  when the cipher carries one (which it always does in current
+ *  builds — and matches the IV portion of `dekIv` for camps ciphers,
+ *  but DIFFERS for art ciphers since they reuse the same DEK with a
+ *  fresh IV). Falls back to `dekIv[32:48]` for cipher shapes without
+ *  an `iv` field — defensive for older bundles, never expected to
+ *  fire in practice.
+ *
+ *  Empty `cipher.ct` short-circuits to "[]" — used when an envelope
+ *  bundle predates art support, so the art cipher script tag was
+ *  synthesized client-side with empty fields.
+ *
+ *  Output is gunzipped if the cipher's `compressed` flag is set
+ *  (always today; kept as a flag for forward-compat). */
 export async function decryptSource(
   cipher: SourceCipher,
   dekIv: Uint8Array,
@@ -125,11 +136,14 @@ export async function decryptSource(
   if (dekIv.length !== 48) {
     throw new Error(`expected 48-byte DEK+IV, got ${dekIv.length}`);
   }
-  // Allocate a fresh ArrayBuffer for the key bytes — Web Crypto's
-  // BufferSource type rejects views over a parent buffer in some TS
-  // configs (matches the .slice() pattern used in decryptPayload).
+  if (!cipher.ct) {
+    // Synthetic empty cipher — no data, return empty array literal.
+    return '[]';
+  }
   const keyBytes = new Uint8Array(dekIv.slice(0, 32));
-  const ivBytes = new Uint8Array(dekIv.slice(32, 48));
+  const ivBytes = cipher.iv
+    ? b64(cipher.iv)
+    : new Uint8Array(dekIv.slice(32, 48));
   const key = await crypto.subtle.importKey(
     'raw', keyBytes, { name: 'AES-CBC' }, false, ['decrypt'],
   );

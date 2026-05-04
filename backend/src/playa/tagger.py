@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from .models import Camp
+from .models import Art, Camp
 
 
 # Keep patterns specific enough to avoid obvious false positives, but
@@ -89,6 +89,75 @@ TAGS: dict[str, list[str]] = {
         r"\bfashion\s*show\b",
     ],
 
+    # --- Art subcategories (mostly fire on art listings) ---
+    # Light-driven installations — BRC's defining medium at night.
+    # Compound forms only on `light` to avoid "light moment" /
+    # "lightheaded" false positives.
+    "light_art": [
+        r"\billuminat(?:e|es|ed|ing|ion)\b", r"\bglow(?:s|ing|ed)?\b",
+        r"\bleds?\b", r"\bneon\b", r"\blanterns?\b",
+        r"\bluminous\b", r"\bluminescen(?:t|ce)\b",
+        r"\blight\s+(?:installation|art|sculpture|show)\b",
+        r"\blight[-\s]up\b", r"\bfiber\s+optic\b",
+    ],
+    # Motion-driven sculpture (distinct from interactive_art which
+    # implies user input).
+    "kinetic": [
+        r"\bkinetic\b", r"\bspin(?:s|ning|ner|ners)?\b",
+        r"\brotat(?:e|es|ing|ion)\b", r"\bpendulum\b",
+        r"\bwhirl(?:s|ing|er)?\b",
+    ],
+    # Reflection / kaleidoscope — distinct visual technique.
+    "mirror_reflection": [
+        r"\bmirror(?:s|ed|ing)?\b", r"\breflect(?:ive|ion|ions)\b",
+        r"\bkaleidoscope\b", r"\bprism(?:s|atic)?\b",
+    ],
+    # Scale-as-axis: pilgrimable deep-playa landmarks.
+    "monumental": [
+        r"\bmonumental\b", r"\bcolossal\b", r"\btowering\b", r"\bgiant\b",
+        r"\b\d{2,3}[-\s]?(?:foot|feet|ft)\s+(?:tall|high|sculpture|installation)\b",
+    ],
+    # Medium-of-construction. `\bmetal\b` rejected — too many
+    # "metaphor" / "heavy metal music" false positives.
+    "metal_sculpture": [
+        r"\bsteel\b", r"\bbronze\b", r"\baluminum\b",
+        r"\bwelded\b", r"\bmetallic\b",
+        r"\biron\s+(?:sculpture|frame|work)\b",
+    ],
+    "wood_sculpture": [
+        r"\bwooden\b", r"\bplywood\b", r"\btimber\b",
+        r"\bdriftwood\b", r"\bcarved\s+wood\b",
+    ],
+    # Recurring conceptual form distinct from `mystical`.
+    "portal": [
+        r"\bportal(?:s)?\b", r"\bgateway\b", r"\barchway\b",
+        r"\bdoorway\b", r"\bthreshold\b",
+    ],
+    # Navigational-scale art (lighthouse / pillar / obelisk).
+    # Distinct from `monumental` — about role/function, not size.
+    "beacon_landmark": [
+        r"\bbeacon(?:s)?\b", r"\blandmark\b", r"\blighthouse\b",
+        r"\bpillar\b", r"\bobelisk\b", r"\bmonolith\b",
+    ],
+    # Art-as-rest-stop. Small but useful for "where can I sit deep
+    # playa" queries.
+    "bench_seating": [
+        r"\bbench(?:es)?\b",
+        r"\bseating\s+(?:area|installation|sculpture)\b",
+        r"\brest\s+stop\b",
+    ],
+    # Visual-style tag with strong art-only signal.
+    "geometry_fractal": [
+        r"\bgeometr(?:y|ic|ical)\b", r"\bfractal(?:s)?\b",
+        r"\bsacred\s+geometry\b", r"\btessellat(?:e|ed|ion)\b",
+        r"\bspiral(?:s)?\b",
+    ],
+    # Organic / botanical motif, common in 2026 (Wonderland year).
+    "tree_flora": [
+        r"\btrees?\b", r"\bflower(?:s)?\b", r"\bblossom(?:s|ing)?\b",
+        r"\bpetals?\b", r"\bbotanical\b", r"\bgarden\b", r"\bforest\b",
+    ],
+
     # --- Music & dance ---
     "music": [
         r"\bmusic\b", r"\blive\s*music\b", r"\bbands?\b", r"\bconcert(?:s)?\b",
@@ -157,7 +226,16 @@ TAGS: dict[str, list[str]] = {
     # --- Theme camps (loose buckets) ---
     "tiki": [r"\btiki\b", r"\bluau\b"],
     "pirate": [r"\bpirate(?:s)?\b"],
-    "space": [r"\bspace\s*(?:camp|station|themed?)\b", r"\bgalactic\b", r"\balien(?:s)?\b"],
+    "space": [
+        r"\bspace\s*(?:camp|station|themed?)\b", r"\bgalactic\b", r"\balien(?:s)?\b",
+        # Broadened 2026: art and themed camps lean cosmic without
+        # using the literal word "space". Adding compound + standalone
+        # cosmic terms picks up another ~95 camps and ~20 art records.
+        r"\bcosmic\b", r"\bcelestial\b", r"\bcosmos\b",
+        r"\bnebula\b", r"\bgalax(?:y|ies)\b",
+        r"\bstarlight\b", r"\bstarry\b", r"\blunar\b",
+        r"\bplanetar(?:y|ium)\b", r"\bconstellation(?:s)?\b",
+    ],
     "circus_carnival": [r"\bcircus\b", r"\bcarnival\b", r"\bmidway\b"],
     "cult_religious": [
         r"\bcult\b", r"\btemple\b", r"\bchurch\b", r"\bmonaster(?:y|ies)\b",
@@ -201,6 +279,54 @@ TAGS: dict[str, list[str]] = {
     ],
     "authentic_relating": [
         r"\bauthentic\s*relating\b", r"\brelating\s*games\b", r"\bcircling\b",
+    ],
+    # Temple-adjacent emotional theme. Distinct from `spiritual` and
+    # `cult_religious` (which are about beliefs / institutions).
+    "memorial": [
+        r"\bmemorial\b", r"\bremembrance\b", r"\bin\s+memory\s+of\b",
+        r"\btribute\b", r"\bashes\b",
+        r"\bgriev(?:e|ing|ed|ance)\b", r"\bloss\b", r"\bmourning\b",
+    ],
+    # BRC's most-used self-mythology word. The existing `spiritual`
+    # tag already includes `transformation(?:al)?` — broader words
+    # that don't require a spiritual frame go here so things like
+    # "metamorphosis" / "rebirth" don't force a mystical reading.
+    "transformation": [
+        r"\btransform(?:s|ation|ative|ed|ing)?\b",
+        r"\bevolv(?:e|es|ed|ing|ution)\b",
+        r"\bmetamorpho?s(?:is|es)\b",
+        r"\brebirth\b", r"\bbecoming\b",
+    ],
+    # 2026 official theme. Year-themed; can be retired or renamed
+    # in a future cycle. Big hits on 2026 data (~100 camps + 13 art
+    # + 88 events).
+    "wonderland_2026": [
+        r"\balice\b", r"\bwonderland\b", r"\bcheshire\b",
+        r"\bmad\s+hatter\b", r"\brabbit\s+hole\b", r"\btea\s+party\b",
+        r"\bdown\s+the\s+rabbit\s+hole\b",
+    ],
+    # Eco / leave-no-trace stance — distinct from values tags like
+    # `radical_inclusion`. Specifically environmental practice.
+    "sustainability": [
+        r"\bsustainab(?:le|ility)\b", r"\bleave\s+no\s+trace\b",
+        r"\bmoop\b", r"\beco[-\s](?:friendly|conscious)\b",
+        r"\bsolar[-\s]powered\b", r"\bcompost(?:ing)?\b",
+        r"\bupcycl(?:e|ed|ing)\b",
+    ],
+    # BM-curated showpieces. Backed by the API's `program` field
+    # ("Honorarium" — 75 pieces in 2025) which flows into the art
+    # haystack. Also catches description prose mentioning the
+    # honorarium award. Distinct from `art` (every art is art) and
+    # `monumental` (size, not curation).
+    "honorarium": [
+        r"\bhonorari(?:a|um)\b",
+    ],
+    # Man Pavilion grant program — small ring of art directly around
+    # the Man (15-25 ft from center). Backed by API `program=
+    # ManPavGrant` (11 pieces) AND the address-parser's "Man Pavilion"
+    # synthetic-street emission for "<clock> 25', Man Pavilion".
+    "man_pavilion": [
+        r"\bman\s*pavilion\b", r"\bmanpavgrant\b", r"\bmanpav\b",
     ],
 
     # --- Personal care / pampering ---
@@ -305,3 +431,25 @@ class Tagger:
         """In-place: populate `camp.tags` for every camp."""
         for camp in camps:
             camp.tags = self.tag_camp(camp)
+
+    @staticmethod
+    def art_haystack(art: Art) -> str:
+        """Text an art piece is tagged against. Same taxonomy as camps —
+        we don't maintain a separate art taxonomy because nearly every
+        meaningful tag (interactive, sound-camp, fire, sculpture, etc.)
+        applies cleanly to either. Includes artist + category + program
+        because those carry signal for art-specific terms (e.g.,
+        category="Mutant Vehicles" surfaces the `mutant_vehicle` tag)."""
+        parts: list[str] = [
+            art.name, art.description, art.artist,
+            art.category, art.program,
+        ]
+        return " ".join(p for p in parts if p)
+
+    def tag_art(self, art: Art) -> list[str]:
+        return self.tag(self.art_haystack(art))
+
+    def tag_all_art(self, art: Iterable[Art]) -> None:
+        """In-place: populate `piece.tags` for every art piece."""
+        for piece in art:
+            piece.tags = self.tag_art(piece)

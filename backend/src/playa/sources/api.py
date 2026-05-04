@@ -1,8 +1,9 @@
 """api.burningman.org source.
 
-Two bulk endpoints, both single-shot per year:
+Three bulk endpoints, all single-shot per year:
   GET /api/camp?year=YYYY     → list[CampModel]
   GET /api/event?year=YYYY    → list[EventModel]
+  GET /api/art?year=YYYY      → list[ArtModel]
 
 Auth: header `X-API-Key`. Spec at https://api.burningman.org/docs.
 
@@ -47,7 +48,7 @@ from datetime import datetime
 from typing import Any
 
 from ..config import Config
-from ..models import Camp, Event
+from ..models import Art, Camp, Event
 
 
 # Openssl produces files starting with this 8-byte literal when
@@ -122,6 +123,45 @@ class APISource:
             print(f"  (skipped {skipped} camp(s) per denylist-api)")
         return camps
 
+    def load_art(self, config: Config) -> list[Art]:
+        """Read the same cache file used by `load_camps` and normalize
+        the `art` array into `Art` objects. Older cache files (written
+        before art was added) lack the key; treated as zero art rather
+        than failing — the build continues and the user gets an
+        empty Art tab for that source until the cache refreshes."""
+        f = config.api_payload_file(self.year)
+        if not f.exists():
+            raise FileNotFoundError(
+                f"no cached payload at {f}. Run "
+                f"`playa api-fetch --year {self.year}` first."
+            )
+        blob = f.read_bytes()
+        if blob.startswith(_OPENSSL_MAGIC):
+            password = config.effective_cache_password
+            if not password:
+                raise RuntimeError(
+                    f"{f} is encrypted but no cache password is set. "
+                    "Set BM_CACHE_PASSWORD or SITE_PASSWORD."
+                )
+            blob = _openssl_decrypt(blob, password, config.pbkdf2_iter)
+        raw = json.loads(blob.decode("utf-8"))
+        art_raw = raw.get("art", [])
+
+        denied = _load_art_api_denylist(config)
+        skipped = 0
+        art: list[Art] = []
+        for a_raw in art_raw:
+            piece = _art_from_api(a_raw, year=self.year)
+            if not piece:
+                continue
+            if piece.id in denied:
+                skipped += 1
+                continue
+            art.append(piece)
+        if skipped:
+            print(f"  (skipped {skipped} art piece(s) per denylist-art-api)")
+        return art
+
     def fetch_and_cache(self, config: Config) -> dict:
         """Hit the API, persist the raw payload to disk, return it.
 
@@ -156,11 +196,19 @@ class APISource:
             config, "/api/event", {"year": self.year},
             default_on_404=[],
         )
+        # Art locations release at gate-open per ToS §6.2; the API
+        # may also 404 pre-burn for current-year art (`{"detail":
+        # "Art not found"}`). Treat as zero like camps/events.
+        art = _request_json(
+            config, "/api/art", {"year": self.year},
+            default_on_404=[],
+        )
         payload = {
             "fetched_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "year": self.year,
             "camps": camps,
             "events": events,
+            "art": art,
         }
         config.api_dir.mkdir(parents=True, exist_ok=True)
         f = config.api_payload_file(self.year)
@@ -174,7 +222,7 @@ class APISource:
             f.write_bytes(plaintext)
             mode = "plaintext"
         print(f"  api-{self.year}: wrote {len(camps)} camps + "
-              f"{len(events)} events → {f} ({mode})")
+              f"{len(events)} events + {len(art)} art → {f} ({mode})")
         return payload
 
 
@@ -308,6 +356,50 @@ def _camp_from_api(d: dict[str, Any]) -> Camp | None:
         events=[],
         tags=[],
     )
+
+
+def _art_from_api(d: dict[str, Any], *, year: int) -> Art | None:
+    """API ArtModel → Art. Returns None for entries missing a uid.
+
+    Image: take the first `images[].thumbnail_url` if present (API
+    returns a list; we only display one for the card).
+    """
+    uid = d.get("uid")
+    if not uid:
+        return None
+    images = d.get("images") or []
+    image_url = ""
+    if images and isinstance(images, list):
+        first = images[0]
+        if isinstance(first, dict):
+            image_url = first.get("thumbnail_url") or ""
+    return Art(
+        id=str(uid),
+        name=d.get("name", "") or "",
+        location=d.get("location_string") or "",
+        description=d.get("description") or "",
+        url="",  # no canonical directory page for API-sourced art
+        artist=d.get("artist") or "",
+        hometown=d.get("hometown") or "",
+        category=d.get("category") or "",
+        program=d.get("program") or "",
+        image_url=image_url,
+        year=year,
+        tags=[],
+    )
+
+
+def _load_art_api_denylist(config: Config) -> set[str]:
+    """Per-API-art denylist (parallel to denylist-api.txt for camps)."""
+    f = config.art_api_denylist_file
+    if not f.exists():
+        return set()
+    ids: set[str] = set()
+    for line in f.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            ids.add(line)
+    return ids
 
 
 def _events_from_api(d: dict[str, Any]) -> list[Event]:

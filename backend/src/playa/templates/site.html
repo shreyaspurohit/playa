@@ -414,6 +414,118 @@ __TIER_WRAPPERS_META__
     transform: scale(1.05);
   }
   .info-btn.pulse { animation: info-pulse 1.4s ease-out 3; }
+
+  /* Hamburger menu — collapses everything except nickname into a
+     single trigger button. The panel anchors to the trigger via
+     `position: absolute`. Lives inside `.header-menu-wrap` which
+     is the positioning context. */
+  .header-menu-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .header-menu-trigger {
+    width: 36px; height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .header-menu-trigger:hover,
+  .header-menu-trigger:focus-visible {
+    background: var(--chip-bg);
+    border-color: var(--accent);
+    outline: none;
+  }
+  .header-menu-trigger.open {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  /* Pulse effect mirrors the old info-btn pulse — re-uses the same
+     animation but applied to the menu trigger so the "new user, click
+     here" cue still fires (the about modal is the destination). */
+  .header-menu-trigger.pulse { animation: info-pulse 1.4s ease-out 3; }
+  /* Three-bar hamburger glyph drawn in pure CSS — scales cleanly with
+     theme color via currentColor on the spans. */
+  .header-menu-icon {
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    width: 18px; height: 18px;
+  }
+  .header-menu-icon span {
+    display: block;
+    width: 18px; height: 2px;
+    background: currentColor;
+    border-radius: 1px;
+  }
+
+  .header-menu-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 50;
+    min-width: 240px;
+    max-width: 320px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+    padding: 10px;
+    display: flex; flex-direction: column; gap: 10px;
+    /* On mobile the panel can hit the right edge; the right-anchored
+       absolute position keeps it on-screen for the common case. */
+  }
+  .header-menu-section {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .header-menu-section + .header-menu-section {
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .header-menu-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .header-menu-actions {
+    gap: 0;
+  }
+  .header-menu-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 6px;
+    border: none; background: transparent;
+    color: var(--text);
+    text-align: left; text-decoration: none;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 6px;
+  }
+  .header-menu-item:hover,
+  .header-menu-item:focus-visible {
+    background: var(--chip-bg);
+    outline: none;
+  }
+  .header-menu-install {
+    /* Hide the section entirely when InstallPrompt renders nothing
+       (it returns null in browsers without the install hook). The
+       :empty rule + :has fallback is overkill for current Preact
+       output — Preact 10 emits real DOM nulls, so the wrapping
+       <div> stays empty when the child is null. The +
+       padding-top:0 + border:none keeps the gap from looking weird. */
+  }
+  .header-menu-install:empty {
+    display: none;
+  }
+
   @keyframes info-pulse {
     0%   { box-shadow: 0 0 0 0 var(--accent); }
     60%  { box-shadow: 0 0 0 12px transparent; }
@@ -667,10 +779,32 @@ __TIER_WRAPPERS_META__
   /* === "Faved by" chips + nav link ==================================== */
   .fav-by { font-size: 11px; color: var(--muted); margin-top: -2px; }
   .fav-by-chip {
-    display: inline-block; padding: 1px 7px; margin: 0 2px;
-    background: var(--chip-bg); border-radius: 999px; font-size: 11px; color: var(--text);
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 7px; margin: 0 2px;
+    background: var(--chip-bg); border-radius: 999px;
+    font-size: 11px; color: var(--text);
   }
   .fav-by-chip.mine { background: #f59e0b; color: #1a1a1a; }
+  /* Inline × that removes a friend's star on the parent item. Tiny
+     by default so the chip stays compact, but with a comfy hit area
+     (padding + min-size) for tap. Hover/focus brightens it so the
+     destructive action doesn't surprise. */
+  .fav-by-chip-del {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px;
+    padding: 0; margin-left: 1px;
+    border: none; background: transparent;
+    color: inherit; opacity: 0.55;
+    border-radius: 50%; cursor: pointer; line-height: 1;
+    font-size: 14px; font-weight: 600;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fav-by-chip-del:hover,
+  .fav-by-chip-del:focus-visible {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.15);
+    outline: none;
+  }
   .ev-friends { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px; }
   .nav-link {
     font-size: 12px; color: var(--accent); background: transparent; border: 0;
@@ -1017,6 +1151,62 @@ __TIER_WRAPPERS_META__
   .brc-pin.friend .brc-pin-inner { fill: var(--accent); }
   .brc-pin.active .brc-pin-outer { opacity: 0.7; r: 130; }
   .brc-pin.active .brc-pin-inner { stroke-width: 14; }
+  /* Art pins — star shape; distinct hue from camps + meet spots so
+     the "this is art" affordance reads at a glance. Two color slots
+     mirror the camp pattern (mine = the warm accent of the entity
+     family; friend = a related but visibly distinct hue):
+       mine   → magenta  #c026d3
+       friend → teal     #14b8a6
+     Teal contrasts strongly with magenta and stays distinct from the
+     orange-family used by camps + friend-camps. */
+  .brc-art-pin { cursor: pointer; }
+  .brc-art-pin-body {
+    fill: #c026d3;            /* mine — magenta */
+    stroke: #1a1a1a;
+    stroke-width: 8;
+    opacity: 0.95;
+  }
+  .brc-art-pin.friend .brc-art-pin-body {
+    fill: #14b8a6;            /* friend — teal */
+    opacity: 0.9;
+  }
+  .brc-art-pin.active .brc-art-pin-body {
+    stroke-width: 12;
+  }
+  /* Sidebar list-row marker for an art pin — 5-point star clipped
+     out of a colored square. Mine = magenta, friend-only = teal.
+     Same hues as the SVG pin so list + map read as one affordance. */
+  .map-art-dot {
+    background: #14b8a6;       /* friend default */
+    border-radius: 0;
+    transform: none;
+    clip-path: polygon(
+      50% 0%,
+      61% 35%,
+      98% 35%,
+      68% 57%,
+      79% 91%,
+      50% 70%,
+      21% 91%,
+      32% 57%,
+      2% 35%,
+      39% 35%
+    );
+  }
+  .map-art-dot.mine { background: #c026d3; }
+  .map-pin-byline { font-style: italic; opacity: 0.8; }
+  .map-pin-addr.empty { font-style: italic; opacity: 0.6; }
+  /* Persistent share/export/import bar (renders under the TabBar so
+     these actions are reachable from any view). The buttons reuse
+     the existing `.share-btn` styling from the old Toolbar location. */
+  .action-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 0 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
   .brc-bearing {
     stroke: var(--highlight-color, var(--accent));
     stroke-width: 14; stroke-dasharray: 60 40; opacity: 0.9;
@@ -1354,14 +1544,105 @@ __TIER_WRAPPERS_META__
     stroke: var(--bg); stroke-width: 50;
     stroke-linejoin: round;
   }
-  /* Share-modal manifest list (what's going in the link) */
+  /* Share-modal manifest list (what's going in the link).
+     Now a stack of <details> pickers (one per category) — see
+     IncludePicker.tsx. Old `<ul>` selector kept for any cached
+     shells that haven't seen the new bundle. */
   .share-manifest {
-    list-style: none; padding: 0; margin: 10px 0;
-    display: flex; flex-direction: column; gap: 4px;
+    padding: 0; margin: 10px 0;
+    display: flex; flex-direction: column; gap: 6px;
   }
   .share-manifest li {
     padding: 6px 10px; background: var(--chip-bg);
     border-radius: 6px; font-size: 13px;
+  }
+  .share-manifest-hint {
+    margin: 0 0 4px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  /* IncludePicker (collapsible per-category checkbox list). */
+  .include-picker {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .include-picker > summary {
+    cursor: pointer;
+    font-size: 13px;
+    list-style: none;
+    padding: 4px 0;
+    user-select: none;
+  }
+  .include-picker > summary::-webkit-details-marker { display: none; }
+  .include-picker > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    width: 1em;
+    color: var(--muted);
+  }
+  .include-picker[open] > summary::before { content: '▾ '; }
+  .include-count { color: var(--muted); font-weight: normal; }
+  .include-picker-actions {
+    margin: 4px 0 6px;
+  }
+  .include-link-btn {
+    background: transparent;
+    border: none;
+    padding: 2px 4px;
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .include-picker-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 280px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .include-picker-list li {
+    background: transparent;
+    padding: 0;
+  }
+  .include-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .include-row:hover { background: var(--chip-bg); }
+  .include-row input[type="checkbox"] {
+    margin: 3px 0 0;
+    flex-shrink: 0;
+  }
+  .include-row-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .include-row-name { font-weight: 500; }
+  .include-row-subtitle {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+  /* "Your home camp" + "nickname" + "friends" rows live OUTSIDE
+     a <details> picker (single-toggle) — slight visual lift so
+     they read distinctly from the multi-item picker rows above. */
+  .include-myhome {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
   }
   /* Meet-spot editor form */
   .meet-spot-card { max-width: 460px; }

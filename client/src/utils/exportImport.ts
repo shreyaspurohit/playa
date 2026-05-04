@@ -50,6 +50,8 @@ export interface Snapshot {
   nickname: string;               // empty string if user never set one
   campFavs: string[];
   eventFavs: string[];
+  /** Optional — older snapshots predate art and lack this field. */
+  artFavs?: string[];
   myCampId: string;               // '' when unset
   meetSpots: MeetSpot[];
   hiddenDays: string[];           // composite "id|YYYY-MM-DD" keys
@@ -163,6 +165,7 @@ export function buildSnapshot(source: string = 'directory'): Snapshot {
   const nickname = readString(LS.nickname, '');
   const campFavs = parseStringArray(readString(k(LS.favs), ''));
   const eventFavs = parseStringArray(readString(k(LS.favEvents), ''));
+  const artFavs = parseStringArray(readString(k(LS.favArt), ''));
   const myCampId = readString(k(LS.myCampId), '');
   const meetSpots = parseMeetSpots(readString(k(LS.meetSpots), ''));
   const hiddenDays = parseStringArray(readString(k(LS.hiddenDays), ''));
@@ -173,6 +176,7 @@ export function buildSnapshot(source: string = 'directory'): Snapshot {
     nickname,
     campFavs,
     eventFavs,
+    ...(artFavs.length > 0 ? { artFavs } : {}),
     myCampId,
     meetSpots,
     hiddenDays,
@@ -222,6 +226,7 @@ export function parseSnapshot(text: string): Snapshot | null {
     nickname: cleanName(r.nickname),
     campFavs: cleanIds(r.campFavs, MAX_IDS),
     eventFavs: cleanIds(r.eventFavs, MAX_IDS),
+    artFavs: cleanIds(r.artFavs, MAX_IDS),
     myCampId: cleanSingleId(r.myCampId),
     meetSpots: cleanMeetSpots(r.meetSpots),
     hiddenDays: cleanHiddenDays(r.hiddenDays),
@@ -243,6 +248,9 @@ export function applySnapshot(
   writeString(LS.nickname, snap.nickname);
   writeString(k(LS.favs), JSON.stringify(snap.campFavs));
   writeString(k(LS.favEvents), JSON.stringify(snap.eventFavs));
+  if (snap.artFavs && snap.artFavs.length > 0) {
+    writeString(k(LS.favArt), JSON.stringify(snap.artFavs));
+  }
   writeString(k(LS.myCampId), snap.myCampId);
   writeString(k(LS.meetSpots), JSON.stringify(snap.meetSpots));
   writeString(k(LS.hiddenDays), JSON.stringify(snap.hiddenDays));

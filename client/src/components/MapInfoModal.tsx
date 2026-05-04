@@ -83,6 +83,35 @@ export function MapInfoModal({ open, onClose, brc }: Props) {
           </p>
 
           <p>
+            <strong>Art locations work differently.</strong> Camps live on
+            the city grid (clock + letter ring), but a lot of art sits
+            either in the <em>open playa</em> beyond <code>K</code> street
+            or in the <em>Man Pavilion</em> right around the Man, where
+            the ring grid doesn&rsquo;t apply. The directory addresses
+            those pieces with <code>clock + raw distance in feet</code>{' '}
+            from the Man instead:
+          </p>
+          <ul>
+            <li>
+              <code>1:44 6400&rsquo;, Open Playa</code> &mdash; clock 1:44,
+              6400 ft out from the Man (about 1000 ft past <code>K</code>).
+              Deep-playa art.
+            </li>
+            <li>
+              <code>10:30 25&rsquo;, Man Pavilion</code> &mdash; clock 10:30,
+              just 25 ft from the Man. Pavilion installations.
+            </li>
+          </ul>
+          <p>
+            The map keeps the same clock-bearing, but the radial extends
+            as far as needed to reach the actual distance, so the star
+            pin lands on the real spot. When you star deep-playa art the
+            map auto-expands so the pin stays inside the visible area.
+            Use the <code>+</code> zoom button to zoom back into the city
+            after.
+          </p>
+
+          <p>
             <strong>Orientation:</strong> for {brc.year}, True North runs along
             the <code>4:30</code> axis, so <code>12:00</code> points SW
             (bearing {brc.twelveBearingDeg}&deg;) and <code>6:00</code> points NE.

@@ -13,8 +13,8 @@ import urllib.request
 from pathlib import Path
 
 from .config import Config
-from .models import Camp
-from .parsers import DetailParser, ListingParser
+from .models import Art, Camp
+from .parsers import ArtDetailParser, ArtListingParser, DetailParser, ListingParser
 
 
 class Fetcher:
@@ -87,4 +87,60 @@ class Fetcher:
             indent=2, ensure_ascii=False,
         ))
         print(f"[page {page}] wrote {out} ({len(camps)} camps)", file=sys.stderr)
+        return out
+
+    # --- artwork ---------------------------------------------------------
+
+    def fetch_art_page(self, page: int) -> list[Art]:
+        """Pull /artwork/?page=N + each piece's detail page → list[Art].
+
+        Same retry/backoff/per-piece-sleep model as fetch_page. Detail
+        fetch failures fall back to listing-page data so one bad piece
+        doesn't abort the whole page. The directory only carries
+        name/location/description; artist/hometown/category come from
+        the API source path and stay blank here.
+        """
+        listing_url = f"{self.config.base_url}/artwork/?page={page}"
+        print(f"[art page {page}] fetching listing: {listing_url}", file=sys.stderr)
+        listing_html = self.fetch(listing_url)
+        entries = list(ArtListingParser.parse(listing_html))
+        print(f"[art page {page}] found {len(entries)} pieces", file=sys.stderr)
+
+        art: list[Art] = []
+        for i, (aid, name, loc_listing, short_desc) in enumerate(entries, 1):
+            detail_url = f"{self.config.base_url}/artwork/{aid}/"
+            try:
+                detail_html = self.fetch(detail_url)
+                d_name, d_loc, d_desc = ArtDetailParser.parse(detail_html)
+                piece = Art(
+                    id=aid,
+                    name=d_name or name,
+                    location=d_loc or loc_listing,
+                    description=d_desc or short_desc,
+                    url=detail_url,
+                )
+            except Exception as e:
+                print(f"[art page {page}] {aid}: detail fetch failed ({e}); "
+                      f"using listing data", file=sys.stderr)
+                piece = Art(
+                    id=aid, name=name, location=loc_listing,
+                    description=short_desc, url=detail_url,
+                )
+            art.append(piece)
+            print(f"[art page {page}] {i}/{len(entries)} {aid} {piece.name}",
+                  file=sys.stderr)
+            time.sleep(self.config.per_camp_sleep)
+        return art
+
+    def fetch_art_page_to_file(self, page: int) -> Path:
+        """Pull one /artwork/ page and write data/art_pages/art_NN.json.
+        Returns path."""
+        art = self.fetch_art_page(page)
+        self.config.art_pages_dir.mkdir(parents=True, exist_ok=True)
+        out = self.config.art_pages_dir / f"art_{page:02d}.json"
+        out.write_text(json.dumps(
+            [a.to_dict() for a in art],
+            indent=2, ensure_ascii=False,
+        ))
+        print(f"[art page {page}] wrote {out} ({len(art)} pieces)", file=sys.stderr)
         return out

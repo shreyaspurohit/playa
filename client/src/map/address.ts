@@ -1,15 +1,17 @@
-// Convert BRC addresses ("7:30 & F", "Esplanade & 9:00") to polar
-// coordinates (bearing from Man + distance in feet) and from there to
-// lat/lng or SVG (x, y).
+// Convert BRC addresses ("7:30 & F", "Esplanade & 9:00",
+// "1:44 6400', Open Playa") to polar coordinates (bearing from Man +
+// distance in feet) and from there to lat/lng or SVG (x, y).
 //
 // Address grammar in the fetched directory is remarkably permissive:
 //
-//   "7:30 & F"       most common
-//   "F & 7:30"       also seen (order reversed)
+//   "7:30 & F"               most common (camps)
+//   "F & 7:30"               also seen (order reversed)
 //   "5:00 & B"
 //   "Esplanade & 9:00"
-//   "None Listed"    camps that haven't picked a spot — returns null
-//   "" / "-"         same
+//   "1:44 6400', Open Playa" art form: clock + raw feet distance
+//   "1:44 6400 ft"           same shape, alt feet marker
+//   "None Listed"            no spot picked — returns null
+//   "" / "-"                 same
 //
 // We parse case-insensitively and accept letter (A-L; the set varies
 // per year) or the full street name. Anything we can't match returns
@@ -67,27 +69,67 @@ function parseStreet(
   return null;
 }
 
+/** Match the art form `<clock> <distance>` — e.g.,
+ *  "1:44 6400'", "12:00 6400ft", "1:44 6400", "10:30 25', Man Pavilion".
+ *  Optional comma+suffix ("…, Open Playa", "…, Man Pavilion") is
+ *  captured by the loose regex but ignored. The "feet" marker (`'`,
+ *  `ft`, or nothing) is also optional.
+ *
+ *  Distance is bounded [1, 10000] ft:
+ *   - lower bound 1: keeps zero / negative out, but allows the
+ *     near-Man Pavilion installations at 15-25 ft that BM places
+ *     directly around the Man.
+ *   - upper bound 10000: beyond ~1.9 mi is past the trash fence —
+ *     anything larger is a typo. */
+const CLOCK_DISTANCE_RE =
+  /^(\d{1,2}):(\d{2})\s+(\d{1,5})\s*(?:'|ft\b|feet\b)?\b/i;
+
 export function parseAddress(raw: string, brc: BrcMapData = BRC): PolarAddress | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed || trimmed === '-' || /none listed/i.test(trimmed)) return null;
 
-  // Split on "&" or "and"; try each side as clock, the other as street.
+  // Form 1: `<clock> & <street>`. Split on "&" or "and"; try each side
+  // as clock, the other as street.
   const parts = trimmed.split(/\s*(?:&|\band\b)\s*/i).map((p) => p.trim());
-  if (parts.length < 2) return null;
+  if (parts.length >= 2) {
+    for (const [a, b] of [parts, [parts[1], parts[0]]]) {
+      const clock = parseClock(a);
+      const street = parseStreet(b, brc);
+      if (clock && street) {
+        return {
+          clockHour: clock.hour,
+          clock: clock.clock,
+          street: street.street,
+          radiusFeet: street.radiusFeet,
+        };
+      }
+    }
+  }
 
-  for (const [a, b] of [parts, [parts[1], parts[0]]]) {
-    const clock = parseClock(a);
-    const street = parseStreet(b, brc);
-    if (clock && street) {
+  // Form 2: `<clock> <distance>` (art in open playa — no street ring).
+  // The directory writes "1:44 6400', Open Playa" for these; we
+  // capture the clock + feet and label `street` as "Open Playa" so
+  // the label-near-Man rendering reads sensibly.
+  const m = trimmed.match(CLOCK_DISTANCE_RE);
+  if (m) {
+    const h = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    const dist = parseInt(m[3], 10);
+    if (h >= 1 && h <= 12 && mm < 60 && dist >= 1 && dist <= 10000) {
+      // "Man Pavilion" appears as a suffix on near-Man pieces (15-
+      // 25 ft from the Man). Detect it so the label-near-Man and the
+      // sidebar address read "Man Pavilion" instead of "Open Playa".
+      const isManPavilion = /man\s*pavilion/i.test(trimmed);
       return {
-        clockHour: clock.hour,
-        clock: clock.clock,
-        street: street.street,
-        radiusFeet: street.radiusFeet,
+        clockHour: h + mm / 60,
+        clock: `${h}:${m[2]}`,
+        street: isManPavilion ? 'Man Pavilion' : 'Open Playa',
+        radiusFeet: dist,
       };
     }
   }
+
   return null;
 }
 

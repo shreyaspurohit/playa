@@ -20,6 +20,10 @@ export interface SharePayload {
   name: string;
   campIds: string[];
   eventIds: string[];
+  /** Starred art ids. Optional — older share links predate art and
+   *  this stays undefined / empty, which the receiver treats as "no
+   *  art shared". */
+  artIds?: string[];
   /** Sender's home camp id, if they marked one. Always validated as a
    *  normal id (alphanumeric + - _), so even if a malicious sender
    *  stuffs something weird in here the receiver safely ignores it. */
@@ -162,8 +166,9 @@ export function encodeShare(p: SharePayload): string {
   // byte-identical to the pre-multi-source format.
   const compact: {
     n: string; c: string[]; e: string[];
-    m?: string; s?: MeetSpot[]; src?: string;
+    a?: string[]; m?: string; s?: MeetSpot[]; src?: string;
   } = { n: p.name, c: p.campIds, e: p.eventIds };
+  if (p.artIds && p.artIds.length > 0) compact.a = p.artIds;
   if (p.myCampId) compact.m = p.myCampId;
   if (p.meetSpots && p.meetSpots.length > 0) compact.s = p.meetSpots;
   if (p.source && p.source !== 'directory') compact.src = p.source;
@@ -184,6 +189,7 @@ export function decodeShare(encoded: string): SharePayload | null {
     if (!name) return null;
     const campIds = cleanIds((parsed as { c?: unknown }).c);
     const eventIds = cleanIds((parsed as { e?: unknown }).e);
+    const artIds = cleanIds((parsed as { a?: unknown }).a);
     const myCampId = cleanSingleId((parsed as { m?: unknown }).m);
     const meetSpots = cleanMeetSpots((parsed as { s?: unknown }).s);
     const sourceRaw = (parsed as { src?: unknown }).src;
@@ -195,6 +201,7 @@ export function decodeShare(encoded: string): SharePayload | null {
       ? sourceRaw : undefined;
     return {
       name, campIds, eventIds,
+      ...(artIds.length > 0 ? { artIds } : {}),
       ...(myCampId ? { myCampId } : {}),
       ...(meetSpots.length > 0 ? { meetSpots } : {}),
       ...(source ? { source } : {}),

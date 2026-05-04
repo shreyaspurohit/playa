@@ -100,3 +100,22 @@ export function applyLocationEmbargo(
   if (!isLocationEmbargoed(source, burnStart, now, trusted)) return camps;
   return camps.map((c) => ({ ...c, location: '' }));
 }
+
+import type { Art } from '../types';
+
+/** Apply embargo to art. Per BM ToS §6.2 art locations release at
+ *  gate-open (one week later than camp locations' build-week-Sunday
+ *  release). Our codebase uses `burn_start` (= gate-open) as the
+ *  unified cutoff for both — so the same `isLocationEmbargoed` check
+ *  applies. The function exists separately because `Art` is a
+ *  distinct type. Trusted (god-mode) bypasses identically. */
+export function applyArtLocationEmbargo(
+  art: Art[],
+  source: Source,
+  burnStart: string,
+  now: Date = new Date(),
+  trusted: boolean = false,
+): Art[] {
+  if (!isLocationEmbargoed(source, burnStart, now, trusted)) return art;
+  return art.map((a) => ({ ...a, location: '' }));
+}

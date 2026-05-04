@@ -1,8 +1,10 @@
-"""Pluggable data sources for camp + event listings.
+"""Pluggable data sources for camp + event + art listings.
 
-Each source implements `name` (string id used in DOM/LS keys) and
-`load_camps(config) -> list[Camp]`. The builder enumerates whichever
-sources the user asked for and emits one encrypted payload per source.
+Each source implements `name` (string id used in DOM/LS keys),
+`load_camps(config) -> list[Camp]`, and `load_art(config) -> list[Art]`.
+The builder enumerates whichever sources the user asked for and emits
+one encrypted payload per source per type (camps + art are independent
+ciphers — each source ships both).
 
 See docs/15-data-sources.md for the architecture rationale.
 """
@@ -11,13 +13,14 @@ from __future__ import annotations
 from typing import Protocol
 
 from ..config import Config
-from ..models import Camp
+from ..models import Art, Camp
 
 
 class Source(Protocol):
     name: str
 
     def load_camps(self, config: Config) -> list[Camp]: ...
+    def load_art(self, config: Config) -> list[Art]: ...
 
 
 def make_source(spec: str) -> Source:

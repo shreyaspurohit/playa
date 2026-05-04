@@ -82,3 +82,65 @@ class Camp:
             events=[Event.from_dict(e) for e in (d.get("events") or [])],
             tags=list(d.get("tags", [])),
         )
+
+
+@dataclass
+class Art:
+    """Art installation. Parallel to Camp but with art-specific fields.
+
+    Source-of-truth shapes:
+      * Directory `/artwork/<id>/`: id (numeric), name, location string,
+        description. No website, no events.
+      * API `/api/art?year=YYYY`: SFDC uid, name, artist, hometown,
+        category, program, description, location.location_string,
+        images[].thumbnail_url. No events.
+    Stable across both sources via the union model below — fields the
+    other source doesn't populate stay empty (e.g., directory art has
+    no `artist`).
+    """
+    id: str
+    name: str
+    location: str
+    description: str
+    url: str
+    artist: str = ""
+    hometown: str = ""
+    category: str = ""
+    program: str = ""
+    image_url: str = ""    # thumbnail_url from API (first image only)
+    year: int = 0          # API only; directory art doesn't carry a year
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "location": self.location,
+            "description": self.description,
+            "url": self.url,
+            "artist": self.artist,
+            "hometown": self.hometown,
+            "category": self.category,
+            "program": self.program,
+            "image_url": self.image_url,
+            "year": self.year,
+            "tags": list(self.tags),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Art":
+        aid = str(d["id"])
+        return cls(
+            id=aid,
+            name=d.get("name", ""),
+            location=d.get("location", ""),
+            description=d.get("description", ""),
+            url=d.get("url") or f"https://directory.burningman.org/artwork/{aid}/",
+            artist=d.get("artist", "") or "",
+            hometown=d.get("hometown", "") or "",
+            category=d.get("category", "") or "",
+            program=d.get("program", "") or "",
+            image_url=d.get("image_url", "") or "",
+            year=int(d.get("year") or 0),
+            tags=list(d.get("tags", [])),
+        )

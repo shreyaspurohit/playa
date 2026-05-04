@@ -1,7 +1,12 @@
 """Regex parsers for the directory.burningman.org HTML.
 
-Two parsers, both pure (no state, no I/O) — classes just namespace the
+All parsers are pure (no state, no I/O) — classes just namespace the
 regexes next to the parse() method so they're easy to find and tweak.
+
+Two URL families:
+  * `/camps/`   — ListingParser + DetailParser (camps + events)
+  * `/artwork/` — ArtListingParser + ArtDetailParser (no events; the
+    detail page is a slimmer subset of the camp detail shape)
 """
 from __future__ import annotations
 
@@ -99,3 +104,62 @@ class DetailParser:
                     time=_clean(em.group(4)),
                 ))
         return name, location, website, description, events
+
+
+class ArtListingParser:
+    """Parses /artwork/?page=N — same row shape as the camps listing,
+    just under the /artwork/ path. col-sm-3 is name, col-sm-2 is
+    location, col-sm-7 is the truncated description."""
+
+    ENTRY_RE = re.compile(
+        r'<a class="list-group-item" href="/artwork/(\d+)/">\s*'
+        r'<div class="row">\s*'
+        r'<div class="col-sm-3">\s*(.*?)\s*</div>\s*'
+        r'<div class="col-sm-2">\s*(.*?)\s*</div>\s*'
+        r'<div class="col-sm-7">\s*(.*?)\s*</div>\s*'
+        r'</div>\s*</a>',
+        re.DOTALL,
+    )
+
+    @classmethod
+    def parse(cls, html: str) -> Iterator[tuple[str, str, str, str]]:
+        """Yield (art_id, name, location, short_description) per entry."""
+        for m in cls.ENTRY_RE.finditer(html):
+            yield (
+                m.group(1),
+                _clean(m.group(2)),
+                _clean(m.group(3)),
+                _clean(m.group(4)),
+            )
+
+
+class ArtDetailParser:
+    """Parses /artwork/{id}/ — name, location, description.
+
+    Slimmer than the camp detail page: artwork pages don't carry a
+    Website field or an Events block in the directory. Artist /
+    hometown / category aren't on the directory at all (those come
+    from the API source). The directory parser fills in the basics
+    and leaves the API-only fields blank.
+    """
+
+    NAME_RE = re.compile(r"<h1>Artwork:\s*(.*?)</h1>", re.DOTALL)
+    LOC_RE = re.compile(r"Location:\s*<tt>(.*?)</tt>", re.DOTALL)
+    DESC_RE = re.compile(
+        r"<h2>Description:\s*</h2>\s*<p>(.*?)</p>",
+        re.DOTALL,
+    )
+
+    @classmethod
+    def parse(cls, html: str) -> tuple[str, str, str]:
+        """Return (name, location, description)."""
+        name_m = cls.NAME_RE.search(html)
+        name = _clean(name_m.group(1)) if name_m else ""
+
+        loc_m = cls.LOC_RE.search(html)
+        location = _clean(loc_m.group(1)) if loc_m else ""
+
+        desc_m = cls.DESC_RE.search(html)
+        description = _clean(desc_m.group(1)) if desc_m else ""
+
+        return name, location, description

@@ -9,7 +9,7 @@
 //   - Lat/lng → ft via haversine + compass rotation (see utils/address).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
-import type { Camp, MeetSpot, Source } from '../types';
+import type { Art, Camp, MeetSpot, Source } from '../types';
 import { LS } from '../types';
 import { readString, writeString } from '../utils/storage';
 import type { BrcMapData, BrcPOI } from '../map/data';
@@ -21,6 +21,7 @@ import {
 import { useGeolocation } from '../hooks/useGeolocation';
 import { brcForSource } from '../hooks/useSource';
 import { friendChipStyle, friendHue } from '../utils/friendColor';
+import { FriendChip } from './FriendChip';
 import { MapInfoModal } from './MapInfoModal';
 import { MeetSpotEditor } from './MeetSpotEditor';
 import { TrashIcon } from './TrashIcon';
@@ -42,6 +43,11 @@ interface Props {
   friendFavCampIds: (id: string) => string[];
   favEventIds: Set<string>;
   friendFavEventIds: (id: string) => string[];
+  /** Art for the active source (full list — not pre-filtered). The
+   *  map only pins art the user OR a friend has starred. */
+  art: Art[];
+  favArtIds: Set<string>;
+  friendFavArtIds: (id: string) => string[];
   /** The user's own home camp id ('' when unset). Renders a dedicated
    *  accent-colored pin. Shared with friends via the share link. */
   myCampId: string;
@@ -58,22 +64,35 @@ interface Props {
   initialTargetId?: string | null;
   onClearTarget?: () => void;
   onGotoCamp: (campId: string) => void;
+  /** Cross-view nav handler for art (parallel to onGotoCamp). When the
+   *  user clicks an art pin, jump to the Art tab + scroll to the card. */
+  onGotoArt: (artId: string) => void;
+  /** Per-item friend-star removal — fires from the × button on a
+   *  friend chip in any of the map's sidebar lists. */
+  onRemoveFriendStar: (
+    friendName: string,
+    kind: 'camp' | 'event' | 'art',
+    id: string,
+  ) => void;
+  /** Remove a single meet-spot from a friend's plans. Used by the
+   *  × button on friend meet-spot rows. */
+  onRemoveFriendMeetSpot: (friendName: string, idx: number) => void;
   /** Active data source — drives which year's BRC geometry to use. */
   source: Source;
 }
 
-const VIEWBOX_RADIUS = 6000; // ft — ~50% buffer past K street (left/right/bottom)
+/** Base radius — sized for the city itself: K street (5400') + ~600
+ *  ft buffer. Pins that extend BEYOND K (deep-playa art at 6000-
+ *  10000') trigger a dynamic expansion in `Svg` (effectiveVbRadius).
+ *  Without that, art pins past 6000 fall outside the viewbox. */
+const VIEWBOX_RADIUS_BASE = 6000;
 // City lives on the 2→6→10 bottom arc; the top half is mostly empty
 // open playa. Crop the viewBox so the top margin is just enough for
 // the 2:00 + 10:00 hour labels (at y≈-2875) with breathing room.
 const VIEWBOX_TOP_MARGIN = 3300;
-/** Default viewBox geometry (pre-zoom). Width/height derived from
- *  VIEWBOX_RADIUS + VIEWBOX_TOP_MARGIN; center is the midpoint of that
- *  box, which sits 1350 ft south of the Man because the view is
- *  asymmetrically cropped (more room below for the city). */
-const DEFAULT_VB_WIDTH = VIEWBOX_RADIUS * 2;
-const DEFAULT_VB_HEIGHT = VIEWBOX_RADIUS + VIEWBOX_TOP_MARGIN;
-const DEFAULT_CENTER = { x: 0, y: (DEFAULT_VB_HEIGHT / 2) - VIEWBOX_TOP_MARGIN };
+/** Buffer past the outermost pin when expanding the viewBox. Keeps
+ *  the pin from sitting at the literal edge of the SVG. */
+const VIEWBOX_PIN_BUFFER = 700;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 1.5;
@@ -85,6 +104,7 @@ const ZOOM_STEP = 1.5;
 // state declaration. These are module-level pure functions so the
 // `useState` initializer can use them.
 const campKey = (id: string) => 'camp:' + id;
+const artKey = (id: string) => 'art:' + id;
 const mineSpotKey = (idx: number) => 'mine:' + idx;
 const friendSpotKey = (name: string, idx: number) =>
   'friend:' + name + ':' + idx;
@@ -93,9 +113,11 @@ const poiKey = (kind: string, name: string) => 'poi:' + kind + ':' + name;
 export function MapView({
   camps, favCampIds, friendFavCampIds,
   favEventIds, friendFavEventIds,
+  art, favArtIds, friendFavArtIds,
   myCampId, meetSpots, onAddMeetSpot, onRemoveMeetSpot,
   friendsRendezvous,
-  initialTargetId = null, onClearTarget, onGotoCamp,
+  initialTargetId = null, onClearTarget, onGotoCamp, onGotoArt,
+  onRemoveFriendStar, onRemoveFriendMeetSpot,
   source,
 }: Props) {
   // Per-year geometry constants for the active source. Memoized so the
@@ -156,23 +178,36 @@ export function MapView({
   // centered on — moves when the user selects a pin/spot while zoomed in
   // so the selection stays in frame.
   const [zoom, setZoom] = useState(1);
-  const [center, setCenter] = useState(DEFAULT_CENTER);
+  // Default center is computed dynamically below from the actual pin
+  // extents (so deep-playa art doesn't fall outside the viewBox). The
+  // initial state uses the camps-only base radius; the effect below
+  // re-syncs once the dynamic value settles.
+  const [center, setCenter] = useState(
+    { x: 0, y: VIEWBOX_RADIUS_BASE / 2 - VIEWBOX_TOP_MARGIN / 2 },
+  );
   const zoomIn = useCallback(
     () => setZoom((z) => Math.min(ZOOM_MAX, z * ZOOM_STEP)),
     [],
   );
+  // resetCenter is recreated whenever defaultCenter changes (see below).
+  const defaultCenterRef = useRef<{ x: number; y: number } | null>(null);
   const zoomOut = useCallback(
     () => setZoom((z) => {
       const next = Math.max(ZOOM_MIN, z / ZOOM_STEP);
       // Re-anchor to the full-city view once we're back to 1x so the
       // user doesn't land on an off-center frame.
-      if (next === ZOOM_MIN) setCenter(DEFAULT_CENTER);
+      if (next === ZOOM_MIN && defaultCenterRef.current) {
+        setCenter(defaultCenterRef.current);
+      }
       return next;
     }),
     [],
   );
   const resetZoom = useCallback(
-    () => { setZoom(1); setCenter(DEFAULT_CENTER); },
+    () => {
+      setZoom(1);
+      if (defaultCenterRef.current) setCenter(defaultCenterRef.current);
+    },
     [],
   );
 
@@ -197,6 +232,17 @@ export function MapView({
   // exactly one item is selected.)
 
   const { state: geo, request: requestGps, stop: stopGps } = useGeolocation();
+
+  // True when no camp in the current source has a usable location
+  // string. Distinguishes "data not yet released" (e.g., pre-burn
+  // current-year API source) from "user just hasn't pinned anything
+  // yet" — the empty-state copy below picks the right message off
+  // this flag rather than blaming the user when the data is upstream-
+  // embargoed.
+  const noLocationsAvailable = useMemo(
+    () => camps.length > 0 && !camps.some((c) => c.location && c.location.trim()),
+    [camps],
+  );
 
   // Your own meet-spot pins — computed once per meetSpots change.
   const myMeetPins = useMemo(() => {
@@ -336,6 +382,89 @@ export function MapView({
       }>;
   }, [camps, favCampIds, friendFavCampIds, brc]);
 
+  // Starred art for THIS source (own + friends'). Doesn't require a
+  // resolvable address — we still want to LIST a starred piece even
+  // when its location is missing (e.g., pre-burn API source where
+  // BM hasn't released art locations yet). Rows with no resolvable
+  // address render in the list as "(no location)" and skip the SVG
+  // pin layer.
+  const starredArtList = useMemo(() => {
+    return art
+      .filter((a) => favArtIds.has(a.id) || friendFavArtIds(a.id).length > 0)
+      .map((piece) => {
+        const mine = favArtIds.has(piece.id);
+        const friends = friendFavArtIds(piece.id);
+        return { art: piece, mine, friends };
+      });
+  }, [art, favArtIds, friendFavArtIds]);
+
+  // Art pins for the SVG layer — restricted to entries with
+  // resolvable addresses (otherwise nothing to draw). Subset of
+  // `starredArtList`.
+  const artPins = useMemo(() => {
+    return starredArtList
+      .map(({ art: piece, mine, friends }) => {
+        const pt = addressToSvgFeet(piece.location, brc);
+        if (!pt) return null;
+        return { art: piece, x: pt.x, y: pt.y, mine, friends };
+      })
+      .filter(Boolean) as Array<{
+        art: Art; x: number; y: number; mine: boolean; friends: string[];
+      }>;
+  }, [starredArtList, brc]);
+
+  // Dynamic viewBox sizing — covers any pin (camps, art, meet spots,
+  // friend pins, my-camp). Without this, art at deep-playa addresses
+  // (6000-10000 ft from the Man) falls outside the city-only base
+  // viewBox.
+  //
+  // Two dimensions need expanding:
+  //   - radius (`effectiveVbRadius`) drives width + bottom edge
+  //     (viewBox is symmetric in x, extends from origin to +radius
+  //     on the y-axis).
+  //   - top margin (`effectiveTopMargin`) drives the top edge
+  //     (viewBox extends from -topMargin upward). Default city has
+  //     nothing far above origin (the 12:00 axis is open playa); but
+  //     a piece at 1:44 / 6400' has y ≈ -3949, well above the
+  //     default 3300-ft top margin. Without expanding, the pin falls
+  //     off the top regardless of how far the radius extends.
+  const { effectiveVbRadius, effectiveTopMargin } = useMemo(() => {
+    let maxR = VIEWBOX_RADIUS_BASE - VIEWBOX_PIN_BUFFER;
+    let maxNegY = VIEWBOX_TOP_MARGIN - VIEWBOX_PIN_BUFFER;  // |min(y)|
+    const consider = (x: number, y: number) => {
+      const r = Math.hypot(x, y);
+      if (r > maxR) maxR = r;
+      if (-y > maxNegY) maxNegY = -y;
+    };
+    for (const p of pins) consider(p.x, p.y);
+    for (const p of artPins) consider(p.x, p.y);
+    for (const p of myMeetPins) consider(p.x, p.y);
+    for (const p of friendMeetPins) consider(p.x, p.y);
+    for (const p of friendCampPins) consider(p.x, p.y);
+    if (myCampPin) consider(myCampPin.x, myCampPin.y);
+    return {
+      effectiveVbRadius: Math.max(VIEWBOX_RADIUS_BASE, maxR + VIEWBOX_PIN_BUFFER),
+      effectiveTopMargin: Math.max(VIEWBOX_TOP_MARGIN, maxNegY + VIEWBOX_PIN_BUFFER),
+    };
+  }, [pins, artPins, myMeetPins, friendMeetPins, friendCampPins, myCampPin]);
+
+  const vbWidth = effectiveVbRadius * 2;
+  const vbHeight = effectiveVbRadius + effectiveTopMargin;
+  const defaultCenter = useMemo(
+    () => ({ x: 0, y: vbHeight / 2 - effectiveTopMargin }),
+    [vbHeight, effectiveTopMargin],
+  );
+
+  // Sync the user-pannable center to the latest default whenever the
+  // viewport expands (e.g., user just starred a deep-playa art piece)
+  // — but only at zoom 1 so an active pan isn't ripped out from
+  // under them. Mirrors the behavior of the zoom-out reset.
+  useEffect(() => {
+    defaultCenterRef.current = defaultCenter;
+    if (zoom <= 1) setCenter(defaultCenter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultCenter]);
+
   // Target resolution. Falls through three sources in priority order —
   // starred pins, my home camp, friends' home camps — so selecting any
   // tent on the map (not just starred dots) shows the camp details.
@@ -385,6 +514,36 @@ export function MapView({
     return null;
   }, [selection, pins, myCampPin, friendCampPins]);
 
+  // Single-select target for ART. Mirrors `target` (which is camp-only)
+  // — fires when exactly ONE art piece is selected. Drives the same
+  // big-label-near-Man rendering, auto-recenter, and GPS bearing line
+  // that camps get, just keyed off the art entity. `target` and
+  // `artTarget` are mutually exclusive: selection.size != 1 → both
+  // null; otherwise only the one matching the selected key prefix is
+  // non-null.
+  const artTarget = useMemo((): {
+    art: Art; x: number; y: number;
+    mine: boolean;
+    friends: string[];
+    color: string;
+  } | null => {
+    if (selection.size !== 1) return null;
+    const key = [...selection][0];
+    if (!key.startsWith('art:')) return null;
+    const targetId = key.slice('art:'.length);
+    const p = artPins.find((x) => x.art.id === targetId);
+    if (!p) return null;
+    // Color follows the dot: magenta when YOU starred it, teal when
+    // only friends starred it. Matches `.brc-art-pin-body` fills so
+    // the highlight ring reads as continuation of the pin.
+    const color = p.mine ? '#c026d3' : '#14b8a6';
+    return {
+      art: p.art, x: p.x, y: p.y,
+      mine: p.mine, friends: p.friends,
+      color,
+    };
+  }, [selection, artPins]);
+
   // Multi-select rendering source. Each entry carries everything the
   // SVG layer needs to draw a highlight + line label without re-doing
   // the per-item lookups. Walked once per render — single-select paths
@@ -395,7 +554,7 @@ export function MapView({
     x: number; y: number;
     address: string;             // raw "7:30 & E"
     label: string;               // primary display name
-    kind: 'camp' | 'mine' | 'friend' | 'poi';
+    kind: 'camp' | 'art' | 'mine' | 'friend' | 'poi';
     /** Hex / hsl / CSS-var string the highlight (radial + ring + halo
      *  + bearing) should use. Matches the dot's actual fill so the
      *  line color reads as continuation of the dot, not a separate
@@ -405,7 +564,7 @@ export function MapView({
     const out: Array<{
       key: string; x: number; y: number;
       address: string; label: string;
-      kind: 'camp' | 'mine' | 'friend' | 'poi';
+      kind: 'camp' | 'art' | 'mine' | 'friend' | 'poi';
       color: string;
     }> = [];
     for (const key of selection) {
@@ -438,6 +597,20 @@ export function MapView({
           address: camp.location,
           label: author ? `${author}'s camp — ${camp.name}` : camp.name,
           kind: 'camp',
+          color,
+        });
+      } else if (key.startsWith('art:')) {
+        const id = key.slice('art:'.length);
+        const p = artPins.find((a) => a.art.id === id);
+        if (!p) continue;
+        // Same mine/friend split as `artTarget`: magenta when you
+        // starred it, teal otherwise (friend-only).
+        const color = p.mine ? '#c026d3' : '#14b8a6';
+        out.push({
+          key, x: p.x, y: p.y,
+          address: p.art.location,
+          label: p.art.name + (p.art.artist ? ` — ${p.art.artist}` : ''),
+          kind: 'art',
           color,
         });
       } else if (key.startsWith('mine:')) {
@@ -484,7 +657,7 @@ export function MapView({
       }
     }
     return out;
-  }, [selection, pins, myCampPin, friendCampPins,
+  }, [selection, pins, artPins, myCampPin, friendCampPins,
       myMeetPins, friendMeetPins, poiPins, favCampIds]);
 
   // When the user picks exactly one pin / spot / POI while zoomed in,
@@ -494,8 +667,9 @@ export function MapView({
   useEffect(() => {
     if (zoom <= 1) return;
     if (target) setCenter({ x: target.x, y: target.y });
+    else if (artTarget) setCenter({ x: artTarget.x, y: artTarget.y });
     else if (activeSpot) setCenter({ x: activeSpot.x, y: activeSpot.y });
-  }, [target, activeSpot, zoom]);
+  }, [target, artTarget, activeSpot, zoom]);
 
   // User GPS → SVG coordinates (only when we have a fix)
   const userSvg = geo.status === 'ready'
@@ -524,7 +698,16 @@ export function MapView({
   // only and went unused once we moved to inline expansion.)
 
   function externalMapsUrl(c: Camp) {
-    const ll = addressToLatLng(c.location, brc);
+    return externalMapsUrlForAddress(c.location);
+  }
+
+  /** Given any BRC address string, return a Google Maps URL pointing
+   *  at its lat/lng — null when the address doesn't resolve. Used for
+   *  camps, art, meet spots, and any future entity. Google Maps can't
+   *  read BRC's "7:30 & F" / "1:44 6400'" formats; we have to convert
+   *  to actual lat/lng via the per-year Golden Spike + polar math. */
+  function externalMapsUrlForAddress(raw: string): string | null {
+    const ll = addressToLatLng(raw, brc);
     if (!ll) return null;
     return `https://www.google.com/maps?q=${ll.lat},${ll.lng}`;
   }
@@ -672,9 +855,15 @@ export function MapView({
 
       {pins.length === 0 && !myCampPin && myMeetPins.length === 0 && friendCampPins.length === 0 && friendMeetPins.length === 0 && (
         <div class="empty-state">
-          Nothing pinned yet. Star a camp or event (auto-stars its camp),
-          mark one as <strong>my camp</strong>, or add a meet spot below —
-          any of those will pin to the map.
+          {noLocationsAvailable ? (
+            <>Location data not yet available for this source.</>
+          ) : (
+            <>
+              Nothing pinned yet. Star a camp or event (auto-stars its camp),
+              mark one as <strong>my camp</strong>, or add a meet spot below —
+              any of those will pin to the map.
+            </>
+          )}
         </div>
       )}
       {/* Always render the rendezvous box + SVG so the BRC grid + POIs
@@ -949,7 +1138,10 @@ export function MapView({
                           <div class="map-meet-label">
                             {fm.spot.label}
                             {' '}
-                            <span class="fav-by-chip" style={friendChipStyle(fm.name)}>{fm.name}</span>
+                            <FriendChip
+                              name={fm.name}
+                              onRemove={() => onRemoveFriendMeetSpot(fm.name, fm.idx)}
+                            />
                           </div>
                           <div class="map-pin-addr">
                             {fm.spot.address}{fm.spot.when ? ` · ${fm.spot.when}` : ''}
@@ -1034,11 +1226,11 @@ export function MapView({
                             <span class="fav-by-chip mine">you</span>
                           )}
                           {p.friends.map((n) => (
-                            <span
+                            <FriendChip
                               key={`f-${n}`}
-                              class="fav-by-chip"
-                              style={friendChipStyle(n)}
-                            >{n}</span>
+                              name={n}
+                              onRemove={() => onRemoveFriendStar(n, 'camp', p.camp.id)}
+                            />
                           ))}
                         </span>
                       )}
@@ -1053,11 +1245,11 @@ export function MapView({
                               <span class="fav-by-chip mine">you</span>
                             )}
                             {p.friends.map((n) => (
-                              <span
+                              <FriendChip
                                 key={`fd-${n}`}
-                                class="fav-by-chip"
-                                style={friendChipStyle(n)}
-                              >{n}</span>
+                                name={n}
+                                onRemove={() => onRemoveFriendStar(n, 'camp', p.camp.id)}
+                              />
                             ))}
                           </div>
                         )}
@@ -1090,11 +1282,11 @@ export function MapView({
                                             <span class="fav-by-chip mine">you</span>
                                           )}
                                           {eventFriends.map((n) => (
-                                            <span
+                                            <FriendChip
                                               key={`fe-${n}`}
-                                              class="fav-by-chip"
-                                              style={friendChipStyle(n)}
-                                            >{n}</span>
+                                              name={n}
+                                              onRemove={() => onRemoveFriendStar(n, 'event', e.id)}
+                                            />
                                           ))}
                                         </span>
                                       )}
@@ -1130,10 +1322,163 @@ export function MapView({
             );
           })()}
 
+          {starredArtList.length > 0 && (() => {
+            const artSectionExpanded = expandedSections.has('starred-art');
+            const pinnedCount = artPins.length;
+            const totalCount = starredArtList.length;
+            // Selected-when-collapsed parity with camp / meet / POI
+            // sections: a row that's currently in `selection` keeps
+            // showing even with the section collapsed, so tapping a
+            // pin auto-reveals its details in the sidebar without
+            // forcing the user to expand the section first.
+            const selectedCount = starredArtList.reduce(
+              (n, p) => n + (selection.has(artKey(p.art.id)) ? 1 : 0),
+              0,
+            );
+            const visibleArt = artSectionExpanded
+              ? starredArtList
+              : starredArtList.filter((p) => selection.has(artKey(p.art.id)));
+            return (
+              <div class="map-list">
+                <div class="map-section-toggle">
+                  <button
+                    type="button"
+                    class="map-section-toggle-btn"
+                    onClick={() => toggleSection('starred-art')}
+                  >
+                    {artSectionExpanded ? '▾' : '▸'}{' '}
+                    Starred art ({totalCount})
+                    {pinnedCount < totalCount && (
+                      <span class="count">
+                        {' '}· {pinnedCount} on map
+                      </span>
+                    )}
+                    {!artSectionExpanded && selectedCount > 0 && (
+                      <span class="count"> · {selectedCount} selected</span>
+                    )}
+                  </button>
+                </div>
+                {visibleArt.length > 0 && (
+                  <ul>
+                    {visibleArt.map((p) => {
+                      const youStarredArt = favArtIds.has(p.art.id);
+                      const hasLocation = Boolean(p.art.location?.trim());
+                      const active = selection.has(artKey(p.art.id));
+                      return (
+                        <li
+                          key={`art-row-${p.art.id}`}
+                          class={'map-pin-row' + (active ? ' active' : '')}
+                          onClick={() => toggleKey(artKey(p.art.id))}
+                        >
+                          <span
+                            class={'map-pin-dot map-art-dot' + (p.mine ? ' mine' : '')}
+                            aria-hidden="true"
+                          />
+                          <span class="map-pin-mid">
+                            <span class="map-pin-name">{p.art.name}</span>
+                            {p.art.artist && (
+                              <span class="map-pin-friends">
+                                <span class="map-pin-byline">by {p.art.artist}</span>
+                              </span>
+                            )}
+                            {(youStarredArt || p.friends.length > 0) && (
+                              // Drop the `hasAnyFriends` gate that
+                              // camps use — for art we always want
+                              // explicit attribution (imports are the
+                              // common case; the friend nickname must
+                              // be visible per row, not implicit).
+                              <span class="map-pin-friends">
+                                {youStarredArt && (
+                                  <span class="fav-by-chip mine">you</span>
+                                )}
+                                {p.friends.map((n) => (
+                                  <FriendChip
+                                    key={`af-${n}`}
+                                    name={n}
+                                    onRemove={() => onRemoveFriendStar(n, 'art', p.art.id)}
+                                  />
+                                ))}
+                              </span>
+                            )}
+                          </span>
+                          <span class={'map-pin-addr' + (hasLocation ? '' : ' empty')}>
+                            {hasLocation ? p.art.location : '(no location yet)'}
+                          </span>
+                          {active && (
+                            <div class="row-details">
+                              {(youStarredArt || p.friends.length > 0) && (
+                                <div class="row-faved">
+                                  Starred by{' '}
+                                  {youStarredArt && (
+                                    <span class="fav-by-chip mine">you</span>
+                                  )}
+                                  {p.friends.map((n) => (
+                                    <FriendChip
+                                      key={`afd-${n}`}
+                                      name={n}
+                                      onRemove={() => onRemoveFriendStar(n, 'art', p.art.id)}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                              {p.art.description && (
+                                <p class="row-desc">{p.art.description}</p>
+                              )}
+                              {(p.art.category || p.art.program) && (
+                                <div class="row-meta">
+                                  {[p.art.category, p.art.program]
+                                    .filter(Boolean).join(' · ')}
+                                </div>
+                              )}
+                              {hasLocation && <NavBlock address={p.art.location} />}
+                              {!hasLocation && (
+                                <div class="row-footnote">
+                                  No location yet — BM hasn't published
+                                  art locations for this source.
+                                </div>
+                              )}
+                              <div class="row-actions">
+                                <button
+                                  type="button" class="map-ext-link"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onGotoArt(p.art.id);
+                                  }}
+                                >Open art card →</button>
+                                {(() => {
+                                  const url = externalMapsUrlForAddress(p.art.location);
+                                  if (!url) return null;
+                                  return (
+                                    <a
+                                      class="map-ext-link"
+                                      href={url}
+                                      target="_blank" rel="noopener"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >Open in Google Maps ↗</a>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
+
           <Svg
             pins={pins}
+            artPins={artPins}
             target={target}
             targetAddress={target ? parseAddress(target.camp.location, brc) : null}
+            artTarget={artTarget}
+            artTargetAddress={artTarget ? parseAddress(artTarget.art.location, brc) : null}
+            vbWidth={vbWidth}
+            vbHeight={vbHeight}
+            vbRadius={effectiveVbRadius}
             userSvg={userSvg}
             selection={selection}
             toggleKey={toggleKey}
@@ -1197,12 +1542,40 @@ function formatDistance(meters: number, unit: DistanceUnit): string {
 // --- SVG --------------------------------------------------------------
 
 function Svg({
-  pins, target, targetAddress, userSvg, onClearSelection,
+  pins, artPins,
+  target, targetAddress,
+  artTarget, artTargetAddress,
+  vbWidth, vbHeight, vbRadius,
+  userSvg, onClearSelection,
   myCampPin, myMeetPins, friendCampPins, friendMeetPins,
   selection, toggleKey, activeSpot, activeSpotAddress,
   selectedItems, poiPins, zoom, center, setCenter, unit, brc,
 }: {
   pins: Array<{ camp: Camp; x: number; y: number; mine: boolean; friends: string[] }>;
+  /** Starred art pins. Star shape + distinct color from camp pins.
+   *  Tap toggles selection (sidebar row expands inline). */
+  artPins: Array<{ art: Art; x: number; y: number; mine: boolean; friends: string[] }>;
+  /** Single-select target for art — fires when exactly one art piece
+   *  is selected. Drives the same big-label / halo / ring / GPS-
+   *  bearing rendering camps get. Mutually exclusive with `target`. */
+  artTarget: {
+    art: Art; x: number; y: number;
+    mine: boolean; friends: string[];
+    color: string;
+  } | null;
+  /** Parsed address for the single selected art piece. Null in
+   *  multi mode or when no art selected. */
+  artTargetAddress: {
+    clockHour: number; radiusFeet: number;
+    clock: string; street: string;
+  } | null;
+  /** Dynamic viewBox dimensions, expanded to fit the outermost
+   *  pinned item (deep-playa art typically). Computed in MapView. */
+  vbWidth: number;
+  vbHeight: number;
+  /** Effective ring-radius the viewBox is sized to (= half-vbWidth).
+   *  Used by the playa-background circle. */
+  vbRadius: number;
   /** Single-select view — populated only when exactly one camp is in
    *  the selection set. Drives the big near-Man label + GPS bearing
    *  line, both of which only make sense for a single target. */
@@ -1247,7 +1620,7 @@ function Svg({
   selectedItems: Array<{
     key: string; x: number; y: number;
     address: string; label: string;
-    kind: 'camp' | 'mine' | 'friend' | 'poi';
+    kind: 'camp' | 'art' | 'mine' | 'friend' | 'poi';
     color: string;
   }>;
   poiPins: Array<{ poi: BrcPOI; x: number; y: number }>;
@@ -1267,8 +1640,8 @@ function Svg({
   // viewBox derived from zoom + center. At zoom=1 this reproduces the
   // original `-6000 -3300 12000 9300` frame exactly (DEFAULT_CENTER is
   // the midpoint of that frame).
-  const vbW = DEFAULT_VB_WIDTH / zoom;
-  const vbH = DEFAULT_VB_HEIGHT / zoom;
+  const vbW = vbWidth / zoom;
+  const vbH = vbHeight / zoom;
   const vbX = center.x - vbW / 2;
   const vbY = center.y - vbH / 2;
 
@@ -1355,7 +1728,7 @@ function Svg({
       {/* background — "open playa" fill. Sized generously and clipped
           to viewBox automatically; the top half gets cropped away
           along with the unused empty space. */}
-      <circle cx={0} cy={0} r={VIEWBOX_RADIUS * 0.98} class="brc-playa" />
+      <circle cx={0} cy={0} r={vbRadius * 0.98} class="brc-playa" />
       {/* Concentric letter streets, 2:00 → 10:00 through 6:00 (the
           city side). Polyline approximation — SVG's A-command flags
           for large-arc/sweep disambiguation render counter-intuitively
@@ -1421,7 +1794,38 @@ function Svg({
           </text>
         </>
       )}
-      {!target && activeSpot && activeSpotAddress && (
+      {!target && artTarget && artTargetAddress && (
+        <>
+          {/* Art label parallel to camp target. Title prefixes with the
+              palette glyph so it reads as "art" at a glance, plus
+              artist when known. Address falls back to "<clock> at
+              <feet>'" form for art in open playa (no street). */}
+          <text
+            x={0} y={-920}
+            class="brc-label brc-address-title"
+            text-anchor="middle"
+          >
+            🎨 {artTarget.art.name}
+            {artTarget.art.artist ? ` — ${artTarget.art.artist}` : ''}
+          </text>
+          <text
+            x={0} y={-460}
+            class="brc-label brc-address-label"
+            text-anchor="middle"
+          >
+            {/* Open Playa + Man Pavilion are the two synthetic
+                "streets" the parser emits for the clock+distance art
+                form — the city's letter rings (A-K) don't apply, so
+                show clock + raw feet. Real letter streets keep the
+                familiar "<clock> & <street>" form. */}
+            {(artTargetAddress.street === 'Open Playa'
+              || artTargetAddress.street === 'Man Pavilion')
+              ? `${artTargetAddress.clock} · ${artTargetAddress.radiusFeet}'`
+              : `${artTargetAddress.clock} & ${artTargetAddress.street}`}
+          </text>
+        </>
+      )}
+      {!target && !artTarget && activeSpot && activeSpotAddress && (
         <>
           {/* Title sits well above the address so the big 340px address
               letters + smaller 200px title don't collide. The previous
@@ -1474,7 +1878,7 @@ function Svg({
       {/* Spot highlight — same radial + ring-arc + halo treatment as
           camp highlights, but recolored via `.brc-highlight.spot`
           CSS so the violet meet-spot palette reads instead of orange. */}
-      {!target && activeSpot && activeSpotAddress && (() => {
+      {!target && !artTarget && activeSpot && activeSpotAddress && (() => {
         const outerR = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
         const radialEnd = hourToSvgPoint(activeSpotAddress.clockHour, outerR);
         const span = 0.6;
@@ -1519,6 +1923,37 @@ function Svg({
             <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
             <path d={arcD} class="brc-highlight-ring" fill="none" />
             <circle cx={target.x} cy={target.y} r={180} class="brc-highlight-halo" />
+          </g>
+        );
+      })()}
+
+      {/* Art single-select highlight — same radial + ring-arc + halo
+          treatment as camps + meet-spots, recolored magenta to match
+          the star pin's fill. The radial extends to the FURTHER of
+          (K-street + 150) and (pin radius + 250) so deep-playa art
+          (6000-10000') gets a line that actually reaches its pin
+          instead of stopping at the city edge. `!target &&` prefix is
+          defensive — `target` and `artTarget` are mutually exclusive
+          by construction (selection.size==1 + key prefix). */}
+      {!target && artTarget && artTargetAddress && (() => {
+        const cityEdge = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
+        const outerR = Math.max(cityEdge, artTargetAddress.radiusFeet + 250);
+        const radialEnd = hourToSvgPoint(artTargetAddress.clockHour, outerR);
+        const span = 0.6;
+        const arcD = arcPolylinePath(
+          artTargetAddress.clockHour - span,
+          artTargetAddress.clockHour + span,
+          artTargetAddress.radiusFeet,
+          12,
+        );
+        return (
+          <g
+            class="brc-highlight"
+            style={{ '--highlight-color': artTarget.color } as JSX.CSSProperties}
+          >
+            <line x1={0} y1={0} x2={radialEnd.x} y2={radialEnd.y} class="brc-highlight-radial" />
+            <path d={arcD} class="brc-highlight-ring" fill="none" />
+            <circle cx={artTarget.x} cy={artTarget.y} r={180} class="brc-highlight-halo" />
           </g>
         );
       })()}
@@ -1617,7 +2052,12 @@ function Svg({
         return selectedItems.map((item) => {
           const addr = parseAddress(item.address, brc);
           if (!addr) return null;
-          const outerR = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
+          // Radial extends to the further of city-edge and the pin's
+          // own radius — same fix applied to single-select. Without
+          // this, deep-playa art at radius > K would have its radial
+          // line stop at K and never reach the actual pin.
+          const cityEdge = brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 150;
+          const outerR = Math.max(cityEdge, addr.radiusFeet + 250);
           const radialEnd = hourToSvgPoint(addr.clockHour, outerR);
           const span = 0.6;
           const arcD = arcPolylinePath(
@@ -1626,6 +2066,7 @@ function Svg({
           );
           const cls = item.kind === 'camp' ? 'brc-highlight'
             : item.kind === 'poi' ? 'brc-highlight poi'
+            : item.kind === 'art' ? 'brc-highlight art'
             : 'brc-highlight spot';
           const len = Math.hypot(item.x, item.y) || 1;
           const ux = item.x / len;
@@ -1761,17 +2202,20 @@ function Svg({
           drops it — there's no clear "where am I going?" with N≥2.
           Color matches the target's dot so the line reads as an
           extension of the dot, not a separate visual layer. */}
-      {userSvg && (target || activeSpot) && (
-        <line
-          x1={userSvg.x} y1={userSvg.y}
-          x2={target ? target.x : activeSpot!.x}
-          y2={target ? target.y : activeSpot!.y}
-          class="brc-bearing"
-          style={{
-            '--highlight-color': target ? target.color : activeSpot!.color,
-          } as JSX.CSSProperties}
-        />
-      )}
+      {userSvg && (target || artTarget || activeSpot) && (() => {
+        const t =
+          target ? { x: target.x, y: target.y, color: target.color }
+          : artTarget ? { x: artTarget.x, y: artTarget.y, color: artTarget.color }
+          : { x: activeSpot!.x, y: activeSpot!.y, color: activeSpot!.color };
+        return (
+          <line
+            x1={userSvg.x} y1={userSvg.y}
+            x2={t.x} y2={t.y}
+            class="brc-bearing"
+            style={{ '--highlight-color': t.color } as JSX.CSSProperties}
+          />
+        );
+      })()}
 
       {/* Static POIs — landmarks like Center Camp + Playa Info. Sized
           larger than the starred-camp pins so these "everyone's
@@ -1817,6 +2261,40 @@ function Svg({
           <circle r={70} class="brc-pin-outer" />
           <circle r={35} class="brc-pin-inner" />
           <title>{p.camp.name}{p.camp.location ? ` — ${p.camp.location}` : ''}</title>
+        </g>
+      ))}
+
+      {/* Art pins — favorited art only. Star shape so the "art piece"
+          affordance reads distinct from camps' circles + meet-spots'
+          circles + my-camp's triangle. Tap toggles selection (matches
+          camp pin behavior — sidebar row expands inline with details
+          + an "Open art card →" button to jump to the Art tab). */}
+      {artPins.map((p) => (
+        <g
+          key={`art-${p.art.id}`}
+          class={
+            'brc-art-pin'
+            + (selection.has(artKey(p.art.id)) ? ' active' : '')
+            + (p.mine ? ' mine' : ' friend')
+          }
+          transform={`translate(${p.x} ${p.y})`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleKey(artKey(p.art.id));
+          }}
+        >
+          <circle r={150} class="brc-pin-hit" />
+          {/* 5-point star — visually distinct from camp circles,
+              meet-spot circles, and the my-camp triangle. Outer
+              radius 70, inner ~27 (golden-ratio inset). */}
+          <path
+            d="M 0 -70 L 16 -22 L 67 -22 L 26 8 L 41 57 L 0 27 L -41 57 L -26 8 L -67 -22 L -16 -22 Z"
+            class="brc-art-pin-body"
+          />
+          <title>
+            🎨 {p.art.name}{p.art.artist ? ` — ${p.art.artist}` : ''}
+            {p.art.location ? ` — ${p.art.location}` : ''}
+          </title>
         </g>
       ))}
 

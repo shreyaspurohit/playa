@@ -715,6 +715,59 @@ write-access requirement. No extra config needed. Document the
 Environment + required-reviewers path here so it's easy to opt
 into later.
 
+### D14 — Art alongside camps (added 2026-05-02)
+
+Art installations are a parallel entity — same dual-source split as
+camps (directory scrape + `api.burningman.org/api/art`), same per-
+source LS keys for favorites, same envelope/encryption story. Each
+source emits a SECOND cipher / script tag for art alongside the
+existing camps one.
+
+**Why parallel rather than mixed:**
+- Different schema (no events, has artist/category/program/image).
+- Independent fetch cadence: art's API release (gate-open) lags
+  camps' (build-week-Sunday) by ~1 week per BM ToS §6.2 — keeping
+  the streams separate makes that asymmetry obvious.
+- Independent star list: a user might have 10 starred camps but
+  100 starred art pieces (or vice-versa); merging them into one
+  "favorites" set would lose semantic meaning.
+
+**Envelope crypto detail:** within a source the camps + art ciphers
+share a single DEK (saves a wrapper per source-tier pair, avoiding
+~150 bytes × #tiers × #sources of bundle bloat) but use SEPARATE
+IVs. CBC with reused (key, IV) on different plaintexts leaks
+first-block XOR; gzip headers are mostly deterministic, so the
+leak would actually surface plaintext bytes. Art cipher's IV
+travels in its own script-tag JSON; client `decryptSource` reads
+`cipher.iv` directly (was previously sliced from `dekIv[32:48]`
+— that slice is still used as a fallback for older bundle shapes).
+
+**UI placement:** Art tab sits between Schedule and Map in the
+TabBar. The Map ONLY pins art the user (or a friend) has starred —
+showing every art piece on the map would clutter the city. Art
+pins use a magenta diamond shape, distinct from camps' orange
+circles.
+
+**Tagging:** the existing `Tagger` taxonomy is reused via
+`tag_art()` / `art_haystack()` — name + description + artist +
+category + program. No separate art taxonomy because the meaningful
+tags (interactive, fire, sound, sculpture, …) apply equally well
+to either entity type. The `category="Mutant Vehicles"` field
+specifically surfaces the existing `mutant_vehicle` tag.
+
+**Embargo:** art uses the SAME burn_start cutoff as camps
+(`isLocationEmbargoed` is type-agnostic — checks source + date
+only). Per ToS §6.2 art locations release at gate-open, camps at
+build-week-Sunday; we use gate-open for both (conservative for
+camps, exact for art). `god-mode` trusted bypass applies
+identically.
+
+**Operational note:** the `directory` scrape's `/artwork/` page set
+is much smaller than `/camps/` (~10 pages vs 30). The shared
+`PAGES` env var still gates both — over-fetching empty pages is
+harmless; under-fetching would silently truncate. CI uses
+`PAGES=30` for camps and the same value covers art.
+
 ## Mechanism
 
 ### Build pipeline

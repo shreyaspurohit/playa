@@ -20,7 +20,12 @@ import { isGzipDecompressSupported } from '../utils/gzip';
 
 interface Props {
   enc: EncryptedPayload;
-  onUnlock: (jsonText: string) => void;
+  /** Called after a successful unlock with the decrypted camps JSON
+   *  AND the password the user entered. The password is needed by
+   *  the parent so it can also decrypt the parallel `art-data-…
+   *  -encrypted` script (single-tier mode embeds two ciphers per
+   *  source — camps + art — protected by the same password). */
+  onUnlock: (jsonText: string, password: string) => void;
 }
 
 const PW_CHANNEL = 'playa-camps-pw';
@@ -46,7 +51,7 @@ export function Gate({ enc, onUnlock }: Props) {
       try {
         const text = await decryptPayload(enc, pw);
         await cachePassword(pw);
-        if (!cancelled) onUnlock(text);
+        if (!cancelled) onUnlock(text, pw);
         return true;
       } catch {
         return false;
@@ -147,7 +152,7 @@ export function Gate({ enc, onUnlock }: Props) {
       await cachePassword(pw);
       // Hand the password to any sibling tab that's still on the gate.
       try { channelRef.current?.postMessage({ type: 'share', pw }); } catch {}
-      onUnlock(text);
+      onUnlock(text, pw);
     } catch {
       setError('Wrong password. Try again.');
       inputRef.current?.select();

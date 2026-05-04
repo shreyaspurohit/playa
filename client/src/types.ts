@@ -32,6 +32,25 @@ export interface Camp {
   events: Event[];
 }
 
+/** Art installation. Mirrors `backend/src/playa/models.py` `Art.to_dict`.
+ *  Subset of fields are populated depending on source: directory provides
+ *  name/location/description; the API additionally provides artist,
+ *  hometown, category, program, image_url, year. */
+export interface Art {
+  id: string;
+  name: string;
+  location: string;
+  description: string;
+  url: string;                    // canonical /artwork/<id>/ (directory only)
+  artist: string;
+  hometown: string;
+  category: string;
+  program: string;
+  image_url: string;              // first thumbnail from API; '' for directory
+  year: number;                   // 0 for directory (no year context)
+  tags: string[];
+}
+
 export interface EncryptedPayload {
   salt: string;                   // base64
   iter: number;                   // PBKDF2 iterations
@@ -59,6 +78,10 @@ export const LS = {
   infoSeen:  'bm-info-seen',
   favs:      'bm-favs',
   favEvents: 'bm-fav-events',
+  // Per-source starred art ids — same shape as `favs`, separate slot.
+  // Stars camp + art are independent so users can curate two lists
+  // (and friends can share one without the other if they want).
+  favArt:    'bm-fav-art',
   nickname:  'bm-nickname',       // your display name for sharing
   sharedFavs:'bm-shared',         // {[friendName]: FriendFavs}
   viewMode:  'bm-view',           // 'camps' | 'schedule' | 'map' (last tab)
@@ -146,6 +169,7 @@ export interface FriendFavs {
   name: string;
   campIds: string[];
   eventIds: string[];
+  artIds?: string[];              // optional — older shares may not carry art
   importedAt: string;             // ISO timestamp
   myCampId?: string;              // their home camp, if they shared it
   meetSpots?: MeetSpot[];         // rendezvous plans, if they shared any

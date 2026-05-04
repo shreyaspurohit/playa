@@ -33,9 +33,6 @@ function mountToolbar(over: Partial<Parameters<typeof Toolbar>[0]> = {}) {
     webCount: 0,
     onToggleWebFilter: () => {},
     onUnfavoriteAll: () => {},
-    onShare: () => {},
-    onExport: () => {},
-    onImport: () => {},
     focusKey: 0,
     ...over,
   };

@@ -23,6 +23,10 @@ interface Props {
   onToggleFav: (id: string) => void;
   onToggleFavEvent: (id: string) => void;
   onNavigate: (campId: string) => void;
+  /** Per-card friend-star removal — fires from the × button on a
+   *  friend's chip on this card. */
+  onRemoveFriendCampStar: (friendName: string, campId: string) => void;
+  onRemoveFriendEventStar: (friendName: string, eventId: string) => void;
   /** The user's own home camp id ('' when unset). Highlighted
    *  differently on the card and exposed in the share-link payload. */
   myCampId: string;
@@ -38,6 +42,7 @@ export function CampsView({
   onToggleTag, onToggleShowAllTags,
   isFav, isFavEvent, friendsFavingCamp, friendsFavingEvent,
   onToggleFav, onToggleFavEvent, onNavigate,
+  onRemoveFriendCampStar, onRemoveFriendEventStar,
   myCampId, onSetMyCamp,
   scrollToCampId, scrollToCampTick,
 }: Props) {
@@ -90,6 +95,8 @@ export function CampsView({
               isMyCamp={myCampId === c.id}
               myCampSet={myCampId !== ''}
               onSetMyCamp={onSetMyCamp}
+              onRemoveFriendCampStar={(name) => onRemoveFriendCampStar(name, c.id)}
+              onRemoveFriendEventStar={onRemoveFriendEventStar}
             />
           ))
         )}

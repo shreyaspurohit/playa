@@ -11,7 +11,7 @@
 // content (pre-D12 builds) when the script's `type` is
 // `application/json` rather than the new gzip+base64 type.
 import type {
-  Camp, EncryptedPayload, Source, SourceCipher,
+  Art, Camp, EncryptedPayload, Source, SourceCipher,
 } from './types';
 import { decompressGzip } from './utils/gzip';
 
@@ -21,6 +21,12 @@ import { decompressGzip } from './utils/gzip';
 export interface EnvelopeSource {
   source: Source;
   cipher: SourceCipher;
+  /** Art cipher for this source. Encrypted with the SAME DEK as
+   *  `cipher` (camps) but a distinct IV so CBC-IV reuse across
+   *  plaintexts is avoided. The client decrypts this with the
+   *  unwrapped DEK from any wrapper. Always present (decrypts to "[]"
+   *  when the source has no art) so the client schema is invariant. */
+  artCipher: SourceCipher;
   /** Wrapper envelopes in declaration order, indexed parallel to the
    *  manifest meta tag's content. Each is a normal PBKDF2+AES-CBC
    *  envelope wrapping the 48-byte DEK+IV blob. */
@@ -109,6 +115,16 @@ function readEnvelopeSource(
   const cipherEl = document.getElementById(`camps-data-${source}-cipher`);
   if (!cipherEl) return null;
   const cipher = JSON.parse(cipherEl.textContent ?? '{}') as SourceCipher;
+  // Art cipher: parallel to camps. Synthesize an empty cipher when
+  // missing (older bundle that predates art support) so the client's
+  // decrypt path doesn't crash — empty `ct` decrypts cleanly to "[]"
+  // is NOT what happens here (empty AES-CBC fails); instead we mark
+  // the cipher with a sentinel `ct: ''` and `decryptArtSource` short-
+  // circuits to "[]" before calling Web Crypto.
+  const artEl = document.getElementById(`art-data-${source}-cipher`);
+  const artCipher: SourceCipher = artEl
+    ? (JSON.parse(artEl.textContent ?? '{}') as SourceCipher)
+    : { iv: '', ct: '', compressed: true };
   const wrappers: EncryptedPayload[] = [];
   const trusted: boolean[] = [];
   for (const idx of idxs) {
@@ -117,7 +133,7 @@ function readEnvelopeSource(
     wrappers.push(JSON.parse(el.textContent ?? '{}') as EncryptedPayload);
     trusted.push(trustedIdxs.has(idx));
   }
-  return { source, cipher, wrappers, trusted };
+  return { source, cipher, artCipher, wrappers, trusted };
 }
 
 export async function readEmbeddedPayload(
@@ -184,4 +200,73 @@ export function indexHaystacks(camps: Camp[]): void {
 
 export function haystackOf(camp: Camp): string {
   return (camp as Camp & { _hay?: string })._hay ?? '';
+}
+
+// --- art ----------------------------------------------------------------
+
+/** Type for the plain-mode art payload. Mirrors `Payload` for camps. */
+export type ArtPayload =
+  | { kind: 'plain'; art: Art[] }
+  | { kind: 'encrypted'; enc: EncryptedPayload }
+  | { kind: 'envelope' };  // envelope mode reads via getEnvelopeArt
+
+async function readPlainArt(el: HTMLElement): Promise<Art[]> {
+  const type = el.getAttribute('type') ?? 'application/json';
+  const text = el.textContent ?? '';
+  if (type === GZIP_B64_TYPE) {
+    const inflated = await decompressGzip(base64ToBytes(text));
+    return JSON.parse(new TextDecoder().decode(inflated)) as Art[];
+  }
+  return JSON.parse(text || '[]') as Art[];
+}
+
+/** Read the embedded art payload for the active source. Mirrors
+ *  `readEmbeddedPayload`, but on a different script-id family
+ *  (`art-data-<source>` / `art-data-<source>-encrypted`). Returns
+ *  `kind: 'envelope'` (with no payload) when an envelope build is in
+ *  use — the caller pulls the art cipher out of `EnvelopeSource` and
+ *  decrypts via `decryptSource(env.artCipher, dekIv)`. */
+export async function readEmbeddedArt(
+  source: Source = 'directory',
+): Promise<ArtPayload> {
+  // Envelope mode: art comes from `EnvelopeSource.artCipher`, not a
+  // top-level script. Caller routes via the `getEnvelopeArt` helper.
+  if (readWrapperManifest('bm-tier-wrappers')) {
+    return { kind: 'envelope' };
+  }
+  const plain = document.getElementById(`art-data-${source}`);
+  if (plain) {
+    return { kind: 'plain', art: await readPlainArt(plain) };
+  }
+  const enc = document.getElementById(`art-data-${source}-encrypted`);
+  if (enc) {
+    const text = enc.textContent ?? '{}';
+    return { kind: 'encrypted', enc: JSON.parse(text) as EncryptedPayload };
+  }
+  // Older builds may not have art at all — return empty rather than
+  // throw so the Art tab just renders empty state.
+  return { kind: 'plain', art: [] };
+}
+
+/** Pre-compute haystack for art search (parallel to `indexHaystacks`).
+ *  Includes name + location + description + artist + category +
+ *  program + tags so search hits any of those fields. */
+export function indexArtHaystacks(art: Art[]): void {
+  for (const a of art) {
+    const parts: string[] = [
+      a.name, a.location, a.description,
+      a.artist || '', a.hometown || '',
+      a.category || '', a.program || '',
+      (a.tags || []).join(' '),
+    ];
+    Object.defineProperty(a, '_hay', {
+      value: parts.join(' ␟ ').toLowerCase(),
+      enumerable: false,
+      writable: false,
+    });
+  }
+}
+
+export function artHaystackOf(art: Art): string {
+  return (art as Art & { _hay?: string })._hay ?? '';
 }

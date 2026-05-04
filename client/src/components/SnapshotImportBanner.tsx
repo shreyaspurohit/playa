@@ -43,6 +43,12 @@ export function SnapshotImportBanner({
           {snapshot.campFavs.length === 1 ? '' : 's'},{' '}
           <strong>{snapshot.eventFavs.length}</strong> event
           {snapshot.eventFavs.length === 1 ? '' : 's'}
+          {(snapshot.artFavs?.length ?? 0) > 0 && (
+            <>
+              ,{' '}<strong>{snapshot.artFavs!.length}</strong> art
+              {snapshot.artFavs!.length === 1 ? ' piece' : ' pieces'}
+            </>
+          )}
           {snapshot.myCampId && <>, plus <strong>their camp</strong></>}
           {snapshot.meetSpots.length > 0 && (
             <>

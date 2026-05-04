@@ -60,6 +60,66 @@ describe('parseAddress', () => {
     assert.equal(parseAddress('7:30'), null);
     assert.equal(parseAddress('just words'), null);
   });
+
+  // --- art form: <clock> <distance>' (open playa, no street ring) -------
+
+  test('art form with feet marker + suffix', () => {
+    const a = parseAddress("1:44 6400', Open Playa")!;
+    assert.equal(a.clock, '1:44');
+    assert.equal(a.radiusFeet, 6400);
+    assert.equal(a.street, 'Open Playa');
+  });
+
+  test('art form without feet marker', () => {
+    const a = parseAddress('3:00 5000')!;
+    assert.equal(a.clock, '3:00');
+    assert.equal(a.radiusFeet, 5000);
+    assert.equal(a.street, 'Open Playa');
+  });
+
+  test('art form with "ft" feet marker', () => {
+    const a = parseAddress('12:00 6400 ft')!;
+    assert.equal(a.radiusFeet, 6400);
+    assert.equal(a.street, 'Open Playa');
+  });
+
+  test('art form rejects distance above 10000ft ceiling', () => {
+    assert.equal(parseAddress('3:00 10001'), null);
+    assert.equal(parseAddress('3:00 99999'), null);
+  });
+
+  test('art form accepts exactly the 10000ft ceiling', () => {
+    const a = parseAddress('3:00 10000')!;
+    assert.equal(a.radiusFeet, 10000);
+  });
+
+  test('art form accepts deep-playa addresses up to 10000ft', () => {
+    // From real data: "Awkward Silence" at "12:00 8260', Open Playa".
+    const a = parseAddress("12:00 8260', Open Playa")!;
+    assert.equal(a.clock, '12:00');
+    assert.equal(a.radiusFeet, 8260);
+    assert.equal(a.street, 'Open Playa');
+  });
+
+  test('art form accepts Man Pavilion (near-Man) installations', () => {
+    // BM places Pavilion art at 15-25 ft from the Man; these would
+    // be silently rejected by the old `dist >= 200` floor.
+    const a = parseAddress("10:30 25', Man Pavilion")!;
+    assert.equal(a.clock, '10:30');
+    assert.equal(a.radiusFeet, 25);
+    assert.equal(a.street, 'Man Pavilion');
+  });
+
+  test('art form accepts even smaller Man Pavilion distances', () => {
+    const a = parseAddress("12:00 15', Man Pavilion")!;
+    assert.equal(a.radiusFeet, 15);
+    assert.equal(a.street, 'Man Pavilion');
+  });
+
+  test('art form: zero distance is rejected', () => {
+    // "12:00 0" — degenerate; the lower bound of 1 catches it.
+    assert.equal(parseAddress('12:00 0'), null);
+  });
 });
 
 describe('clockToCompass', () => {

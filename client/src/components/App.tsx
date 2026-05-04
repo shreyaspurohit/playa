@@ -2,18 +2,24 @@
 // fav-only filter, theme, info modal, current tab, map target, etc.)
 // and wires it up.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { Camp, EncryptedPayload, Source } from '../types';
+import type { Art, Camp, EncryptedPayload, Source } from '../types';
 import { LS, scopedKey } from '../types';
-import { readEmbeddedPayload, indexHaystacks, haystackOf } from '../data';
+import {
+  readEmbeddedPayload, readEmbeddedArt,
+  indexHaystacks, haystackOf,
+  indexArtHaystacks, artHaystackOf,
+} from '../data';
 import type { EnvelopeSource } from '../data';
-import { decryptSource } from '../crypto';
-import { applyLocationEmbargo, isLocationEmbargoed } from '../utils/embargo';
+import { decryptSource, decryptPayload } from '../crypto';
+import {
+  applyLocationEmbargo, applyArtLocationEmbargo, isLocationEmbargoed,
+} from '../utils/embargo';
 import { readString, writeString } from '../utils/storage';
 import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
 import type { SharePayload } from '../utils/share';
 import {
-  applySnapshot, buildSnapshot, downloadSnapshot, pickSnapshotFile,
+  applySnapshot, pickSnapshotFile,
 } from '../utils/exportImport';
 import { useFavorites } from '../hooks/useFavorites';
 import { useFriends } from '../hooks/useFriends';
@@ -21,7 +27,10 @@ import { useMeetSpots } from '../hooks/useMeetSpots';
 import { useSource, migrateLegacyKeysOnce } from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute } from '../hooks/useHashRoute';
+import { ActionBar } from './ActionBar';
+import { ArtView } from './ArtView';
 import { CampsView } from './CampsView';
+import { ExportModal } from './ExportModal';
 import { EmbargoLiftedBanner } from './EmbargoLiftedBanner';
 import { EnvelopeGate } from './EnvelopeGate';
 import { Footer } from './Footer';
@@ -120,6 +129,9 @@ export function App() {
   // a previously-viewed source. Ref instead of state because mutating
   // the cache shouldn't trigger a re-render.
   const decryptedRef = useRef<Map<Source, Camp[]>>(new Map());
+  // Parallel cache + state for art per source.
+  const [art, setArt] = useState<Art[] | null>(null);
+  const decryptedArtRef = useRef<Map<Source, Art[]>>(new Map());
 
   // Detect mode + (re)load source-specific data when source changes.
   // Envelope mode reads ALL sources up front (one effect, not per
@@ -166,47 +178,91 @@ export function App() {
     return () => { cancelled = true; };
   }, [source]);
 
+  // Parallel art ingest. For plain mode the bundle has an
+  // art-data-<source> script; pull + index on source change. For
+  // envelope mode the art comes via the artCipher in EnvelopeSource
+  // — handled in the dedicated decrypt effect below.
+  useEffect(() => {
+    if (envelopeSources) return;   // envelope flow handles art separately
+    if (encEnvelope) return;       // single-tier encrypted: art handled in onUnlock
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await readEmbeddedArt(source);
+        if (cancelled) return;
+        if (p.kind === 'plain') {
+          const masked = applyArtLocationEmbargo(
+            p.art, source, meta.burnStart, new Date(), unlockedTrusted,
+          );
+          indexArtHaystacks(masked);
+          setArt(masked);
+        }
+        // 'encrypted' (single-tier) art is handled together with camps
+        // by the legacy `onUnlock` callback below — no-op here.
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('readEmbeddedArt failed:', err);
+        setArt([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [source, envelopeSources, encEnvelope]);
+
   // Envelope-mode: when source changes (or user finishes unlocking),
-  // decrypt the active source's cipher with its cached DEK+IV.
+  // decrypt the active source's camps + art ciphers with the cached
+  // DEK. Both ciphers share a DEK (per source) and use independent
+  // IVs — see `_envelope_data_scripts` in builder.py and the
+  // `decryptSource` IV-from-cipher behavior in crypto.ts.
   useEffect(() => {
     if (!envelopeSources || !unlockedDeks) return;
     const dekIv = unlockedDeks.get(source);
     if (!dekIv) {
-      // Active source wasn't unlocked by this user's password.
-      // SourceSwitcher narrows to unlocked sources, so this should
-      // be transient (e.g., persisted source from a richer tier
-      // session). Surface empty + let the user pick another.
       setCamps([]);
+      setArt([]);
       return;
     }
-    const cached = decryptedRef.current.get(source);
-    if (cached) {
-      setCamps(cached);
-      return;
-    }
+    const cachedCamps = decryptedRef.current.get(source);
+    const cachedArt = decryptedArtRef.current.get(source);
+    if (cachedCamps) setCamps(cachedCamps);
+    if (cachedArt) setArt(cachedArt);
+    if (cachedCamps && cachedArt) return;
+
     const env = envelopeSources.find((s) => s.source === source);
-    if (!env) { setCamps([]); return; }
+    if (!env) { setCamps([]); setArt([]); return; }
 
     let cancelled = false;
     (async () => {
       try {
-        const jsonText = await decryptSource(env.cipher, dekIv);
-        if (cancelled) return;
-        const raw = JSON.parse(jsonText) as Camp[];
-        // Apply pre-burn embargo before haystack indexing so the
-        // location strings can't show up in search results either.
-        // Trusted (god-mode) unlocks bypass the embargo entirely.
-        if (isLocationEmbargoed(source, meta.burnStart, new Date(), unlockedTrusted)) {
-          setEmbargoActiveAtIngest(true);
+        // Camps
+        if (!cachedCamps) {
+          const jsonText = await decryptSource(env.cipher, dekIv);
+          if (cancelled) return;
+          const raw = JSON.parse(jsonText) as Camp[];
+          if (isLocationEmbargoed(source, meta.burnStart, new Date(), unlockedTrusted)) {
+            setEmbargoActiveAtIngest(true);
+          }
+          const arr = applyLocationEmbargo(raw, source, meta.burnStart, new Date(), unlockedTrusted);
+          indexHaystacks(arr);
+          decryptedRef.current.set(source, arr);
+          setCamps(arr);
         }
-        const arr = applyLocationEmbargo(raw, source, meta.burnStart, new Date(), unlockedTrusted);
-        indexHaystacks(arr);
-        decryptedRef.current.set(source, arr);
-        setCamps(arr);
+        // Art
+        if (!cachedArt) {
+          const artText = await decryptSource(env.artCipher, dekIv);
+          if (cancelled) return;
+          const rawArt = JSON.parse(artText) as Art[];
+          const arr = applyArtLocationEmbargo(
+            rawArt, source, meta.burnStart, new Date(), unlockedTrusted,
+          );
+          indexArtHaystacks(arr);
+          decryptedArtRef.current.set(source, arr);
+          setArt(arr);
+        }
       } catch (err) {
         if (cancelled) return;
-        console.error('decryptSource failed:', err);
+        console.error('decryptSource (camps+art) failed:', err);
         setCamps([]);
+        setArt([]);
       }
     })();
     return () => { cancelled = true; };
@@ -312,7 +368,7 @@ export function App() {
     writeString(embargoAckKey, '1');
   }
 
-  const onUnlock = useCallback((jsonText: string) => {
+  const onUnlock = useCallback(async (jsonText: string, password: string) => {
     const raw = JSON.parse(jsonText) as Camp[];
     if (isLocationEmbargoed(source, meta.burnStart)) {
       setEmbargoActiveAtIngest(true);
@@ -321,6 +377,34 @@ export function App() {
     indexHaystacks(unlocked);
     setCamps(unlocked);
     setEncEnvelope(null);
+
+    // Single-tier mode: an `art-data-<source>-encrypted` script is
+    // also embedded. Decrypt it with the same password the user just
+    // entered, then ingest. If the bundle predates art (no script
+    // tag), the call returns an empty list — Art tab just empty.
+    try {
+      const artPayload = await readEmbeddedArt(source);
+      if (artPayload.kind === 'plain') {
+        const arr = applyArtLocationEmbargo(
+          artPayload.art, source, meta.burnStart,
+        );
+        indexArtHaystacks(arr);
+        setArt(arr);
+      } else if (artPayload.kind === 'encrypted') {
+        const text = await decryptPayload(artPayload.enc, password);
+        const rawArt = JSON.parse(text) as Art[];
+        const arr = applyArtLocationEmbargo(
+          rawArt, source, meta.burnStart,
+        );
+        indexArtHaystacks(arr);
+        setArt(arr);
+      } else {
+        setArt([]);
+      }
+    } catch (err) {
+      console.warn('art ingest after Gate unlock failed:', err);
+      setArt([]);
+    }
   }, [source, meta.burnStart]);
 
   const [query, setQuery] = useState('');
@@ -339,6 +423,7 @@ export function App() {
   // so the hooks below pick up the new slot and re-read.
   const favsKey      = scopedKey(LS.favs, source);
   const eventFavsKey = scopedKey(LS.favEvents, source);
+  const artFavsKey   = scopedKey(LS.favArt, source);
   const sharedKey    = scopedKey(LS.sharedFavs, source);
   const meetSpotsKey = scopedKey(LS.meetSpots, source);
   const myCampKey    = scopedKey(LS.myCampId, source);
@@ -346,6 +431,7 @@ export function App() {
 
   const campFavs = useFavorites(favsKey);
   const eventFavs = useFavorites(eventFavsKey);
+  const artFavs = useFavorites(artFavsKey);
   const friends = useFriends(sharedKey);
   const meetSpots = useMeetSpots(meetSpotsKey);
 
@@ -482,6 +568,7 @@ export function App() {
         {
           campIds: incomingShare.campIds,
           eventIds: incomingShare.eventIds,
+          artIds: incomingShare.artIds,
           myCampId: incomingShare.myCampId,
           meetSpots: incomingShare.meetSpots,
         },
@@ -514,6 +601,9 @@ export function App() {
     // sources mismatch, so by here `source` is the right slot.
     writeString(scopedKey(LS.favs, source), JSON.stringify(incomingShare.campIds));
     writeString(scopedKey(LS.favEvents, source), JSON.stringify(incomingShare.eventIds));
+    if (incomingShare.artIds && incomingShare.artIds.length > 0) {
+      writeString(scopedKey(LS.favArt, source), JSON.stringify(incomingShare.artIds));
+    }
     writeString(scopedKey(LS.myCampId, source), incomingShare.myCampId ?? '');
     writeString(
       scopedKey(LS.meetSpots, source),
@@ -533,9 +623,10 @@ export function App() {
    * until the user picks an action OR dismisses, mirroring how
    * `incomingShare` drives ImportBanner.
    */
+  const [exportOpen, setExportOpen] = useState(false);
   const onExportSnapshot = useCallback(() => {
-    downloadSnapshot(buildSnapshot(source));
-  }, [source]);
+    setExportOpen(true);
+  }, []);
 
   const [incomingSnapshot, setIncomingSnapshot] = useState<Snapshot | null>(null);
 
@@ -566,6 +657,7 @@ export function App() {
       {
         campIds: incomingSnapshot.campFavs,
         eventIds: incomingSnapshot.eventFavs,
+        artIds: incomingSnapshot.artFavs,
         myCampId: incomingSnapshot.myCampId || undefined,
         meetSpots:
           incomingSnapshot.meetSpots.length > 0
@@ -671,6 +763,56 @@ export function App() {
     return n;
   }, [camps]);
 
+  // --- Art tab state -------------------------------------------------
+  const [artQuery, setArtQuery] = useState('');
+  const artQueryLower = artQuery.toLowerCase().trim();
+  const [artActiveTags, setArtActiveTags] = useState<Set<string>>(new Set());
+  const [artShowAllTags, setArtShowAllTags] = useState(false);
+  const [artFavOnly, setArtFavOnly] = useState(false);
+  const [scrollToArtId, setScrollToArtId] = useState<string | null>(null);
+  const [scrollToArtTick, setScrollToArtTick] = useState(0);
+
+  const artSortedTags = useMemo<ReadonlyArray<readonly [string, number]>>(() => {
+    if (!art) return [];
+    const freq = new Map<string, number>();
+    for (const a of art) for (const t of a.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
+    return [...freq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [art]);
+
+  const artMatches = useCallback(
+    (a: Art) => {
+      if (artFavOnly && !artFavs.has(a.id) && !friends.anyFriendFavArt(a.id)) return false;
+      for (const t of artActiveTags) if (!a.tags.includes(t)) return false;
+      if (artQueryLower && artHaystackOf(a).indexOf(artQueryLower) === -1) return false;
+      return true;
+    },
+    [artFavOnly, artFavs, friends, artActiveTags, artQueryLower],
+  );
+
+  const artFiltered = useMemo(
+    () => (art ? art.filter(artMatches) : []),
+    [art, artMatches],
+  );
+
+  const onToggleArtTag = useCallback((tag: string) => {
+    setArtActiveTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag); else next.add(tag);
+      return next;
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const onGotoArt = useCallback((artId: string) => {
+    setArtQuery('');
+    setArtActiveTags(new Set());
+    setArtFavOnly(false);
+    setScrollToArtId(artId);
+    setScrollToArtTick((t) => t + 1);
+    goto('art');
+  }, [goto]);
+  // -------------------------------------------------------------------
+
   // Only your own starred events. Friends' events still show on the
   // calendar, but a "48 things on your calendar (of which 30 are yours)"
   // tab badge is just noise — the user wants a count of their own plans.
@@ -743,8 +885,11 @@ export function App() {
     <>
       <div class="site-chrome">
         <Header
-          total={camps?.length ?? 0}
-          matching={filtered.length}
+          campTotal={camps?.length ?? 0}
+          campMatching={filtered.length}
+          artTotal={art?.length ?? 0}
+          artMatching={artFiltered.length}
+          view={view}
           filterNote={filterNote}
           fetchedDate={meta.fetchedDate}
           fetchedAt={meta.fetchedAt}
@@ -757,7 +902,21 @@ export function App() {
           availableSources={effectiveAvailableSources}
           onSourceChange={setSource}
         />
-        <TabBar view={view} onGoto={goto} scheduleBadge={scheduleBadge} />
+        <TabBar
+          view={view}
+          onGoto={goto}
+          scheduleBadge={scheduleBadge}
+          artBadge={artFavs.size}
+        />
+        <ActionBar
+          onShare={() => setShareOpen(true)}
+          onExport={onExportSnapshot}
+          onImport={onImportSnapshot}
+          hasSomethingToSend={
+            campFavs.size + eventFavs.size + artFavs.size + meetSpots.spots.length > 0
+            || Boolean(myCampId)
+          }
+        />
         {embargoLifted && (
           <EmbargoLiftedBanner
             onRefresh={() => { ackEmbargoLift(); location.reload(); }}
@@ -812,11 +971,51 @@ export function App() {
             webCount={webMatchCount}
             onToggleWebFilter={() => setWebOnly((v) => !v)}
             onUnfavoriteAll={onUnfavoriteAll}
-            onShare={() => setShareOpen(true)}
-            onExport={onExportSnapshot}
-            onImport={onImportSnapshot}
             focusKey={focusKey}
           />
+        )}
+        {view === 'art' && (
+          <>
+            <div class="controls">
+              <input
+                type="search"
+                placeholder="Search art (name, artist, description, tags…)"
+                value={artQuery}
+                onInput={(e) => setArtQuery((e.target as HTMLInputElement).value)}
+                autocomplete="off"
+              />
+            </div>
+            <div class="controls toolbar-row">
+              <div class="filters">
+                <button
+                  type="button"
+                  class={'fav-filter' + (artFavOnly ? ' active' : '')}
+                  aria-pressed={artFavOnly ? 'true' : 'false'}
+                  title={`${artFavs.size} starred art piece${artFavs.size === 1 ? '' : 's'}`}
+                  onClick={() => {
+                    if (!artFavOnly && artFavs.size === 0) return;
+                    setArtFavOnly((v) => !v);
+                  }}
+                >
+                  {artFavOnly ? '★' : '☆'} Favorites <span class="count">({artFavs.size})</span>
+                </button>
+                {(artQuery || artActiveTags.size || artFavOnly) && (
+                  <button
+                    type="button"
+                    class="fav-filter"
+                    onClick={() => {
+                      setArtQuery('');
+                      setArtActiveTags(new Set());
+                      setArtFavOnly(false);
+                    }}
+                    title="Clear search + filters"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -846,6 +1045,12 @@ export function App() {
               onToggleFav={campFavs.toggle}
               onToggleFavEvent={onToggleFavEvent}
               onNavigate={onNavigate}
+              onRemoveFriendCampStar={(name, campId) =>
+                friends.removeFriendStar(name, 'camp', campId)
+              }
+              onRemoveFriendEventStar={(name, eventId) =>
+                friends.removeFriendStar(name, 'event', eventId)
+              }
               myCampId={myCampId}
               onSetMyCamp={onSetMyCamp}
               scrollToCampId={scrollToCampId}
@@ -867,6 +1072,26 @@ export function App() {
               source={source}
             />
           </div>
+          <div hidden={view !== 'art'}>
+            <ArtView
+              art={artFiltered}
+              query={artQuery}
+              sortedTags={artSortedTags}
+              activeTags={artActiveTags}
+              showAllTags={artShowAllTags}
+              onToggleTag={onToggleArtTag}
+              onToggleShowAllTags={() => setArtShowAllTags((v) => !v)}
+              isFav={artFavs.has}
+              friendsFavingArt={friends.friendsFavingArt}
+              onToggleFav={artFavs.toggle}
+              onNavigate={onGotoArt}
+              onRemoveFriendStar={(name, artId) =>
+                friends.removeFriendStar(name, 'art', artId)
+              }
+              scrollToArtId={scrollToArtId}
+              scrollToArtTick={scrollToArtTick}
+            />
+          </div>
           <div hidden={view !== 'map'}>
             <MapView
               camps={camps}
@@ -874,6 +1099,9 @@ export function App() {
               friendFavCampIds={friends.friendsFavingCamp}
               favEventIds={eventFavs.favs}
               friendFavEventIds={friends.friendsFavingEvent}
+              art={art ?? []}
+              favArtIds={artFavs.favs}
+              friendFavArtIds={friends.friendsFavingArt}
               myCampId={myCampId}
               meetSpots={meetSpots.spots}
               onAddMeetSpot={meetSpots.add}
@@ -882,6 +1110,13 @@ export function App() {
               initialTargetId={mapTargetId}
               onClearTarget={() => setMapTargetId(null)}
               onGotoCamp={onGotoCamp}
+              onGotoArt={onGotoArt}
+              onRemoveFriendStar={(name, kind, id) =>
+                friends.removeFriendStar(name, kind, id)
+              }
+              onRemoveFriendMeetSpot={(name, idx) =>
+                friends.removeFriendMeetSpot(name, idx)
+              }
               source={source}
             />
           </div>
@@ -894,16 +1129,32 @@ export function App() {
         fetchedDate={meta.fetchedDate}
         contactEmail={meta.contactEmail}
         onImport={onImportSnapshot}
+        onExport={onExportSnapshot}
         onClose={() => setInfoOpen(false)}
       />
       <ShareModal
         open={shareOpen}
         campIds={[...campFavs.favs]}
         eventIds={[...eventFavs.favs]}
+        artIds={[...artFavs.favs]}
+        camps={camps ?? []}
+        art={art ?? []}
         myCampId={myCampId}
         meetSpots={meetSpots.spots}
         source={source}
         onClose={() => setShareOpen(false)}
+      />
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        source={source}
+        camps={camps ?? []}
+        art={art ?? []}
+        campIds={[...campFavs.favs]}
+        eventIds={[...eventFavs.favs]}
+        artIds={[...artFavs.favs]}
+        myCampId={myCampId}
+        meetSpots={meetSpots.spots}
       />
     </>
   );

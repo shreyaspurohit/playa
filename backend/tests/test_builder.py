@@ -302,6 +302,57 @@ class EnvelopeEncryptionTests(unittest.TestCase, _TmpConfigMixin):
         self.assertIn('name="bm-tier-wrappers"', manifest_meta)
         self.assertNotIn("bm-trusted-wrappers", manifest_meta)
 
+    def test_art_cipher_emitted_alongside_camps(self):
+        """Each source emits BOTH a `camps-data-<spec>-cipher` AND an
+        `art-data-<spec>-cipher` script. Camps + art share the source's
+        DEK but get distinct IVs (CBC-IV reuse across plaintexts is
+        avoided)."""
+        from playa.models import Art
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        art = [Art(id="a1", name="Sky Portal", location="3:00 & C",
+                   description="", url="")]
+        loaded = [("api-2026", camps)]
+        loaded_art = [("api-2026", art)]
+        tiers = [("god-mode", "god-pw", ["api-2026"])]
+        scripts, _, _, source_keys = self.builder._envelope_data_scripts(
+            loaded, tiers, loaded_art,
+        )
+        self.assertIn('id="camps-data-api-2026-cipher"', scripts)
+        self.assertIn('id="art-data-api-2026-cipher"', scripts)
+        # One wrapper, one source (camps + art share it).
+        self.assertEqual(scripts.count('id="cdk-api-2026-0"'), 1)
+        # source_keys still keys per-source (the DEK is shared between
+        # camps + art ciphers for that source).
+        self.assertIn("api-2026", source_keys)
+
+    def test_art_cipher_emitted_when_art_loaded_empty(self):
+        """When a source has zero art (e.g., legacy cache pre-art),
+        an empty `art-data-<spec>-cipher` is still emitted so the
+        client always finds a script tag."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("directory", camps)]
+        loaded_art = [("directory", [])]
+        tiers = [("god-mode", "g", ["directory"])]
+        scripts, _, _, _ = self.builder._envelope_data_scripts(
+            loaded, tiers, loaded_art,
+        )
+        self.assertIn('id="art-data-directory-cipher"', scripts)
+
+    def test_art_cipher_emitted_when_loaded_art_omitted(self):
+        """Backward-compat: callers that don't pass loaded_art still
+        get an empty art cipher per source (so the client schema is
+        invariant)."""
+        camps = [Camp(id="1", name="A", location="6:00 & E",
+                      description="", website="", url="", events=[])]
+        loaded = [("directory", camps)]
+        tiers = [("god-mode", "g", ["directory"])]
+        scripts, _, _, _ = self.builder._envelope_data_scripts(
+            loaded, tiers,
+        )
+        self.assertIn('id="art-data-directory-cipher"', scripts)
+
     def test_trusted_manifest_position_independent(self):
         """Trust is by tier NAME, not order — moving god-mode to the
         last slot still flags only that wrapper as trusted."""

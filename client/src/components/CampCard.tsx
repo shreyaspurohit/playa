@@ -4,8 +4,8 @@
 // by" chip row appears below the meta.
 import type { Camp } from '../types';
 import { highlight } from '../utils/highlight';
-import { friendChipStyle } from '../utils/friendColor';
 import { EventItem } from './EventItem';
+import { FriendChip } from './FriendChip';
 import { TentIcon } from './TentIcon';
 
 interface Props {
@@ -26,6 +26,10 @@ interface Props {
    *  control in play — the one on the chosen camp, which acts as unset. */
   myCampSet: boolean;
   onSetMyCamp: (campId: string) => void;            // toggles (sets; second click unsets)
+  /** Remove a specific friend's star on this camp. */
+  onRemoveFriendCampStar: (friendName: string) => void;
+  /** Remove a specific friend's star on a specific event of this camp. */
+  onRemoveFriendEventStar: (friendName: string, eventId: string) => void;
 }
 
 export function CampCard({
@@ -33,6 +37,7 @@ export function CampCard({
   isFav, isFavEvent, friendsFavingCamp, friendsFavingEvent,
   onToggleFav, onToggleFavEvent, onTagClick, onNavigate,
   isMyCamp, myCampSet, onSetMyCamp,
+  onRemoveFriendCampStar, onRemoveFriendEventStar,
 }: Props) {
   const hasFavEvent = (camp.events || []).some((e) => isFavEvent(e.id));
   const anyQueryHitInEvents =
@@ -125,10 +130,10 @@ export function CampCard({
               return (
                 <span key={o}>
                   {i > 0 && ', '}
-                  <span
-                    class={'fav-by-chip' + (mine ? ' mine' : '')}
-                    style={mine ? undefined : friendChipStyle(o)}
-                  >{o}</span>
+                  <FriendChip
+                    name={o}
+                    onRemove={mine ? undefined : () => onRemoveFriendCampStar(o)}
+                  />
                 </span>
               );
             })}
@@ -159,6 +164,9 @@ export function CampCard({
                 isFav={isFavEvent(e.id)}
                 friends={friendsFavingEvent(e.id)}
                 onToggleFav={onToggleFavEvent}
+                onRemoveFriendStar={(friendName) =>
+                  onRemoveFriendEventStar(friendName, e.id)
+                }
               />
             ))}
           </ul>

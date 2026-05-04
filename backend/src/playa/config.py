@@ -120,6 +120,8 @@ class Config:
     @property
     def pages_dir(self) -> Path:      return self.data_dir / "pages"
     @property
+    def art_pages_dir(self) -> Path:  return self.data_dir / "art_pages"
+    @property
     def logs_dir(self) -> Path:       return self.data_dir / "logs"
     @property
     def meta_file(self) -> Path:      return self.data_dir / "meta.json"
@@ -128,9 +130,17 @@ class Config:
     @property
     def camps_tagged_csv(self) -> Path: return self.data_dir / "camps_tagged.csv"
     @property
+    def art_csv(self) -> Path:        return self.data_dir / "art.csv"
+    @property
+    def art_tagged_csv(self) -> Path: return self.data_dir / "art_tagged.csv"
+    @property
     def denylist_file(self) -> Path:  return self.data_dir / "denylist.txt"
     @property
     def api_denylist_file(self) -> Path: return self.data_dir / "denylist-api.txt"
+    @property
+    def art_denylist_file(self) -> Path: return self.data_dir / "denylist-art.txt"
+    @property
+    def art_api_denylist_file(self) -> Path: return self.data_dir / "denylist-art-api.txt"
     @property
     def api_dir(self) -> Path:        return self.data_dir / "api"
     def api_payload_file(self, year: int) -> Path:

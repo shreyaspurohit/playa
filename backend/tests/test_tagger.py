@@ -79,6 +79,132 @@ class TagMatchingTests(unittest.TestCase):
         self.assertNotIn("coffee", self.match("the coffin is made of wood"))
         self.assertIn("coffee", self.match("free coffee and espresso"))
 
+    # --- New 2026 art-focused tags ---------------------------------
+
+    def test_light_art_matches_LED_neon_glow(self):
+        self.assertIn("light_art", self.match(
+            "an LED-powered Mad Hatter's hat that generates music"))
+        self.assertIn("light_art", self.match("softly glowing fiber optic forest"))
+        self.assertIn("light_art", self.match("a luminous beacon in deep playa"))
+        self.assertIn("light_art", self.match("light installation visible from K street"))
+
+    def test_light_art_avoids_metaphorical_light(self):
+        # Bare `\blight\b` would match these; the compound-only pattern
+        # rejects them (deliberately leaving them untagged here rather
+        # than over-tagging).
+        self.assertNotIn("light_art", self.match("a light moment of joy"))
+        self.assertNotIn("light_art", self.match("traveling lightheaded through the desert"))
+
+    def test_kinetic_matches_motion_art(self):
+        self.assertIn("kinetic", self.match("kinetic sculpture spinning in the wind"))
+        self.assertIn("kinetic", self.match("rotating pinwheel clocks"))
+        self.assertIn("kinetic", self.match("a giant pendulum overhead"))
+
+    def test_mirror_reflection_matches(self):
+        self.assertIn("mirror_reflection", self.match("walk-through kaleidoscope"))
+        self.assertIn("mirror_reflection", self.match("100 mirrors reflecting the playa"))
+        self.assertIn("mirror_reflection", self.match("prismatic shimmer at sunset"))
+
+    def test_monumental_matches_size(self):
+        self.assertIn("monumental", self.match("a colossal Eye, 100 feet wide"))
+        self.assertIn("monumental", self.match("a towering installation"))
+        self.assertIn("monumental", self.match("a 30-foot tall sculpture"))
+
+    def test_metal_sculpture_matches_steel_bronze(self):
+        self.assertIn("metal_sculpture", self.match(
+            "constructed out of curved steel I-beam tunnel ribs"))
+        self.assertIn("metal_sculpture", self.match("a welded bronze pillar"))
+
+    def test_metal_sculpture_avoids_metaphorical_metal(self):
+        # Bare `\bmetal\b` is intentionally excluded.
+        self.assertNotIn("metal_sculpture", self.match("a metaphor for change"))
+        self.assertNotIn("metal_sculpture", self.match("heavy metal music night"))
+
+    def test_wood_sculpture_matches(self):
+        self.assertIn("wood_sculpture", self.match("a manzanita driftwood portal"))
+        self.assertIn("wood_sculpture", self.match("plywood archway"))
+        self.assertIn("wood_sculpture", self.match("a carved wood mandala"))
+
+    def test_portal_matches(self):
+        self.assertIn("portal", self.match("a sky portal to another dimension"))
+        self.assertIn("portal", self.match("step through the gateway"))
+        self.assertIn("portal", self.match("an ornate threshold"))
+
+    def test_beacon_landmark_matches(self):
+        self.assertIn("beacon_landmark", self.match("a pillar of light, our beacon"))
+        self.assertIn("beacon_landmark", self.match("an obelisk at deep playa"))
+        self.assertIn("beacon_landmark", self.match("the lighthouse at 12:00"))
+
+    def test_bench_seating_matches(self):
+        self.assertIn("bench_seating", self.match("a bench shaped like a Cheshire cat"))
+        self.assertIn("bench_seating", self.match("benches scattered along Esplanade"))
+
+    def test_geometry_fractal_matches(self):
+        self.assertIn("geometry_fractal", self.match("dynamic moving fractals"))
+        self.assertIn("geometry_fractal", self.match("a geometric tower"))
+        self.assertIn("geometry_fractal", self.match("sacred geometry mandala"))
+        self.assertIn("geometry_fractal", self.match("a spiral staircase"))
+
+    def test_tree_flora_matches(self):
+        self.assertIn("tree_flora", self.match("a steel tree"))
+        self.assertIn("tree_flora", self.match("a surprise garden of delights"))
+        self.assertIn("tree_flora", self.match("blossom-covered installation"))
+
+    # --- Cross-cutting tags (apply to both camps and art) ----------
+
+    def test_memorial_matches(self):
+        self.assertIn("memorial", self.match(
+            "a poignant tribute to lives lost"))
+        self.assertIn("memorial", self.match(
+            "a place to grieve, reflect, and remember"))
+        self.assertIn("memorial", self.match("in memory of those gone"))
+
+    def test_transformation_matches(self):
+        self.assertIn("transformation", self.match("a metamorphosis of self"))
+        self.assertIn("transformation", self.match("the rebirth of an idea"))
+        self.assertIn("transformation", self.match("evolving identity"))
+
+    def test_wonderland_2026_matches_alice_themes(self):
+        self.assertIn("wonderland_2026", self.match("Down the rabbit hole into infinity"))
+        self.assertIn("wonderland_2026", self.match("Mad Hatter tea party"))
+        self.assertIn("wonderland_2026", self.match("the Cheshire Cat smiles"))
+        self.assertIn("wonderland_2026", self.match("Alice's Magic Mushroom"))
+
+    def test_sustainability_matches(self):
+        self.assertIn("sustainability", self.match(
+            "leave no trace — pack out your moop"))
+        self.assertIn("sustainability", self.match("solar-powered camp"))
+        self.assertIn("sustainability", self.match("upcycled materials"))
+        self.assertIn("sustainability", self.match("eco-conscious build"))
+
+    # --- API-backed tags (program field) -------------------------
+
+    def test_honorarium_matches_program_field(self):
+        # API source's `program=Honorarium` flows into art_haystack.
+        self.assertIn("honorarium", self.match("Honorarium"))
+        self.assertIn("honorarium", self.match("recipient of an honorarium grant"))
+        self.assertIn("honorarium", self.match("Honoraria 2025 awardee"))
+
+    def test_honorarium_avoids_unrelated_uses(self):
+        # `\b` keeps it tight — no substring matches.
+        self.assertNotIn("honorarium", self.match("we honor the dead"))
+
+    def test_man_pavilion_matches(self):
+        self.assertIn("man_pavilion", self.match("Man Pavilion"))
+        self.assertIn("man_pavilion", self.match("ManPavGrant 2025 awardee"))
+        self.assertIn("man_pavilion", self.match(
+            "located at 10:30 25', Man Pavilion"))
+
+    # --- Extension to existing `space` tag ------------------------
+
+    def test_space_now_includes_cosmic_terms(self):
+        # Existing terms still work.
+        self.assertIn("space", self.match("welcome to space camp"))
+        # New cosmic terms.
+        self.assertIn("space", self.match("a cosmic eye onto the celestial sphere"))
+        self.assertIn("space", self.match("nebula-themed art piece"))
+        self.assertIn("space", self.match("a starry constellation overhead"))
+
 
 class HaystackTests(unittest.TestCase):
     """Verify event text feeds into the tag text."""
@@ -111,6 +237,62 @@ class HaystackTests(unittest.TestCase):
         )
         tags = set(self.tagger.tag_camp(camp))
         self.assertIn("breathwork", tags)
+
+
+class ArtTaggerTests(unittest.TestCase):
+    """Art uses the same taxonomy as camps. Verify the haystack
+    includes art-specific fields (artist + category + program) on top
+    of the shared name + description."""
+
+    def setUp(self):
+        from playa.models import Art
+        from playa.tagger import Tagger
+        self.Art = Art
+        self.tagger = Tagger()
+
+    def test_haystack_includes_artist_category_program(self):
+        a = self.Art(
+            id="1", name="Burning Bird",
+            location="9:00 & C",
+            description="A flame sculpture.",
+            url="",
+            artist="Jane Doe",
+            category="Sculpture",
+            program="Honorarium",
+        )
+        text = self.tagger.art_haystack(a)
+        for w in ("Burning Bird", "flame sculpture", "Jane Doe",
+                  "Sculpture", "Honorarium"):
+            self.assertIn(w, text)
+
+    def test_tag_art_fires_on_description(self):
+        """Art uses the same regex taxonomy as camps. The exact tag
+        names depend on the taxonomy; this test just confirms that
+        SOMETHING fires for a description rich in arts keywords —
+        validates the haystack flows into `tag()` correctly."""
+        a = self.Art(
+            id="1", name="Plain Title",
+            location="",
+            description="Interactive art sculpture with fire and sound",
+            url="",
+        )
+        tags = self.tagger.tag_art(a)
+        self.assertGreater(
+            len(tags), 0,
+            f"expected at least one tag to fire on rich description; got {tags}",
+        )
+
+    def test_tag_all_art_populates_in_place(self):
+        pieces = [
+            self.Art(id="1", name="Fire Bird",
+                     location="", description="A flaming sculpture",
+                     url=""),
+            self.Art(id="2", name="Quiet Stone",
+                     location="", description="just a rock",
+                     url=""),
+        ]
+        self.tagger.tag_all_art(pieces)
+        self.assertGreater(len(pieces[0].tags), 0)
 
 
 if __name__ == "__main__":

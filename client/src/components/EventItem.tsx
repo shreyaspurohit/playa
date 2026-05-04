@@ -10,9 +10,14 @@ interface Props {
   isFav: boolean;
   friends: string[];          // friend nicknames who fav'd this event
   onToggleFav: (id: string) => void;
+  /** Remove a specific friend's star on THIS event. Called from the
+   *  × button inside their chip. */
+  onRemoveFriendStar: (friendName: string) => void;
 }
 
-export function EventItem({ event, query, isFav, friends, onToggleFav }: Props) {
+export function EventItem({
+  event, query, isFav, friends, onToggleFav, onRemoveFriendStar,
+}: Props) {
   const evUrl = `https://directory.burningman.org/events/${encodeURIComponent(event.id)}/`;
   const when = event.display_time || event.time || '';
   return (
@@ -43,7 +48,24 @@ export function EventItem({ event, query, isFav, friends, onToggleFav }: Props) 
       {friends.length > 0 && (
         <div class="ev-friends">
           {friends.map((n) => (
-            <span key={n} class="fav-by-chip" style={friendChipStyle(n)}>★ {n}</span>
+            <span
+              key={n}
+              class="fav-by-chip"
+              style={friendChipStyle(n)}
+            >
+              ★ {n}
+              <button
+                type="button"
+                class="fav-by-chip-del"
+                aria-label={`Remove ${n}'s star on this event`}
+                title={`Remove ${n}'s star`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onRemoveFriendStar(n);
+                }}
+              >×</button>
+            </span>
           ))}
         </div>
       )}

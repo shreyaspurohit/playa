@@ -8,7 +8,6 @@ import { LS, SS } from '../types';
 import { removeKey } from '../utils/storage';
 import { clearCachedPassword } from '../utils/secureStore';
 import { forceRefresh } from '../utils/refresh';
-import { buildSnapshot, downloadSnapshot } from '../utils/exportImport';
 
 interface Props {
   open: boolean;
@@ -18,12 +17,18 @@ interface Props {
    *  and dispatching needs access to the friends API + own nickname.
    *  This component just renders the button and calls the prop. */
   onImport: () => void;
+  /** Opens the parent's ExportModal — picker UI for granular export.
+   *  InfoModal closes itself first so the export modal isn't stacked
+   *  underneath. */
+  onExport: () => void;
   onClose: () => void;
 }
 
 type Tab = 'guide' | 'about';
 
-export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }: Props) {
+export function InfoModal({
+  open, fetchedDate, contactEmail, onImport, onExport, onClose,
+}: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>('about');
   const [refreshState, setRefreshState] = useState<'idle' | 'checking' | 'offline'>('idle');
@@ -44,7 +49,8 @@ export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }
   }
 
   function handleExport() {
-    downloadSnapshot(buildSnapshot());
+    onClose();
+    onExport();
   }
 
   const refreshLabel =
@@ -61,36 +67,42 @@ export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }
       'Clear all local data?',
       '',
       'This removes:',
-      "  • your favorited camps and events (across all data sources)",
-      "  • your theme preference",
-      "  • the password cached for this tab",
+      "  • starred camps, events, and art (across all data sources)",
+      "  • your home camp + meet spots + imported friends' lists",
+      "  • theme preference, distance unit, last-viewed tab",
+      "  • the password cached for this device",
       '',
       "You'll need to re-enter the password.",
     ].join('\n');
     if (!confirm(msg)) return;
-    // Per-source LS keys live under `<base>/<source>`. Iterate all
-    // localStorage keys and remove anything whose prefix matches one
-    // of our scoped bases — covers `directory`, `api-2024`, etc.
-    // without having to know the active source set.
-    const scopedBases = [
-      LS.favs, LS.favEvents, LS.hiddenDays, LS.myCampId,
-      LS.meetSpots, LS.sharedFavs,
-    ];
+    // Future-proof clear: drop every LS key with our `bm-` prefix.
+    // This covers all the global slots in `LS` (theme, nickname,
+    // source, etc.) and every per-source slot like
+    // `bm-favs/<source>`, `bm-fav-art/<source>`, the year-scoped
+    // `bm-embargo-lift-acked/<year>`, and any future key we add
+    // — without having to keep parallel lists in sync.
+    //
+    // Risk surface: only our keys use the `bm-` prefix; collisions
+    // with other apps on the same origin are not a real concern
+    // (this is a static single-page deploy).
     try {
       const toDrop: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (!k) continue;
-        if (scopedBases.some((b) => k === b || k.startsWith(b + '/'))) {
-          toDrop.push(k);
-        }
+        if (k && k.startsWith('bm-')) toDrop.push(k);
       }
       toDrop.forEach((k) => removeKey(k));
-    } catch { /* private mode etc. — fall through to bare key removals */ }
-    // Bare-key fallback (covers the keys above on browsers where the
-    // iteration path failed) plus the genuinely-global slots.
+    } catch { /* private mode etc. — fall through to explicit removals */ }
+    // Explicit removals as a fallback for the iteration path. Covers
+    // every key declared in `LS` so a private-mode browser that
+    // refused the iteration above still gets every known slot wiped.
+    // Per-source variants (e.g. `bm-favs/api-2026`) won't be hit by
+    // these bare-key calls — but in practice the iteration above
+    // works on every browser we support; the explicit list is
+    // belt-and-suspenders.
     removeKey(LS.favs);
     removeKey(LS.favEvents);
+    removeKey(LS.favArt);
     removeKey(LS.hiddenDays);
     removeKey(LS.myCampId);
     removeKey(LS.meetSpots);
@@ -100,6 +112,10 @@ export function InfoModal({ open, fetchedDate, contactEmail, onImport, onClose }
     removeKey(LS.infoSeen);
     removeKey(LS.source);
     removeKey(LS.legacyKeysMigrated);
+    removeKey(LS.viewMode);
+    removeKey(LS.eventCampReconciled);
+    removeKey(LS.releaseNotesSeen);
+    removeKey(LS.distanceUnit);
     // Wipes both the encrypted-blob in LS and the AES wrapping key
     // in IndexedDB so nothing identifying the unlock state survives.
     clearCachedPassword();

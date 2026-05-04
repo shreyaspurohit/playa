@@ -168,4 +168,33 @@ describe('URL round-trip', () => {
     // Other fragments (like #schedule) should survive
     assert.ok(location.hash.includes('schedule'));
   });
+
+  test('round-trips artIds when present', () => {
+    const p = {
+      name: 'Alice',
+      campIds: ['1', '2'],
+      eventIds: ['e1'],
+      artIds: ['a1', 'a2', 'a3'],
+    };
+    const decoded = decodeShare(encodeShare(p));
+    assert.equal(decoded?.name, 'Alice');
+    assert.deepEqual(decoded?.artIds, ['a1', 'a2', 'a3']);
+  });
+
+  test('omits artIds when empty (compatible with old payloads)', () => {
+    const p = { name: 'Alice', campIds: ['1'], eventIds: [] };
+    const decoded = decodeShare(encodeShare(p));
+    // Old shares produce no artIds; receiver treats undefined as "none".
+    assert.equal(decoded?.artIds, undefined);
+  });
+
+  test('artIds: rejects malformed individual ids but keeps valid ones', () => {
+    const raw = encodeShare({
+      name: 'Alice', campIds: [], eventIds: [],
+      // Mix of valid + bad — bad gets dropped by cleanIds.
+      artIds: ['a1', '<script>', 'a2', '   '],
+    });
+    const decoded = decodeShare(raw);
+    assert.deepEqual(decoded?.artIds, ['a1', 'a2']);
+  });
 });

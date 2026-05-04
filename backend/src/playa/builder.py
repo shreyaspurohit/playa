@@ -31,7 +31,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import Config
-from .models import Camp
+from .models import Art, Camp
 from .sources import Source, make_source
 from .tagger import Tagger
 from .timeparser import (
@@ -156,6 +156,21 @@ class SiteBuilder:
         camps.sort(key=lambda c: c.name.lower())
         self._enrich_event_times(camps)
         return camps
+
+    def load_art_for_source(self, spec: str) -> list[Art]:
+        """Load + tag one source's art. No event enrichment (art doesn't
+        have events). Source's `load_art()` handles dedupe + denylist;
+        builder applies Tagger + alphabetic sort uniformly.
+
+        Embargo treatment is identical to camps — see ADR D8. Build
+        artifacts retain full location data; client hides locations
+        for `api-<burn_year>` until `burn_start`."""
+        source: Source = make_source(spec)
+        art = source.load_art(self.config)
+        for piece in art:
+            piece.tags = self.tagger.tag_art(piece)
+        art.sort(key=lambda a: a.name.lower())
+        return art
 
     def _enrich_event_times(self, camps: list[Camp]) -> None:
         """Populate event.display_time + parsed_time in place. Derives
@@ -307,6 +322,7 @@ class SiteBuilder:
         self,
         loaded: list[tuple[str, list[Camp]]],
         tiers: list[tuple[str, str, list[str]]],
+        loaded_art: list[tuple[str, list[Art]]] | None = None,
     ) -> tuple[str, str, list[str], dict[str, tuple[bytes, bytes]]]:
         """Build all the per-source ciphers + per-(source, tier) DEK
         wrappers + the manifest meta tag(s) for envelope-mode deploys
@@ -354,6 +370,17 @@ class SiteBuilder:
         trusted_by_source: dict[str, list[int]] = {spec: [] for spec, _ in loaded}
 
         # 1) Encrypt each source's gzipped JSON with a fresh random DEK.
+        # Camps + art (when present) for the same source share ONE DEK
+        # but use SEPARATE IVs — IV reuse across distinct plaintexts in
+        # CBC mode leaks first-block XOR, and gzip headers are mostly
+        # deterministic in the first 10 bytes (magic + flags + zero
+        # mtime), making that leak meaningful. Wrapper still carries
+        # DEK + camps-IV so existing wire format / unwrapDek behavior
+        # is unchanged; the art cipher's IV travels in its own script
+        # tag and the client reads `cipher.iv` directly.
+        art_by_source: dict[str, list[Art]] = {
+            spec: lst for spec, lst in (loaded_art or [])
+        }
         for spec, camps in loaded:
             payload = json.dumps(
                 [c.to_dict() for c in camps],
@@ -375,6 +402,30 @@ class SiteBuilder:
                 + '</script>'
             )
             source_keys[spec] = (dek, iv)
+
+            # Art cipher for this source (when art was loaded). Reuses
+            # the camps DEK; fresh random IV. Empty art lists still
+            # emit a cipher (decrypts to "[]") so the client always has
+            # a known shape per source.
+            art_pieces = art_by_source.get(spec, [])
+            art_payload = json.dumps(
+                [a.to_dict() for a in art_pieces],
+                ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8")
+            art_compressed = gzip.compress(art_payload, compresslevel=6)
+            art_iv = os.urandom(16)
+            art_ct = self._aes_cbc_encrypt(art_compressed, dek, art_iv)
+            art_cipher = {
+                "iv": base64.b64encode(art_iv).decode("ascii"),
+                "ct": base64.b64encode(art_ct).decode("ascii"),
+                "compressed": True,
+            }
+            parts.append(
+                f'<script id="art-data-{spec}-cipher" '
+                f'type="application/json">'
+                + json.dumps(art_cipher, separators=(",", ":"))
+                + '</script>'
+            )
 
         # 2) For each (tier, source-in-tier) pair, wrap the source's
         #    DEK+IV with the tier's password.
@@ -436,7 +487,7 @@ class SiteBuilder:
     def _data_script(
         self, camps: list[Camp], source: str,
     ) -> tuple[str, str]:
-        """Return (data_script_tag, mode_label) for one source.
+        """Return (data_script_tag, mode_label) for one source's CAMPS.
 
         Script id format:
           plaintext  → camps-data-<source>          (gzip + base64)
@@ -454,29 +505,44 @@ class SiteBuilder:
         Base64 doesn't contain `<` so the `</script>` escaping the
         old raw-JSON path needed isn't necessary here.
         """
-        # Compact JSON — strip indent + whitespace — for payload embedding.
+        return self._typed_data_script(
+            [c.to_dict() for c in camps], source, kind="camps",
+        )
+
+    def _art_script(
+        self, art: list[Art], source: str,
+    ) -> tuple[str, str]:
+        """Return (data_script_tag, mode_label) for one source's ART.
+        Mirrors `_data_script` exactly — same encryption / gzip rules,
+        just under the `art-data-…` script ids."""
+        return self._typed_data_script(
+            [a.to_dict() for a in art], source, kind="art",
+        )
+
+    def _typed_data_script(
+        self, items: list[dict], source: str, *, kind: str,
+    ) -> tuple[str, str]:
+        """Shared emitter for both `camps-data-…` and `art-data-…`
+        script tags. `kind` controls the id prefix only — the
+        encryption/compression path is identical for both."""
         payload_bytes = json.dumps(
-            [c.to_dict() for c in camps],
-            ensure_ascii=False, separators=(",", ":"),
+            items, ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")
 
         if self.config.site_password:
             enc = self.encrypt_payload(payload_bytes)
             tag = (
-                f'<script id="camps-data-{source}-encrypted" '
+                f'<script id="{kind}-data-{source}-encrypted" '
                 f'type="application/json">'
                 + json.dumps(enc, separators=(",", ":"))
                 + "</script>"
             )
             return tag, f"encrypted (PBKDF2 iter={self.config.pbkdf2_iter})"
 
-        # gzip + base64 inline. The client decodes via
-        # `DecompressionStream('gzip')` — same code path the encrypted
-        # branch already uses post-AES.
         compressed = gzip.compress(payload_bytes, compresslevel=6)
         payload_b64 = base64.b64encode(compressed).decode("ascii")
         tag = (
-            f'<script id="camps-data-{source}" '
+            f'<script id="{kind}-data-{source}" '
             f'type="application/x-gzip-base64">'
             + payload_b64
             + "</script>"
@@ -654,6 +720,7 @@ class SiteBuilder:
         # data path broken?" signal CI uses to refuse a degraded
         # deploy. Secondary sources can be sparse without aborting.
         loaded: list[tuple[str, list[Camp]]] = []
+        loaded_art: list[tuple[str, list[Art]]] = []
         for spec in self.source_specs:
             try:
                 camps = self.load_camps_for_source(spec)
@@ -665,6 +732,16 @@ class SiteBuilder:
                 continue
             print(f"  source {spec!r}: {len(camps)} camps loaded")
             loaded.append((spec, camps))
+            # Art is best-effort per source. Sources without art (or
+            # cache files predating art support) yield empty lists,
+            # which still emit empty art ciphers downstream so the
+            # client always finds a script tag (decrypts to "[]").
+            try:
+                art = self.load_art_for_source(spec)
+            except FileNotFoundError:
+                art = []
+            print(f"  source {spec!r}: {len(art)} art loaded")
+            loaded_art.append((spec, art))
 
         if not loaded:
             raise RuntimeError(
@@ -703,7 +780,7 @@ class SiteBuilder:
 
         if tiers:
             data_script, wrappers_meta, modes, source_keys = (
-                self._envelope_data_scripts(loaded, tiers)
+                self._envelope_data_scripts(loaded, tiers, loaded_art)
             )
             # D13: write site/burn-key.json with the spirit-mode
             # source(s)' DEK+IV when BURN_OPEN=1. Spirit is identified
@@ -742,12 +819,21 @@ class SiteBuilder:
                 # remove so this deploy is closed.
                 burn_key_path.unlink()
         else:
-            # Per-source single-tier emission (existing path).
+            # Per-source single-tier emission (existing path). Camps
+            # and art are emitted as parallel script tags per source
+            # — same encryption/gzip mode, distinct DOM ids.
             data_parts: list[str] = []
             modes = []
+            art_by_source: dict[str, list[Art]] = {
+                s: lst for s, lst in loaded_art
+            }
             for spec, camps in loaded:
                 tag, mode = self._data_script(camps, spec)
                 data_parts.append(tag)
+                art_tag, _art_mode = self._art_script(
+                    art_by_source.get(spec, []), spec,
+                )
+                data_parts.append(art_tag)
                 modes.append(f"{spec}={mode}")
             data_script = "\n".join(data_parts)
             wrappers_meta = ""   # no manifest in non-envelope builds
@@ -833,11 +919,17 @@ class SiteBuilder:
         print(f"  modes: {', '.join(modes)}")
         print(f"  contact: {self.config.contact_email}")
         print(f"  version: {meta.get('version', '?')} ({meta.get('fetched_date', '?')})")
+        art_by_source: dict[str, list[Art]] = {s: lst for s, lst in loaded_art}
         for spec, camps in loaded:
             total_events = sum(len(c.events) for c in camps)
             with_web = sum(1 for c in camps if c.website)
             tagged = sum(1 for c in camps if c.tags)
+            art_pieces = art_by_source.get(spec, [])
+            art_tagged = sum(1 for a in art_pieces if a.tags)
+            with_image = sum(1 for a in art_pieces if a.image_url)
             print(f"  [{spec}] {len(camps)} camps · {with_web} with website "
                   f"· {total_events} events · {tagged} tagged")
+            print(f"  [{spec}] {len(art_pieces)} art · {with_image} with image "
+                  f"· {art_tagged} tagged")
         print(f"  {size_kb:.1f} KB")
         return self.config.site_html

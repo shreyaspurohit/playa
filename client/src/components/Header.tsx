@@ -1,16 +1,21 @@
-// Top of page: title, version pill, PWA install + offline-ready
-// indicators, report bug link, info button, theme switcher. Keyed
-// to the version + fetch metadata the Python builder injected as
-// <meta name="bm-*"> tags.
+// Top of page. Kept narrow so it works on mobile:
+//   left:  title + version pill + stats line
+//   right: nickname pill (always visible — it's the user's identity)
+//          + a hamburger trigger that opens HeaderMenu (everything
+//          else: source switcher, theme, about, report bug, install).
 import type { Source } from '../types';
-import { THEMES } from '../hooks/useTheme';
-import { InstallPrompt } from './InstallPrompt';
+import type { View } from '../hooks/useHashRoute';
+import { HeaderMenu } from './HeaderMenu';
 import { NicknamePill } from './NicknamePill';
-import { SourceSwitcher } from './SourceSwitcher';
 
 interface Props {
-  total: number;
-  matching: number;
+  campTotal: number;
+  campMatching: number;
+  artTotal: number;
+  artMatching: number;
+  /** Active tab — drives which "matching" count is shown (camps' or
+   *  art's) and which filter-note tag, when present, is appended. */
+  view: View;
   filterNote: string;
   fetchedDate: string;
   fetchedAt: string;
@@ -25,7 +30,8 @@ interface Props {
 }
 
 export function Header({
-  total, matching, filterNote, fetchedDate, fetchedAt, version,
+  campTotal, campMatching, artTotal, artMatching,
+  view, filterNote, fetchedDate, fetchedAt, version,
   currentTheme, onThemeChange, onInfoClick, infoPulse,
   source, availableSources, onSourceChange,
 }: Props) {
@@ -42,52 +48,36 @@ export function Header({
           </span>
         </div>
         <div class="topline-right">
-          <SourceSwitcher
-            source={source}
-            available={availableSources}
-            onChange={onSourceChange}
-          />
           <NicknamePill />
-          <InstallPrompt />
-          <a
-            class="report-link"
-            href="https://github.com/shreyaspurohit/playa/issues"
-            target="_blank"
-            rel="noopener"
-            title="Report a bug on GitHub"
-          >
-            🐛 Report bug
-          </a>
-          <button
-            class={'info-btn' + (infoPulse ? ' pulse' : '')}
-            type="button"
-            aria-label="About and disclaimer"
-            title="About & disclaimer"
-            onClick={onInfoClick}
-          >
-            i
-          </button>
-          <div class="themes" role="group" aria-label="Theme">
-            {THEMES.map(([name, icon, label]) => (
-              <button
-                key={name}
-                class={'theme-btn' + (currentTheme === name ? ' active' : '')}
-                type="button"
-                data-theme={name}
-                title={label}
-                aria-label={`${label} theme`}
-                aria-pressed={currentTheme === name ? 'true' : 'false'}
-                onClick={() => onThemeChange(name)}
-              >
-                {icon}
-              </button>
-            ))}
-          </div>
+          <HeaderMenu
+            source={source}
+            availableSources={availableSources}
+            onSourceChange={onSourceChange}
+            currentTheme={currentTheme}
+            onThemeChange={onThemeChange}
+            onInfoClick={onInfoClick}
+            infoPulse={infoPulse}
+          />
         </div>
       </div>
       <div class="stats">
-        <span>{total.toLocaleString()}</span> camps ·{' '}
-        <span>{matching.toLocaleString()}</span> matching
+        {/* Totals always visible. The "matching" suffix only renders
+            when filtering applies to the current view (camps or art).
+            Schedule + Map tabs don't filter, so they just show totals. */}
+        <span>{campTotal.toLocaleString()}</span> camps ·{' '}
+        <span>{artTotal.toLocaleString()}</span> art
+        {view === 'camps' && (
+          <>
+            {' · '}
+            <span>{campMatching.toLocaleString()}</span> matching
+          </>
+        )}
+        {view === 'art' && (
+          <>
+            {' · '}
+            <span>{artMatching.toLocaleString()}</span> matching
+          </>
+        )}
         {filterNote && <span>{filterNote}</span>}
       </div>
     </header>

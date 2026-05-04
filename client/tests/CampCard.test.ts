@@ -51,6 +51,8 @@ function mountCard(props: Partial<Parameters<typeof CampCard>[0]> = {}) {
     isMyCamp: false,
     myCampSet: false,
     onSetMyCamp: () => {},
+    onRemoveFriendCampStar: () => {},
+    onRemoveFriendEventStar: () => {},
     ...props,
   };
   render(h(CampCard, full), mount);
