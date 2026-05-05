@@ -1,43 +1,24 @@
-// PWA install + offline-ready state. Three signals merge here:
+// PWA standalone + offline-ready state.
 //
-//   1. `beforeinstallprompt` — Chrome/Edge/Samsung fire this when the
-//      site qualifies for installation (valid manifest + registered SW
-//      + engagement heuristic). We stash the event so a user click
-//      can trigger `prompt()` later.
+// We used to also capture `beforeinstallprompt` and detect iOS to
+// drive a hand-rolled install button + manual instruction modal. Both
+// jobs are now done by the `<pwa-install>` Web Component
+// (@khmyznikov/pwa-install), so this hook is reduced to the two
+// signals the surrounding UI still cares about:
 //
-//   2. iOS detection — Apple doesn't expose any install API. We sniff
-//      the UA so the button can open a manual-instructions modal
-//      instead (Share → Add to Home Screen).
-//
-//   3. Standalone + SW-controller state — tells the user they're
-//      already installed, or that the site is cached and will launch
-//      offline next time.
+//   1. Standalone — running as an installed app, so the install
+//      button + offline pill should be hidden / collapsed.
+//   2. Offline-ready — the SW has claimed the page; the site will
+//      boot without a network next time.
 
 import { useEffect, useState } from 'preact/hooks';
 
-/** Custom shape of the `beforeinstallprompt` event. Not in lib.dom.d.ts
- *  yet — it's a Chrome-ism adopted by Edge/Samsung/Opera. */
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-};
-
 export interface InstallState {
-  /** The browser captured `beforeinstallprompt`; calling
-   *  `promptInstall()` will surface the native dialog. */
-  canAutoPrompt: boolean;
-  /** UA says we're on iOS Safari (or any iOS browser — all run
-   *  WebKit and share the same no-API constraint). The install
-   *  button should show manual steps instead. */
-  isIos: boolean;
   /** Running as an installed PWA. No install UI needed. */
   isStandalone: boolean;
   /** Service worker has claimed this page — the shell is cached and
    *  the site will boot offline next time. */
   offlineReady: boolean;
-  /** Fires the native install dialog. Resolves with the user's
-   *  outcome, or 'unavailable' when no event was captured. */
-  promptInstall: () => Promise<'accepted' | 'dismissed' | 'unavailable'>;
 }
 
 function matchesStandalone(): boolean {
@@ -54,18 +35,7 @@ function matchesStandalone(): boolean {
   }
 }
 
-function detectIos(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  // iPadOS 13+ masquerades as Mac — disambiguate via touch support.
-  const isIosDevice =
-    /iPhone|iPad|iPod/.test(ua) ||
-    (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document);
-  return isIosDevice;
-}
-
 export function useInstallPrompt(): InstallState {
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState<boolean>(matchesStandalone);
   // Start false; flipped true once we confirm a SW registration exists
   // with an active worker. We use `serviceWorker.ready` rather than
@@ -75,17 +45,12 @@ export function useInstallPrompt(): InstallState {
   const [offlineReady, setOfflineReady] = useState<boolean>(false);
 
   useEffect(() => {
-    const onPrompt = (e: Event) => {
-      e.preventDefault();                         // stop the default mini-infobar
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
     const onInstalled = () => {
-      // Fires on successful install from any path (our prompt, browser
-      // infobar, menu). Drop the deferred event; flip standalone.
-      setDeferred(null);
+      // Fires on successful install from any path (pwa-install lib's
+      // dialog, browser infobar, OS-level "Add to Home Screen"). Flip
+      // standalone so the menu collapses to the installed state.
       setIsStandalone(matchesStandalone());
     };
-    window.addEventListener('beforeinstallprompt', onPrompt);
     window.addEventListener('appinstalled', onInstalled);
 
     // Standalone can toggle mid-session if a user opens the site from a
@@ -114,27 +79,11 @@ export function useInstallPrompt(): InstallState {
 
     return () => {
       cancelled = true;
-      window.removeEventListener('beforeinstallprompt', onPrompt);
       window.removeEventListener('appinstalled', onInstalled);
       mq?.removeEventListener?.('change', onMq);
       navigator.serviceWorker?.removeEventListener('controllerchange', onCtl);
     };
   }, []);
 
-  const promptInstall: InstallState['promptInstall'] = async () => {
-    if (!deferred) return 'unavailable';
-    await deferred.prompt();
-    const choice = await deferred.userChoice;
-    // Per spec the event can only prompt once; discard it either way.
-    setDeferred(null);
-    return choice.outcome;
-  };
-
-  return {
-    canAutoPrompt: deferred !== null,
-    isIos: detectIos(),
-    isStandalone,
-    offlineReady,
-    promptInstall,
-  };
+  return { isStandalone, offlineReady };
 }

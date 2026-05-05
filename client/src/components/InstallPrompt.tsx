@@ -1,20 +1,62 @@
-// Three pieces of header UI in one component:
-//   * "Install app" button (Chrome-like) → triggers native prompt
-//   * "Install app" button (iOS) → opens a manual-steps modal,
-//     because Apple doesn't expose an install API to web pages
-//   * Small status pill: "Installed" when running standalone,
-//     "Offline-ready" when the SW is controlling the page.
+// Header-menu install + status block. Two pieces:
 //
-// Hidden when there's nothing useful to show (desktop Firefox, etc.).
+//   1. Status row — "Installed · offline ready" / "Offline ready",
+//      with a "Check for updates" trailing button that calls
+//      `forceRefresh()`. Always visible when the SW has claimed the
+//      page, so an update is one tap from the menu (regardless of
+//      whether the version-check banner has fired).
+//
+//   2. "Install app" button — defers to the `<pwa-install>` Web
+//      Component (@khmyznikov/pwa-install). The library handles the
+//      Chrome `beforeinstallprompt` capture, Apple's no-API
+//      restriction (renders Add-to-Home-Screen instructions with the
+//      current iOS share-sheet visuals), and the Firefox/Opera
+//      fallback. We import it lazily on first click so the ~28KB
+//      brotli payload only lands when someone actually wants to
+//      install — keeps the initial bundle close to what it was.
+//
+// Hidden when there's nothing useful to show (already installed +
+// SW not yet registered).
 
 import { useState } from 'preact/hooks';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { forceRefresh } from '../utils/refresh';
 
+/** Element type for the lazy-loaded `<pwa-install>` Web Component.
+ *  Captures the only method we call on it. */
+interface PwaInstallElement extends HTMLElement {
+  showDialog: (forced?: boolean) => void;
+}
+
+/** Lazy-load the pwa-install Web Component on first use, mount a
+ *  single instance into <body>, and trigger its dialog. Subsequent
+ *  calls reuse the same element. */
+async function showPwaInstallDialog(): Promise<void> {
+  if (!customElements.get('pwa-install')) {
+    await import('@khmyznikov/pwa-install');
+    await customElements.whenDefined('pwa-install');
+  }
+  let el = document.querySelector<PwaInstallElement>('pwa-install');
+  if (!el) {
+    el = document.createElement('pwa-install') as PwaInstallElement;
+    // Manual mode for both Chrome + Apple — we trigger via showDialog
+    // when the user clicks Install. Without these, the lib pops the
+    // dialog on its own heuristic (first-visit timer / engagement),
+    // which is intrusive for our menu-driven flow.
+    el.setAttribute('manual-apple', '');
+    el.setAttribute('manual-chrome', '');
+    el.setAttribute('manifest-url', './manifest.webmanifest');
+    // Long-lived dismissal so users who say "no thanks" aren't
+    // pestered by the lib's internal show-once heuristic on every
+    // tab open. The menu button can still trigger it explicitly.
+    el.setAttribute('use-local-storage', '');
+    document.body.appendChild(el);
+  }
+  el.showDialog(true);
+}
+
 export function InstallPrompt() {
-  const { canAutoPrompt, isIos, isStandalone, offlineReady, promptInstall } =
-    useInstallPrompt();
-  const [iosHelpOpen, setIosHelpOpen] = useState(false);
+  const { isStandalone, offlineReady } = useInstallPrompt();
   const [refreshState, setRefreshState] = useState<
     'idle' | 'checking' | 'offline' | 'stale'
   >('idle');
@@ -39,7 +81,6 @@ export function InstallPrompt() {
     : refreshState === 'stale' ? 'Server still propagating — try again in a minute'
     : 'Check for a newer version';
 
-  const showInstallButton = !isStandalone && (canAutoPrompt || isIos);
   // Status row text — what to call the cached state to the user. When
   // running as an installed PWA, the SW is implicitly there, so we
   // collapse "Offline ready" + "Installed" into one row to avoid two
@@ -99,62 +140,16 @@ export function InstallPrompt() {
           </button>
         </div>
       )}
-      {showInstallButton && (
+      {!isStandalone && (
         <button
           class="install-btn"
           type="button"
-          onClick={() => {
-            if (canAutoPrompt) void promptInstall();
-            else setIosHelpOpen(true);
-          }}
+          onClick={() => { void showPwaInstallDialog(); }}
           title="Install this site as an app on your device"
         >
           Install app
         </button>
       )}
-      {iosHelpOpen && <IosInstallModal onClose={() => setIosHelpOpen(false)} />}
     </>
-  );
-}
-
-function IosInstallModal({ onClose }: { onClose: () => void }) {
-  function onBackdrop(e: MouseEvent) {
-    if (e.target === e.currentTarget) onClose();
-  }
-  return (
-    <div class="modal" role="dialog" aria-modal="true" onClick={onBackdrop}>
-      <div class="modal-card install-modal-card">
-        <div class="modal-head">
-          <h2>Install on iOS</h2>
-          <button class="modal-close" type="button" aria-label="Close" onClick={onClose}>✕</button>
-        </div>
-        <div class="modal-body">
-          <p>
-            Apple doesn't let web pages trigger installation directly.
-            To put this on your home screen:
-          </p>
-          <ol class="install-steps">
-            <li>
-              Open this page in <strong>Safari</strong> (not Chrome or another
-              iOS browser — add-to-home lives behind Safari's share sheet).
-            </li>
-            <li>
-              Tap the <strong>Share</strong> button (the square with an up
-              arrow) in the bottom toolbar.
-            </li>
-            <li>
-              Scroll the share sheet and pick <strong>Add to Home Screen</strong>.
-            </li>
-            <li>
-              Confirm with <strong>Add</strong> in the top right.
-            </li>
-          </ol>
-          <p class="footnote">
-            Once installed, the app launches from your home screen without
-            Safari chrome, full-screen, and works offline on playa.
-          </p>
-        </div>
-      </div>
-    </div>
   );
 }

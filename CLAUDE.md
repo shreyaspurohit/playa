@@ -130,10 +130,24 @@ python -m playa all            → nightly pipeline (bundle must already exist)
 as a dependency, so you don't need to think about it day to day.
 
 **Python side:** stdlib only + `openssl` CLI for the encrypted payload.
-**Client side:** `preact` at runtime; `esbuild`, `typescript`, `tsx`,
+**Client side:** `preact` at runtime; `@khmyznikov/pwa-install` is a
+runtime dep but only loaded lazily (dynamic `import()` from
+`InstallPrompt.tsx` on first click of the menu's "Install app" button)
+— it provides the iOS Add-to-Home-Screen instructions + native iOS 26+
+install dialog so we don't have to maintain hand-rolled instructions
+that rot every iOS release. `esbuild`, `typescript`, `tsx`,
 `happy-dom` as dev deps. Lives at the repo root in `client/`, sibling
 of `playa/` — not nested, because it's an npm/TS project, not a
 Python module. Dev deps restored via `npm ci`.
+
+**Note on the pwa-install bundle cost.** Because our build emits a
+single IIFE (the Python builder inlines `dist/bundle.js` into
+`index.html`), `await import('@khmyznikov/pwa-install')` doesn't
+actually code-split — esbuild folds the lib into the main bundle
+(adds ~50 KB gzip). If JS payload becomes a concern, the path is to
+switch esbuild to `format: 'esm'` + `splitting: true` and emit
+chunks to `site/` for the SW to serve on demand. Not worth the work
+for friends-scale traffic today.
 
 ## Package layout (`backend/src/playa/`)
 
