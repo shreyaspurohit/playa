@@ -23,9 +23,59 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { forceRefresh } from '../utils/refresh';
 
 /** Element type for the lazy-loaded `<pwa-install>` Web Component.
- *  Captures the only method we call on it. */
+ *  Captures the only members we read. `isDialogHidden` is a reactive
+ *  Lit property the lib flips when the user dismisses or completes
+ *  install — we poll it as a close signal because the lib doesn't
+ *  emit a generic "dialog-closed" event. */
 interface PwaInstallElement extends HTMLElement {
   showDialog: (forced?: boolean) => void;
+  hideDialog: () => void;
+  isDialogHidden: boolean;
+}
+
+/** Body-scroll lock state. We track it as a counter / saved style
+ *  pair so re-entry (rare — user opens dialog twice quickly) doesn't
+ *  leak the lock. Saved values are restored on unlock. */
+let scrollLockSaved: { overflow: string; touchAction: string } | null = null;
+function lockBodyScroll() {
+  if (scrollLockSaved) return;
+  scrollLockSaved = {
+    overflow: document.body.style.overflow,
+    touchAction: document.body.style.touchAction,
+  };
+  document.body.style.overflow = 'hidden';
+  // Touch-action: none on body stops Android Chrome from claiming
+  // vertical swipes inside the install dialog as page scroll.
+  // Combined with overflow:hidden it gives the bottom-sheet drag
+  // gesture exclusive ownership of the touch.
+  document.body.style.touchAction = 'none';
+}
+function unlockBodyScroll() {
+  if (!scrollLockSaved) return;
+  document.body.style.overflow = scrollLockSaved.overflow;
+  document.body.style.touchAction = scrollLockSaved.touchAction;
+  scrollLockSaved = null;
+}
+
+/** Floating ✕ overlay we render alongside the install dialog. The
+ *  lib's own close button is buried inside the dialog and isn't
+ *  always reachable on small screens (it sits behind the drag
+ *  handle in the collapsed bottom-sheet state on Android). A
+ *  fixed-position overlay button + tap-outside-to-dismiss gives the
+ *  user a reliable escape hatch regardless of dialog state. */
+function ensureCloseOverlay(onClose: () => void): HTMLButtonElement {
+  let btn = document.querySelector<HTMLButtonElement>('.pwa-install-overlay-close');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pwa-install-overlay-close';
+    btn.setAttribute('aria-label', 'Close install prompt');
+    btn.textContent = '✕';  // ✕
+    document.body.appendChild(btn);
+  }
+  btn.onclick = onClose;
+  btn.style.display = 'flex';
+  return btn;
 }
 
 /** Lazy-load the pwa-install Web Component on first use, mount a
@@ -46,13 +96,57 @@ async function showPwaInstallDialog(): Promise<void> {
     el.setAttribute('manual-apple', '');
     el.setAttribute('manual-chrome', '');
     el.setAttribute('manifest-url', './manifest.webmanifest');
-    // Long-lived dismissal so users who say "no thanks" aren't
-    // pestered by the lib's internal show-once heuristic on every
-    // tab open. The menu button can still trigger it explicitly.
-    el.setAttribute('use-local-storage', '');
+    // NOTE: deliberately NOT using `use-local-storage`. Persisting
+    // install/dismiss state across sessions causes the dialog to open
+    // in the wrong view (e.g., "already installed" / success state)
+    // when the user previously dismissed or installed-then-uninstalled.
+    // Without it, each menu tap re-evaluates state cleanly.
     document.body.appendChild(el);
   }
-  el.showDialog(true);
+  // Captured for closures below; non-null after the line above.
+  const dialogEl = el;
+
+  // Lock background scroll for the duration of the dialog. Without
+  // this, Android Chrome treats vertical drags inside the dialog as
+  // page scroll, which prevents the user from pulling the bottom
+  // sheet up to its expanded view. Upstream issue #160.
+  lockBodyScroll();
+
+  let watcher = 0;
+  function teardown() {
+    if (watcher) { window.clearInterval(watcher); watcher = 0; }
+    unlockBodyScroll();
+    document.removeEventListener('pointerdown', onBackdrop, true);
+    const btn = document.querySelector<HTMLButtonElement>('.pwa-install-overlay-close');
+    if (btn) btn.style.display = 'none';
+  }
+  function dismiss() {
+    dialogEl.hideDialog();
+    teardown();
+  }
+  // Tap anywhere outside the dialog dismisses it. Capture-phase so
+  // page-level click handlers (toolbar buttons, etc.) don't run on
+  // the dismiss tap.
+  function onBackdrop(e: PointerEvent) {
+    const t = e.target as Node | null;
+    if (!t || dialogEl.contains(t)) return;
+    if (t === dialogEl) return;
+    e.stopPropagation();
+    dismiss();
+  }
+
+  ensureCloseOverlay(dismiss);
+  document.addEventListener('pointerdown', onBackdrop, true);
+
+  dialogEl.showDialog(true);
+
+  // Poll isDialogHidden — the lib flips this to true when the user
+  // accepts, dismisses internally, or taps the lib's own X. There's
+  // no generic close event we could subscribe to, so a 200ms poll
+  // is the cleanest signal.
+  watcher = window.setInterval(() => {
+    if (dialogEl.isDialogHidden) teardown();
+  }, 200);
 }
 
 export function InstallPrompt() {

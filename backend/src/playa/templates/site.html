@@ -600,6 +600,28 @@ __TIER_WRAPPERS_META__
   .header-menu-install:empty {
     display: none;
   }
+  /* Floating ✕ button rendered alongside the @khmyznikov/pwa-install
+     Web Component's bottom-sheet dialog. The lib's own close control
+     is hidden in the collapsed state on Android Chrome, so this is
+     the user's reliable dismiss path. Pinned to the top-right of the
+     viewport so it's never covered by the bottom sheet regardless of
+     drag state, with a high z-index to clear the dialog's backdrop. */
+  .pwa-install-overlay-close {
+    position: fixed; top: 12px; right: 12px;
+    width: 40px; height: 40px;
+    z-index: 2147483646;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(15, 15, 15, 0.78); color: #fafafa;
+    border: 0; border-radius: 999px;
+    font-size: 20px; line-height: 1; font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pwa-install-overlay-close:hover,
+  .pwa-install-overlay-close:focus-visible {
+    background: rgba(0, 0, 0, 0.92); outline: none;
+  }
 
   @keyframes info-pulse {
     0%   { box-shadow: 0 0 0 0 var(--accent); }
