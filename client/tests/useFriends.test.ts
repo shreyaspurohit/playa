@@ -250,9 +250,9 @@ describe('useFriends — per-item star removal', () => {
 
   test('removeFriendMeetSpot drops one spot by index', () => {
     const spots = [
-      { name: 'A', address: '6:00 & C', when: 'mon', description: '' },
-      { name: 'B', address: '7:00 & D', when: 'tue', description: '' },
-      { name: 'C', address: '8:00 & E', when: 'wed', description: '' },
+      { label: 'A', address: '6:00 & C', when: 'mon' },
+      { label: 'B', address: '7:00 & D', when: 'tue' },
+      { label: 'C', address: '8:00 & E', when: 'wed' },
     ];
     api!.importFriend('alice', {
       campIds: ['1'], eventIds: [], meetSpots: spots,
@@ -262,11 +262,11 @@ describe('useFriends — per-item star removal', () => {
     rerender();
     const remaining = api!.friends.alice.meetSpots ?? [];
     assert.equal(remaining.length, 2);
-    assert.deepEqual(remaining.map((s) => s.name), ['A', 'C']);
+    assert.deepEqual(remaining.map((s) => s.label), ['A', 'C']);
   });
 
   test('removing the last meetSpot clears the array (not [] left behind)', () => {
-    const spots = [{ name: 'A', address: '6:00 & C', when: 'mon', description: '' }];
+    const spots = [{ label: 'A', address: '6:00 & C', when: 'mon' }];
     api!.importFriend('alice', {
       campIds: ['1'], eventIds: [], meetSpots: spots,
     });
@@ -279,7 +279,7 @@ describe('useFriends — per-item star removal', () => {
   });
 
   test('removeFriendMeetSpot evicts the friend when meetSpots was the only payload', () => {
-    const spots = [{ name: 'A', address: '6:00 & C', when: 'mon', description: '' }];
+    const spots = [{ label: 'A', address: '6:00 & C', when: 'mon' }];
     api!.importFriend('alice', {
       campIds: [], eventIds: [], meetSpots: spots,
     });
