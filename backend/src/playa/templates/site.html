@@ -355,6 +355,40 @@ __TIER_WRAPPERS_META__
   .camp .desc { margin: 0; font-size: 14px; color: var(--text); }
   .camp .desc.empty { color: var(--muted); font-style: italic; }
   .camp .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  /* Art card image — capped height + cover crop so a tall portrait
+     doesn't blow the card layout up. The image element gets `width:
+     100%` to fill the card column. `object-fit: cover` keeps the
+     aspect ratio while filling the cap. The image is hidden entirely
+     by `imageOk` state in ArtCard.tsx when it fails to load (offline,
+     CDN 404, etc.) so we never show a broken-image icon.
+     `aspect-ratio: 16/9` reserves layout space pre-load to avoid a
+     jump when the image arrives. */
+  .camp.art .art-image {
+    margin: 6px 0 2px;
+    border-radius: 6px;
+    overflow: hidden;
+    aspect-ratio: 16 / 9;
+    background: var(--chip-bg);
+  }
+  .camp.art .art-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .camp.art .art-byline {
+    font-size: 12px;
+    color: var(--muted);
+    margin: -2px 0 0;
+    font-style: italic;
+  }
+  .camp.art .art-meta-chip {
+    background: var(--chip-bg);
+    color: var(--muted);
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+  }
   .tagbadge { background: var(--chip-bg); color: var(--muted); padding: 2px 8px; border-radius: 999px; font-size: 11px; cursor: pointer; }
   .tagbadge:hover { background: var(--accent-soft); color: var(--accent); }
   details.events { margin-top: 2px; border-top: 1px dashed var(--border); padding-top: 8px; font-size: 13px; }
@@ -1151,6 +1185,12 @@ __TIER_WRAPPERS_META__
   .brc-pin.friend .brc-pin-inner { fill: var(--accent); }
   .brc-pin.active .brc-pin-outer { opacity: 0.7; r: 130; }
   .brc-pin.active .brc-pin-inner { stroke-width: 14; }
+  /* Nav-target pin — rendered when the user navigates to a camp/art
+     they haven't starred. Same shape and size as a regular pin so it
+     reads consistently; uses the accent color (orange) so it doesn't
+     impersonate a "you starred this" gold pin. */
+  .brc-pin.nav-target .brc-pin-outer { fill: var(--accent); opacity: 0.4; }
+  .brc-pin.nav-target .brc-pin-inner { fill: var(--accent); }
   /* Art pins — star shape; distinct hue from camps + meet spots so
      the "this is art" affordance reads at a glance. Two color slots
      mirror the camp pattern (mine = the warm accent of the entity
@@ -1172,6 +1212,12 @@ __TIER_WRAPPERS_META__
   }
   .brc-art-pin.active .brc-art-pin-body {
     stroke-width: 12;
+  }
+  /* Nav-target art pin — same role as `.brc-pin.nav-target` but for
+     the star shape. Solid magenta, same as a regular art pin. */
+  .brc-art-pin.nav-target .brc-art-pin-body {
+    fill: #c026d3;
+    opacity: 0.95;
   }
   /* Sidebar list-row marker for an art pin — 5-point star clipped
      out of a colored square. Mine = magenta, friend-only = teal.
@@ -1336,6 +1382,39 @@ __TIER_WRAPPERS_META__
     border-radius: 10px; padding: 10px 14px 12px;
     margin-bottom: 14px;
   }
+  /* Top-of-sidebar callout that appears when the user routed in to an
+     unfavorited camp/art piece. Visually distinct from the rendezvous
+     box (accent-color border, slightly punchy bg) so the "you're
+     navigating here" intent reads at a glance — but still composes
+     with the standard `.row-actions` + `.map-pin-addr` below it. */
+  .map-nav-target-box {
+    position: relative;
+    background: var(--card); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 10px 14px 12px;
+    margin-bottom: 14px;
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .map-nav-target-close {
+    position: absolute; top: 4px; right: 6px;
+    width: 28px; height: 28px;
+    background: transparent; border: 0; border-radius: 6px;
+    color: var(--accent); cursor: pointer;
+    font-size: 22px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .map-nav-target-close:hover {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .map-nav-target-head {
+    display: flex; align-items: baseline; gap: 8px;
+    flex-wrap: wrap; margin-bottom: 4px;
+  }
+  .map-nav-target-tag {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--accent); font-weight: 600;
+  }
+  .map-nav-target-name { font-size: 14px; }
   .map-rendezvous-head {
     display: flex; justify-content: space-between; align-items: center;
     gap: 8px;

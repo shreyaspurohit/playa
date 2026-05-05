@@ -547,6 +547,7 @@ export function App() {
   }, [camps, eventFavs, campFavs, eventToCamp]);
 
   const [mapTargetId, setMapTargetId] = useState<string | null>(null);
+  const [mapArtTargetId, setMapArtTargetId] = useState<string | null>(null);
 
   // Cross-view nav: when something calls onGotoCamp(id), we flip to the
   // Camps view, clear filters that could hide it, and bump a tick so
@@ -847,6 +848,18 @@ export function App() {
 
   const onNavigate = useCallback((campId: string) => {
     setMapTargetId(campId);
+    setMapArtTargetId(null);
+    goto('map');
+  }, [goto]);
+
+  // Mirror of `onNavigate` for art. The Art tab's per-card "navigate ↗"
+  // button calls this — it switches to the Map tab and selects the
+  // art piece, just like the camps' navigate does. Distinct from
+  // `onGotoArt` (which goes the OTHER way: from the map row to the
+  // Art tab, scrolling to that piece's card).
+  const onNavigateArt = useCallback((artId: string) => {
+    setMapArtTargetId(artId);
+    setMapTargetId(null);
     goto('map');
   }, [goto]);
 
@@ -1084,7 +1097,7 @@ export function App() {
               isFav={artFavs.has}
               friendsFavingArt={friends.friendsFavingArt}
               onToggleFav={artFavs.toggle}
-              onNavigate={onGotoArt}
+              onNavigate={onNavigateArt}
               onRemoveFriendStar={(name, artId) =>
                 friends.removeFriendStar(name, 'art', artId)
               }
@@ -1108,7 +1121,11 @@ export function App() {
               onRemoveMeetSpot={meetSpots.removeAt}
               friendsRendezvous={friendsRendezvous}
               initialTargetId={mapTargetId}
-              onClearTarget={() => setMapTargetId(null)}
+              initialArtTargetId={mapArtTargetId}
+              onClearTarget={() => {
+                setMapTargetId(null);
+                setMapArtTargetId(null);
+              }}
               onGotoCamp={onGotoCamp}
               onGotoArt={onGotoArt}
               onRemoveFriendStar={(name, kind, id) =>

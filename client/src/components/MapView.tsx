@@ -62,6 +62,9 @@ interface Props {
   friendsRendezvous: FriendRendezvous[];
   /** If a specific camp is the current navigation target, pass it here. */
   initialTargetId?: string | null;
+  /** Same shape as `initialTargetId` but for art — Art tab's
+   *  per-card navigate button sets this when routing to Map. */
+  initialArtTargetId?: string | null;
   onClearTarget?: () => void;
   onGotoCamp: (campId: string) => void;
   /** Cross-view nav handler for art (parallel to onGotoCamp). When the
@@ -116,7 +119,8 @@ export function MapView({
   art, favArtIds, friendFavArtIds,
   myCampId, meetSpots, onAddMeetSpot, onRemoveMeetSpot,
   friendsRendezvous,
-  initialTargetId = null, onClearTarget, onGotoCamp, onGotoArt,
+  initialTargetId = null, initialArtTargetId = null,
+  onClearTarget, onGotoCamp, onGotoArt,
   onRemoveFriendStar, onRemoveFriendMeetSpot,
   source,
 }: Props) {
@@ -136,15 +140,24 @@ export function MapView({
   //   mine:<idx>         — your meet spot at that index
   //   friend:<name>:<idx>— friend's meet spot at that index
   //   poi:<kind>:<name>  — point of interest
-  const [selection, setSelection] = useState<Set<string>>(() =>
-    initialTargetId ? new Set([campKey(initialTargetId)]) : new Set(),
-  );
+  const [selection, setSelection] = useState<Set<string>>(() => {
+    // Initial selection from whichever external target is set on
+    // mount. App.tsx ensures the two are mutually exclusive (setting
+    // one clears the other), so prefer camp when both are present.
+    if (initialTargetId) return new Set([campKey(initialTargetId)]);
+    if (initialArtTargetId) return new Set([artKey(initialArtTargetId)]);
+    return new Set();
+  });
   useEffect(() => {
-    // External "navigate to camp X" snaps selection to that camp only.
-    setSelection(
-      initialTargetId ? new Set([campKey(initialTargetId)]) : new Set(),
-    );
-  }, [initialTargetId]);
+    // External "navigate to <X>" snaps selection to that one entity.
+    if (initialTargetId) {
+      setSelection(new Set([campKey(initialTargetId)]));
+    } else if (initialArtTargetId) {
+      setSelection(new Set([artKey(initialArtTargetId)]));
+    } else {
+      setSelection(new Set());
+    }
+  }, [initialTargetId, initialArtTargetId]);
   const toggleKey = useCallback((key: string) => {
     setSelection((prev) => {
       const next = new Set(prev);
@@ -442,11 +455,35 @@ export function MapView({
     for (const p of friendMeetPins) consider(p.x, p.y);
     for (const p of friendCampPins) consider(p.x, p.y);
     if (myCampPin) consider(myCampPin.x, myCampPin.y);
+    // Nav-only target — when the user routed in to an unfavorited
+    // camp/art, expand the viewBox to fit it. Without this, deep-playa
+    // art the user hasn't starred lands outside the city bounds and
+    // the user has to manually pan/zoom to find it.
+    if (selection.size === 1) {
+      const key = [...selection][0];
+      let raw: string | null = null;
+      if (key.startsWith('camp:')) {
+        const id = key.slice('camp:'.length);
+        const c = camps.find((x) => x.id === id);
+        if (c) raw = c.location;
+      } else if (key.startsWith('art:')) {
+        const id = key.slice('art:'.length);
+        const a = art.find((x) => x.id === id);
+        if (a) raw = a.location;
+      }
+      if (raw) {
+        const pt = addressToSvgFeet(raw, brc);
+        if (pt) consider(pt.x, pt.y);
+      }
+    }
     return {
       effectiveVbRadius: Math.max(VIEWBOX_RADIUS_BASE, maxR + VIEWBOX_PIN_BUFFER),
       effectiveTopMargin: Math.max(VIEWBOX_TOP_MARGIN, maxNegY + VIEWBOX_PIN_BUFFER),
     };
-  }, [pins, artPins, myMeetPins, friendMeetPins, friendCampPins, myCampPin]);
+  }, [
+    pins, artPins, myMeetPins, friendMeetPins, friendCampPins, myCampPin,
+    selection, camps, art, brc,
+  ]);
 
   const vbWidth = effectiveVbRadius * 2;
   const vbHeight = effectiveVbRadius + effectiveTopMargin;
@@ -511,8 +548,21 @@ export function MapView({
         color: `hsl(${friendHue(f.name)}, 65%, 50%)`,
       };
     }
-    return null;
-  }, [selection, pins, myCampPin, friendCampPins]);
+    // Fallback: camp isn't starred / my-camp / friend's camp, but
+    // the user navigated here from the Camps tab card. Look it up
+    // in the full `camps` array so the label + halo + radial still
+    // render. Drops if the address doesn't resolve (no map pin
+    // possible) or the camp isn't in the active source.
+    const camp = camps.find((c) => c.id === targetId);
+    if (!camp) return null;
+    const pt = addressToSvgFeet(camp.location, brc);
+    if (!pt) return null;
+    return {
+      camp, x: pt.x, y: pt.y,
+      author: null, kind: 'fav', friends: [],
+      color: 'var(--accent)',
+    };
+  }, [selection, pins, myCampPin, friendCampPins, camps, brc]);
 
   // Single-select target for ART. Mirrors `target` (which is camp-only)
   // — fires when exactly ONE art piece is selected. Drives the same
@@ -532,17 +582,54 @@ export function MapView({
     if (!key.startsWith('art:')) return null;
     const targetId = key.slice('art:'.length);
     const p = artPins.find((x) => x.art.id === targetId);
-    if (!p) return null;
-    // Color follows the dot: magenta when YOU starred it, teal when
-    // only friends starred it. Matches `.brc-art-pin-body` fills so
-    // the highlight ring reads as continuation of the pin.
-    const color = p.mine ? '#c026d3' : '#14b8a6';
+    if (p) {
+      // Color follows the dot: magenta when YOU starred it, teal when
+      // only friends starred it. Matches `.brc-art-pin-body` fills so
+      // the highlight ring reads as continuation of the pin.
+      const color = p.mine ? '#c026d3' : '#14b8a6';
+      return {
+        art: p.art, x: p.x, y: p.y,
+        mine: p.mine, friends: p.friends, color,
+      };
+    }
+    // Fallback: art isn't starred but the user navigated here from
+    // the Art tab card. Look it up in the full `art` list so the
+    // label + halo + radial still render even though there's no
+    // pin in the SVG layer. Drops if address doesn't resolve.
+    const piece = art.find((a) => a.id === targetId);
+    if (!piece) return null;
+    const pt = addressToSvgFeet(piece.location, brc);
+    if (!pt) return null;
     return {
-      art: p.art, x: p.x, y: p.y,
-      mine: p.mine, friends: p.friends,
-      color,
+      art: piece, x: pt.x, y: pt.y,
+      mine: false, friends: [],
+      color: '#c026d3',         // magenta — same as the art pin body
     };
-  }, [selection, artPins]);
+  }, [selection, artPins, art, brc]);
+
+  // Navigation-only pin for a camp the user routed to from the Camps /
+  // Art tab card but hasn't starred. Without this, target's halo +
+  // label would float over a blank patch of map (no underlying dot).
+  // Skips when the camp is already drawn as a starred / my-camp /
+  // friend-camp pin, so we never double-render.
+  const navCampPin = useMemo(() => {
+    if (!target) return null;
+    const id = target.camp.id;
+    if (pins.some((p) => p.camp.id === id)) return null;
+    if (myCampPin && myCampPin.camp.id === id) return null;
+    if (friendCampPins.some((fp) => fp.camp.id === id)) return null;
+    return { camp: target.camp, x: target.x, y: target.y };
+  }, [target, pins, myCampPin, friendCampPins]);
+
+  // Navigation-only pin for an art piece — same idea as navCampPin.
+  // Renders when the user navigates from an unfavorited art card so
+  // the map shows where the piece is.
+  const navArtPin = useMemo(() => {
+    if (!artTarget) return null;
+    const id = artTarget.art.id;
+    if (artPins.some((p) => p.art.id === id)) return null;
+    return { art: artTarget.art, x: artTarget.x, y: artTarget.y };
+  }, [artTarget, artPins]);
 
   // Multi-select rendering source. Each entry carries everything the
   // SVG layer needs to draw a highlight + line label without re-doing
@@ -864,6 +951,78 @@ export function MapView({
               any of those will pin to the map.
             </>
           )}
+        </div>
+      )}
+      {/* Nav-target card — prominent, top-of-sidebar callout when the
+          user routed in to a camp or art piece they haven't starred.
+          Mirrors the actions a starred-pin row would offer (open the
+          source card + Google Maps deep-link) so navigation feels like
+          a first-class flow regardless of fav state. */}
+      {navCampPin && (
+        <div class="map-nav-target-box">
+          <button
+            type="button"
+            class="map-nav-target-close"
+            aria-label="Close navigation"
+            title="Close navigation"
+            onClick={() => clearSelection()}
+          >×</button>
+          <div class="map-nav-target-head">
+            <span class="map-nav-target-tag">Navigating to</span>
+            <strong class="map-nav-target-name">{navCampPin.camp.name}</strong>
+          </div>
+          {navCampPin.camp.location && (
+            <div class="map-pin-addr">{navCampPin.camp.location}</div>
+          )}
+          <NavBlock address={navCampPin.camp.location} />
+          <div class="row-actions">
+            <button
+              type="button" class="map-ext-link"
+              onClick={() => onGotoCamp(navCampPin.camp.id)}
+            >Open camp card →</button>
+            {externalMapsUrlForAddress(navCampPin.camp.location) && (
+              <a
+                class="map-ext-link"
+                href={externalMapsUrlForAddress(navCampPin.camp.location)!}
+                target="_blank" rel="noopener"
+              >Open in Google Maps ↗</a>
+            )}
+          </div>
+        </div>
+      )}
+      {navArtPin && (
+        <div class="map-nav-target-box">
+          <button
+            type="button"
+            class="map-nav-target-close"
+            aria-label="Close navigation"
+            title="Close navigation"
+            onClick={() => clearSelection()}
+          >×</button>
+          <div class="map-nav-target-head">
+            <span class="map-nav-target-tag">Navigating to</span>
+            <strong class="map-nav-target-name">
+              🎨 {navArtPin.art.name}
+              {navArtPin.art.artist ? ` — ${navArtPin.art.artist}` : ''}
+            </strong>
+          </div>
+          {navArtPin.art.location && (
+            <div class="map-pin-addr">{navArtPin.art.location}</div>
+          )}
+          <NavBlock address={navArtPin.art.location} />
+          <div class="row-actions">
+            <button
+              type="button" class="map-ext-link"
+              onClick={() => onGotoArt(navArtPin.art.id)}
+            >Open art card →</button>
+            {externalMapsUrlForAddress(navArtPin.art.location) && (
+              <a
+                class="map-ext-link"
+                href={externalMapsUrlForAddress(navArtPin.art.location)!}
+                target="_blank" rel="noopener"
+              >Open in Google Maps ↗</a>
+            )}
+          </div>
         </div>
       )}
       {/* Always render the rendezvous box + SVG so the BRC grid + POIs
@@ -1472,6 +1631,8 @@ export function MapView({
           <Svg
             pins={pins}
             artPins={artPins}
+            navCampPin={navCampPin}
+            navArtPin={navArtPin}
             target={target}
             targetAddress={target ? parseAddress(target.camp.location, brc) : null}
             artTarget={artTarget}
@@ -1543,6 +1704,7 @@ function formatDistance(meters: number, unit: DistanceUnit): string {
 
 function Svg({
   pins, artPins,
+  navCampPin, navArtPin,
   target, targetAddress,
   artTarget, artTargetAddress,
   vbWidth, vbHeight, vbRadius,
@@ -1555,6 +1717,14 @@ function Svg({
   /** Starred art pins. Star shape + distinct color from camp pins.
    *  Tap toggles selection (sidebar row expands inline). */
   artPins: Array<{ art: Art; x: number; y: number; mine: boolean; friends: string[] }>;
+  /** Nav-only pin for a camp the user routed to but hasn't starred.
+   *  Rendered with a dashed outline so it reads "navigating here, not
+   *  starred" — `null` whenever the target is already in the regular
+   *  pin set or no camp is selected. */
+  navCampPin: { camp: Camp; x: number; y: number } | null;
+  /** Nav-only pin for an art piece — same role as navCampPin but for
+   *  the art star shape. */
+  navArtPin: { art: Art; x: number; y: number } | null;
   /** Single-select target for art — fires when exactly one art piece
    *  is selected. Drives the same big-label / halo / ring / GPS-
    *  bearing rendering camps get. Mutually exclusive with `target`. */
@@ -2264,6 +2434,27 @@ function Svg({
         </g>
       ))}
 
+      {/* Nav-target pin for an unstarred camp the user routed in to.
+          Same circle shape as a regular pin so the size/position read
+          consistently, but the `nav-target` modifier styles it as a
+          dashed outline (CSS) — communicates "you're navigating here,
+          you haven't starred this yet". */}
+      {navCampPin && (
+        <g
+          class={'brc-pin nav-target active'}
+          transform={`translate(${navCampPin.x} ${navCampPin.y})`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleKey(campKey(navCampPin.camp.id));
+          }}
+        >
+          <circle r={150} class="brc-pin-hit" />
+          <circle r={70} class="brc-pin-outer" />
+          <circle r={35} class="brc-pin-inner" />
+          <title>{navCampPin.camp.name}{navCampPin.camp.location ? ` — ${navCampPin.camp.location}` : ''}</title>
+        </g>
+      )}
+
       {/* Art pins — favorited art only. Star shape so the "art piece"
           affordance reads distinct from camps' circles + meet-spots'
           circles + my-camp's triangle. Tap toggles selection (matches
@@ -2297,6 +2488,29 @@ function Svg({
           </title>
         </g>
       ))}
+
+      {/* Nav-target star for an unstarred art piece the user routed
+          in to. Mirrors navCampPin's role for camps. */}
+      {navArtPin && (
+        <g
+          class={'brc-art-pin nav-target active'}
+          transform={`translate(${navArtPin.x} ${navArtPin.y})`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleKey(artKey(navArtPin.art.id));
+          }}
+        >
+          <circle r={150} class="brc-pin-hit" />
+          <path
+            d="M 0 -70 L 16 -22 L 67 -22 L 26 8 L 41 57 L 0 27 L -41 57 L -26 8 L -67 -22 L -16 -22 Z"
+            class="brc-art-pin-body"
+          />
+          <title>
+            🎨 {navArtPin.art.name}{navArtPin.art.artist ? ` — ${navArtPin.art.artist}` : ''}
+            {navArtPin.art.location ? ` — ${navArtPin.art.location}` : ''}
+          </title>
+        </g>
+      )}
 
       {/* Your home camp — a big teal tent. Deliberately sized larger
           than every other pin so it anchors the map: "this is where I

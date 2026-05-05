@@ -123,6 +123,14 @@ export function InfoModal({
     // too in case the user clicked Clear before ever loading the new
     // build that would have migrated it.
     try { sessionStorage.removeItem(SS.password); } catch {}
+    // Drop the SW-managed cross-origin image cache too — otherwise
+    // "clear all" leaves the on-disk thumbnail bytes for every
+    // starred art piece behind. Fire-and-forget; the reload below
+    // doesn't wait. The SW responds with 'IMAGE_CACHE_CLEARED' but
+    // we don't need that signal — the reload supersedes.
+    try {
+      navigator.serviceWorker?.controller?.postMessage('CLEAR_IMAGE_CACHE');
+    } catch { /* no SW or messaging blocked */ }
     location.reload();
   }
 

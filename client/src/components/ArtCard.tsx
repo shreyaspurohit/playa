@@ -2,6 +2,7 @@
 // shows name, artist, meta (location + canonical + navigate), image
 // thumbnail, description, tags. Star toggle, friend faving chip row,
 // and a navigate→map link when the address resolves. No events.
+import { useState } from 'preact/hooks';
 import type { Art } from '../types';
 import { highlight } from '../utils/highlight';
 import { FriendChip } from './FriendChip';
@@ -27,6 +28,12 @@ export function ArtCard({
   const owners: string[] = [];
   if (isFav) owners.push('you');
   owners.push(...friendsFavingArt);
+
+  // Image-load failures (offline, 404, BM CDN blip, etc.) flip this
+  // off and the figure disappears entirely instead of showing the
+  // browser's broken-image placeholder. The card still reads cleanly
+  // — name + artist + description carry the piece on their own.
+  const [imageOk, setImageOk] = useState(true);
 
   return (
     <article class="camp art" data-art-id={art.id}>
@@ -104,12 +111,15 @@ export function ArtCard({
           })}
         </div>
       )}
-      {art.image_url && (
+      {art.image_url && imageOk && (
         <div class="art-image">
           <img
             src={art.image_url}
             alt={`${art.name} thumbnail`}
             loading="lazy"
+            decoding="async"
+            referrerpolicy="no-referrer"
+            onError={() => setImageOk(false)}
           />
         </div>
       )}
