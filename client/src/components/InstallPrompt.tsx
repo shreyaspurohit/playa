@@ -15,41 +15,90 @@ export function InstallPrompt() {
   const { canAutoPrompt, isIos, isStandalone, offlineReady, promptInstall } =
     useInstallPrompt();
   const [iosHelpOpen, setIosHelpOpen] = useState(false);
-  const [refreshState, setRefreshState] = useState<'idle' | 'checking' | 'offline'>('idle');
+  const [refreshState, setRefreshState] = useState<
+    'idle' | 'checking' | 'offline' | 'stale'
+  >('idle');
 
   async function handleRefresh() {
     setRefreshState('checking');
     const outcome = await forceRefresh();
     // 'refreshed' → page is reloading right now, this component unmounts.
-    // 'offline' → we kept the cache; tell the user and reset after a bit.
+    // 'offline' / 'stale' → tell the user, then reset after a beat.
     if (outcome === 'offline') {
       setRefreshState('offline');
       window.setTimeout(() => setRefreshState('idle'), 3000);
+    } else if (outcome === 'stale') {
+      setRefreshState('stale');
+      window.setTimeout(() => setRefreshState('idle'), 4000);
     }
   }
 
   const refreshTitle =
     refreshState === 'checking' ? 'Checking for updates…'
     : refreshState === 'offline' ? 'Offline — kept your cached copy'
+    : refreshState === 'stale' ? 'Server still propagating — try again in a minute'
     : 'Check for a newer version';
 
-  // Already an installed app — no need to push install, and the
-  // "offline-ready" pill would be redundant. Just confirm the state.
-  if (isStandalone) {
-    return (
-      <span
-        class="install-pill installed"
-        title="Running as an installed app"
-      >
-        ✓ Installed
-      </span>
-    );
-  }
-
-  const showInstallButton = canAutoPrompt || isIos;
+  const showInstallButton = !isStandalone && (canAutoPrompt || isIos);
+  // Status row text — what to call the cached state to the user. When
+  // running as an installed PWA, the SW is implicitly there, so we
+  // collapse "Offline ready" + "Installed" into one row to avoid two
+  // status pills saying nearly the same thing.
+  const statusLabel = isStandalone
+    ? 'Installed · offline ready'
+    : offlineReady ? 'Offline ready' : null;
+  const checkLabel =
+    refreshState === 'checking' ? 'Checking…'
+    : refreshState === 'offline' ? 'Still offline — kept cache'
+    : refreshState === 'stale' ? 'Server propagating — retry'
+    : 'Check for updates';
 
   return (
     <>
+      {/* Status row — same layout as a header-menu-item (icon +
+          two-line stack), but with a secondary "Check for updates"
+          action button at the right. Always renders when the SW is
+          managing the page so the user has a one-tap path to pick up
+          a new build without leaving the menu. */}
+      {statusLabel && (
+        <div class="header-menu-status-row">
+          <span class="header-menu-icon-svg" aria-hidden="true">
+            <svg
+              width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"
+            >
+              <path d="M7 18a4 4 0 0 1 -.5 -7.97A6 6 0 0 1 18 9.5a3.5 3.5 0 0 1 -1 6.85" />
+              <path d="M9 14l2 2 4 -4" />
+            </svg>
+          </span>
+          <span class="header-menu-status-label">{statusLabel}</span>
+          <button
+            type="button"
+            class={
+              'header-menu-status-action'
+              + (refreshState === 'offline' ? ' offline' : '')
+              + (refreshState === 'stale' ? ' stale' : '')
+            }
+            onClick={handleRefresh}
+            disabled={refreshState === 'checking'}
+            title={refreshTitle}
+          >
+            <svg
+              width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8" />
+              <path d="M21 3v5h-5" />
+              <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16" />
+              <path d="M3 21v-5h5" />
+            </svg>
+            <span>{checkLabel}</span>
+          </button>
+        </div>
+      )}
       {showInstallButton && (
         <button
           class="install-btn"
@@ -62,44 +111,6 @@ export function InstallPrompt() {
         >
           Install app
         </button>
-      )}
-      {offlineReady && (
-        <>
-          <span
-            class="install-pill offline"
-            title="The site is cached — it'll launch without a network next time"
-          >
-            Offline ✓
-          </span>
-          {/* Small refresh button next to the offline pill. One click
-              pulls the latest build from the server (network-probed,
-              so it's a no-op when offline). Separate from the full
-              Force Refresh in the About modal — this is the quick,
-              always-visible surface. */}
-          <button
-            type="button"
-            class={'refresh-btn' + (refreshState === 'offline' ? ' offline' : '')}
-            onClick={handleRefresh}
-            disabled={refreshState === 'checking'}
-            title={refreshTitle}
-            aria-label={refreshTitle}
-          >
-            <svg
-              class="refresh-icon" viewBox="0 0 24 24"
-              width="14" height="14" fill="none"
-              stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              {/* Circular refresh arrow — hand-drawn, not lifted from a
-                  library. Three-quarter arc + a small arrowhead at one end. */}
-              <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8" />
-              <path d="M21 3v5h-5" />
-              <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16" />
-              <path d="M3 21v-5h5" />
-            </svg>
-          </button>
-        </>
       )}
       {iosHelpOpen && <IosInstallModal onClose={() => setIosHelpOpen(false)} />}
     </>

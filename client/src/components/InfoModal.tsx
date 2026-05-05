@@ -31,7 +31,7 @@ export function InfoModal({
 }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>('about');
-  const [refreshState, setRefreshState] = useState<'idle' | 'checking' | 'offline'>('idle');
+  const [refreshState, setRefreshState] = useState<'idle' | 'checking' | 'offline' | 'stale'>('idle');
 
   useEffect(() => { if (open) closeRef.current?.focus(); }, [open]);
   useEffect(() => {
@@ -46,6 +46,7 @@ export function InfoModal({
     setRefreshState('checking');
     const outcome = await forceRefresh();
     if (outcome === 'offline') setRefreshState('offline');
+    else if (outcome === 'stale') setRefreshState('stale');
   }
 
   function handleExport() {
@@ -56,6 +57,7 @@ export function InfoModal({
   const refreshLabel =
     refreshState === 'checking' ? 'Checking…'
     : refreshState === 'offline' ? 'Offline — kept cache'
+    : refreshState === 'stale' ? 'Server propagating — try again'
     : 'Force refresh';
 
   function handleBackdrop(e: MouseEvent) {
@@ -354,7 +356,7 @@ function AboutTab({
   onExport: () => void;
   onImport: () => void;
   onClearAll: () => void;
-  refreshState: 'idle' | 'checking' | 'offline';
+  refreshState: 'idle' | 'checking' | 'offline' | 'stale';
   refreshLabel: string;
 }) {
   return (

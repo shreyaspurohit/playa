@@ -24,8 +24,14 @@
 //                 next load will look identical to the previous one,
 //                 but at least the page still loads.
 //   'offline'   — skipped everything. Existing cache + SW untouched.
+//   'stale'     — network reachable + SW cache refreshed, but the
+//                 freshly-fetched index.html is the same version the
+//                 user is already on. Means GitHub Pages' Fastly edge
+//                 cache hasn't propagated the new build yet (version.txt
+//                 is small + propagates faster than index.html). Reload
+//                 would be a no-op so we skip it; UI surfaces the wait.
 
-type RefreshOutcome = 'refreshed' | 'offline';
+export type RefreshOutcome = 'refreshed' | 'offline' | 'stale';
 
 /** Max time to wait for the SW to acknowledge the shell-refresh. After
  *  this we reload anyway — the SW's background-refresh pattern on
@@ -70,6 +76,44 @@ function waitForShellRefresh(timeoutMs: number): Promise<void> {
   });
 }
 
+/** Pull the bm-version meta out of an index.html string. Returns null
+ *  if it isn't present (e.g., a cached error page). */
+function extractVersion(html: string): string | null {
+  const m = html.match(/<meta\s+name=["']bm-version["']\s+content=["']([^"']+)["']/i);
+  return m ? m[1] : null;
+}
+
+/** Read the version baked into the currently loaded page. */
+function loadedVersion(): string | null {
+  if (typeof document === 'undefined') return null;
+  const meta = document.querySelector('meta[name="bm-version"]');
+  return (meta?.getAttribute('content') ?? '').trim() || null;
+}
+
+/** Look at whatever index.html the SW would serve next reload, and
+ *  pull its bm-version. We search every same-origin cache (the new SW
+ *  could have just installed a brand-new cache while the old one still
+ *  controls the page) and take the newest version found. Returns null
+ *  if no cache has a parseable index.html. */
+async function newestCachedVersion(): Promise<string | null> {
+  if (typeof caches === 'undefined') return null;
+  try {
+    const names = await caches.keys();
+    let newest: string | null = null;
+    for (const name of names) {
+      const cache = await caches.open(name);
+      const resp = await cache.match('./index.html');
+      if (!resp) continue;
+      const version = extractVersion(await resp.text());
+      if (!version) continue;
+      if (!newest || version.localeCompare(newest) > 0) newest = version;
+    }
+    return newest;
+  } catch {
+    return null;
+  }
+}
+
 export async function forceRefresh(): Promise<RefreshOutcome> {
   if (!await probeNetwork()) return 'offline';
 
@@ -105,6 +149,18 @@ export async function forceRefresh(): Promise<RefreshOutcome> {
     // Any failure here is non-fatal: the cache is untouched, the SW
     // still controls the page, and the reload below will serve what
     // was there before — exactly the state we started in.
+  }
+
+  // Stale-cache guard. After REFRESH_SHELL, the SW has tried to pull
+  // a fresh shell. If the bytes that came back are the same version
+  // we're already on, the deploy hasn't propagated through Fastly
+  // yet (version.txt updates faster than index.html at the edge).
+  // Reloading would just re-serve the same page — flag it so the
+  // banner can keep prompting instead of silently consuming the tap.
+  const current = loadedVersion();
+  const cached = await newestCachedVersion();
+  if (current && cached && current === cached) {
+    return 'stale';
   }
 
   location.reload();

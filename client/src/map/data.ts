@@ -47,23 +47,33 @@ export interface BrcMapData {
  *  icon/color selection. */
 export interface BrcPOI {
   name: string;
-  kind: 'center-camp' | 'playa-info' | 'ranger' | 'medical' | 'toilets' | 'other';
+  kind:
+    | 'center-camp' | 'playa-info' | 'ranger' | 'medical' | 'toilets'
+    | 'plaza' | 'other';
   address: string;
   description?: string;
 }
 
 /**
- * Curated, year-stable points of interest. Only entries we can verify
- * against primary sources live here — the full GIS set (rangers,
- * medical, individual porto banks) lives in the official Innovate
- * GIS dataset and should be pulled in via the /update-map skill when
- * it refreshes for a new burn year.
+ * Curated points of interest. Only entries whose address form
+ * (`<clock> & <street>`) is stable across years live here — the
+ * yearly GIS dataset
+ * (https://github.com/burningmantech/innovate-GIS-data, refreshed
+ * mid-July ~5–6 weeks before gates) carries the full set including
+ * positions that shift annually (medical/Rampart, individual porto
+ * banks, ranger Stations 3/6/9, the airport).
  *
- * Sources for the entries below (both stable across years):
- *   - Center Camp: BRC's literal center, at the 6:00 & Esplanade axis
- *     (the `6:00 axis` is named for this; see Legend modal / city plan).
+ * Sources:
+ *   - Center Camp: BRC's literal center, at the 6:00 & Esplanade axis.
  *   - Playa Info: `https://burningman.org/black-rock-city/preparation/
  *     infrastructure/playa-info/` states "Esplanade and 5:45".
+ *   - Plazas: from the 2025 GIS `cpns.geojson` — names like
+ *     "3 & B Plaza" / "9 & G Plaza" map to the corresponding
+ *     `<clock> & <letter>` address. The clock-and-street naming
+ *     pattern is stable across years, so per-year geometry resolves
+ *     them via `addressToSvgFeet` without a year-keyed coordinate
+ *     list. The 4:30 & 7:30 G plazas are the "Grootslang plazas"
+ *     defined by the wider E→F mid-city block.
  */
 export const POIS: BrcPOI[] = [
   {
@@ -79,9 +89,34 @@ export const POIS: BrcPOI[] = [
     description:
       'Lost & found, camp lookup, message board. Open 9am–6pm daily + some evenings mid-week.',
   },
-  // TODO: rangers / medical (Rampart) / porto banks — load from
-  // github.com/burningmantech/innovate-GIS-data via the /update-map
-  // skill's annual refresh step (those locations shift year to year).
+  {
+    name: '3:00 & B Plaza', kind: 'plaza', address: '3:00 & B',
+    description: 'Inner-city plaza near 3:00 keyhole.',
+  },
+  {
+    name: '9:00 & B Plaza', kind: 'plaza', address: '9:00 & B',
+    description: 'Inner-city plaza near 9:00 keyhole.',
+  },
+  {
+    name: '3:00 & G Plaza', kind: 'plaza', address: '3:00 & G',
+    description: 'Mid-city plaza on the 3:00 axis.',
+  },
+  {
+    name: '9:00 & G Plaza', kind: 'plaza', address: '9:00 & G',
+    description: 'Mid-city plaza on the 9:00 axis.',
+  },
+  {
+    name: '6:00 & G Plaza', kind: 'plaza', address: '6:00 & G',
+    description: 'Mid-city plaza behind Center Camp on the 6:00 axis.',
+  },
+  {
+    name: '4:30 & G Plaza', kind: 'plaza', address: '4:30 & G',
+    description: 'Mid-city plaza on the 4:30 radial.',
+  },
+  {
+    name: '7:30 & G Plaza', kind: 'plaza', address: '7:30 & G',
+    description: 'Mid-city plaza on the 7:30 radial.',
+  },
 ];
 
 /**

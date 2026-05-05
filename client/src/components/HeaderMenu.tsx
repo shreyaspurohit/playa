@@ -14,6 +14,63 @@ import { THEMES } from '../hooks/useTheme';
 import { InstallPrompt } from './InstallPrompt';
 import { SourceSwitcher } from './SourceSwitcher';
 
+/** Inline SVG glyph for a menu row. Stroked, currentColor — picks up
+ *  the row's text color so it follows themes for free. Sized 16x16 to
+ *  match the row's font-size visual weight. */
+function MenuIcon({ name }: { name: 'info' | 'bug' | 'cloud-check' | 'refresh' }) {
+  const common = {
+    width: 16, height: 16, viewBox: '0 0 24 24',
+    fill: 'none', stroke: 'currentColor', 'stroke-width': 2,
+    'stroke-linecap': 'round' as const, 'stroke-linejoin': 'round' as const,
+    'aria-hidden': 'true' as const,
+    class: 'header-menu-icon-svg',
+  };
+  if (name === 'info') {
+    return (
+      <svg {...common}>
+        <circle cx={12} cy={12} r={9} />
+        <line x1={12} y1={11} x2={12} y2={17} />
+        <circle cx={12} cy={7.5} r={0.5} fill="currentColor" />
+      </svg>
+    );
+  }
+  if (name === 'bug') {
+    return (
+      <svg {...common}>
+        {/* Body — rounded capsule. */}
+        <rect x={7} y={8} width={10} height={12} rx={5} />
+        {/* Antennae. */}
+        <path d="M9 8 L7 4" />
+        <path d="M15 8 L17 4" />
+        {/* Legs — three on each side. */}
+        <path d="M7 12 L4 11" />
+        <path d="M7 15 L4 15" />
+        <path d="M7 18 L4 19" />
+        <path d="M17 12 L20 11" />
+        <path d="M17 15 L20 15" />
+        <path d="M17 18 L20 19" />
+      </svg>
+    );
+  }
+  if (name === 'cloud-check') {
+    return (
+      <svg {...common}>
+        <path d="M7 18a4 4 0 0 1 -.5 -7.97A6 6 0 0 1 18 9.5a3.5 3.5 0 0 1 -1 6.85" />
+        <path d="M9 14l2 2 4 -4" />
+      </svg>
+    );
+  }
+  // refresh
+  return (
+    <svg {...common}>
+      <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
+
 interface Props {
   source: Source;
   availableSources: Source[];
@@ -108,7 +165,10 @@ export function HeaderMenu({
             </div>
           </div>
 
-          {/* Action items. Each closes the menu on click. */}
+          {/* Action items. Each closes the menu on click. SVG icons
+              (not emoji) keep the column visually consistent across
+              platforms — Apple's 🐛 in particular renders as a cute
+              caterpillar that doesn't read as "report bug". */}
           <div class="header-menu-section header-menu-actions">
             <button
               type="button"
@@ -116,7 +176,7 @@ export function HeaderMenu({
               role="menuitem"
               onClick={pick(onInfoClick)}
             >
-              <span aria-hidden="true">ⓘ</span>
+              <MenuIcon name="info" />
               <span>About &amp; disclaimer</span>
             </button>
             <a
@@ -127,16 +187,15 @@ export function HeaderMenu({
               rel="noopener"
               onClick={close}
             >
-              <span aria-hidden="true">🐛</span>
+              <MenuIcon name="bug" />
               <span>Report bug</span>
             </a>
           </div>
 
-          {/* PWA install / offline-ready chip — only renders when
-              the platform supports/requires it. Inline so the
-              "Install app" affordance doesn't disappear behind an
-              extra layer; close on click since it'll prompt the
-              native install dialog anyway. */}
+          {/* Status + install row. The InstallPrompt renders its own
+              menu rows (offline status, update check, install button)
+              so they line up with the action items above instead of
+              looking like loose chips. */}
           <div class="header-menu-section header-menu-install">
             <InstallPrompt />
           </div>

@@ -362,6 +362,7 @@ export function MapView({
       let color = 'var(--muted)';
       if (kind === 'center-camp') color = '#dc2626';
       else if (kind === 'playa-info') color = '#0369a1';
+      else if (kind === 'plaza') color = '#0d9488';
       return {
         label: hit.poi.name, address: hit.poi.address, when: undefined,
         description: hit.poi.description,
@@ -736,6 +737,7 @@ export function MapView({
         let color = 'var(--muted)';
         if (kind === 'center-camp') color = '#dc2626';
         else if (kind === 'playa-info') color = '#0369a1';
+        else if (kind === 'plaza') color = '#0d9488';
         out.push({
           key, x: hit.x, y: hit.y,
           address: hit.poi.address, label: hit.poi.name, kind: 'poi',

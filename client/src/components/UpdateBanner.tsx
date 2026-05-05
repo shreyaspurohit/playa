@@ -14,16 +14,24 @@ interface Props {
 export function UpdateBanner({ latest }: Props) {
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [staleHint, setStaleHint] = useState(false);
 
   if (dismissed) return null;
 
   async function onRefresh() {
     setBusy(true);
+    setStaleHint(false);
     const outcome = await forceRefresh();
     if (outcome === 'offline') {
       // Network just dropped — keep the banner up so they can try
       // again when connectivity returns.
       setBusy(false);
+    } else if (outcome === 'stale') {
+      // CDN edge hasn't propagated the new build yet — version.txt is
+      // ahead of index.html. Reloading is a no-op; tell the user to
+      // wait a bit and keep the banner up.
+      setBusy(false);
+      setStaleHint(true);
     }
     // 'refreshed' triggers location.reload() inside forceRefresh, so
     // there's nothing else to do here.
@@ -32,7 +40,9 @@ export function UpdateBanner({ latest }: Props) {
   return (
     <div class="update-banner" role="status" aria-live="polite">
       <span class="update-banner-msg">
-        A newer version of Playa Camps is available.
+        {staleHint
+          ? 'New version detected, but the server is still propagating it. Try again in a minute.'
+          : 'A newer version of Playa Camps is available.'}
       </span>
       <div class="update-banner-actions">
         <button
@@ -42,7 +52,7 @@ export function UpdateBanner({ latest }: Props) {
           disabled={busy}
           title={`Reload to ${latest}`}
         >
-          {busy ? 'Refreshing…' : 'Refresh'}
+          {busy ? 'Refreshing…' : staleHint ? 'Try again' : 'Refresh'}
         </button>
         <button
           type="button"
