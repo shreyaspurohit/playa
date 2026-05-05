@@ -175,6 +175,129 @@ describe('useFriends — remove + clear', () => {
   });
 });
 
+describe('useFriends — per-item star removal', () => {
+  test('removeFriendStar(camp) drops one id, keeps the rest', () => {
+    api!.importFriend('alice', { campIds: ['1', '2', '3'], eventIds: ['e1'] });
+    rerender();
+    api!.removeFriendStar('alice', 'camp', '2');
+    rerender();
+    assert.deepEqual(api!.friends.alice.campIds.sort(), ['1', '3']);
+    assert.deepEqual(api!.friends.alice.eventIds, ['e1']);
+  });
+
+  test('removeFriendStar(event) drops one id without touching camps', () => {
+    api!.importFriend('alice', { campIds: ['1'], eventIds: ['e1', 'e2'] });
+    rerender();
+    api!.removeFriendStar('alice', 'event', 'e1');
+    rerender();
+    assert.deepEqual(api!.friends.alice.eventIds, ['e2']);
+    assert.deepEqual(api!.friends.alice.campIds, ['1']);
+  });
+
+  test('removeFriendStar(art) drops one id and clears the artIds array when emptied', () => {
+    api!.importFriend('alice', {
+      campIds: ['1'], eventIds: [], artIds: ['a1'],
+    });
+    rerender();
+    api!.removeFriendStar('alice', 'art', 'a1');
+    rerender();
+    // artIds should be deleted (not [] left behind), so isEmpty()
+    // sees a clean shape and the friend stays alive (campIds non-empty).
+    assert.equal(api!.friends.alice.artIds, undefined);
+    assert.deepEqual(api!.friends.alice.campIds, ['1']);
+  });
+
+  test('removing the last item auto-drops the friend entirely', () => {
+    api!.importFriend('alice', { campIds: ['1'], eventIds: [] });
+    api!.importFriend('bob', { campIds: ['2'], eventIds: [] });
+    rerender();
+    // Alice's only star — removing it should evict her.
+    api!.removeFriendStar('alice', 'camp', '1');
+    rerender();
+    assert.equal(api!.friends.alice, undefined);
+    assert.deepEqual(api!.names, ['bob']);
+  });
+
+  test('auto-drop respects myCampId / meetSpots — friend stays even when stars empty', () => {
+    api!.importFriend('alice', {
+      campIds: ['1'], eventIds: [],
+      myCampId: 'home',
+    });
+    rerender();
+    api!.removeFriendStar('alice', 'camp', '1');
+    rerender();
+    // myCampId keeps her around even with no campIds left.
+    assert.deepEqual(api!.friends.alice.campIds, []);
+    assert.equal(api!.friends.alice.myCampId, 'home');
+  });
+
+  test('removeFriendStar on unknown friend is a no-op', () => {
+    api!.importFriend('alice', { campIds: ['1'], eventIds: [] });
+    rerender();
+    api!.removeFriendStar('nobody', 'camp', '1');
+    rerender();
+    assert.deepEqual(api!.names, ['alice']);
+    assert.deepEqual(api!.friends.alice.campIds, ['1']);
+  });
+
+  test('removeFriendStar with an id that doesn\'t exist is a no-op on data', () => {
+    api!.importFriend('alice', { campIds: ['1'], eventIds: [] });
+    rerender();
+    api!.removeFriendStar('alice', 'camp', '999');
+    rerender();
+    assert.deepEqual(api!.friends.alice.campIds, ['1']);
+  });
+
+  test('removeFriendMeetSpot drops one spot by index', () => {
+    const spots = [
+      { name: 'A', address: '6:00 & C', when: 'mon', description: '' },
+      { name: 'B', address: '7:00 & D', when: 'tue', description: '' },
+      { name: 'C', address: '8:00 & E', when: 'wed', description: '' },
+    ];
+    api!.importFriend('alice', {
+      campIds: ['1'], eventIds: [], meetSpots: spots,
+    });
+    rerender();
+    api!.removeFriendMeetSpot('alice', 1);  // remove "B"
+    rerender();
+    const remaining = api!.friends.alice.meetSpots ?? [];
+    assert.equal(remaining.length, 2);
+    assert.deepEqual(remaining.map((s) => s.name), ['A', 'C']);
+  });
+
+  test('removing the last meetSpot clears the array (not [] left behind)', () => {
+    const spots = [{ name: 'A', address: '6:00 & C', when: 'mon', description: '' }];
+    api!.importFriend('alice', {
+      campIds: ['1'], eventIds: [], meetSpots: spots,
+    });
+    rerender();
+    api!.removeFriendMeetSpot('alice', 0);
+    rerender();
+    assert.equal(api!.friends.alice.meetSpots, undefined);
+    // Friend stays — campIds keep her alive.
+    assert.deepEqual(api!.friends.alice.campIds, ['1']);
+  });
+
+  test('removeFriendMeetSpot evicts the friend when meetSpots was the only payload', () => {
+    const spots = [{ name: 'A', address: '6:00 & C', when: 'mon', description: '' }];
+    api!.importFriend('alice', {
+      campIds: [], eventIds: [], meetSpots: spots,
+    });
+    rerender();
+    api!.removeFriendMeetSpot('alice', 0);
+    rerender();
+    assert.equal(api!.friends.alice, undefined);
+  });
+
+  test('removeFriendMeetSpot on a friend with no meetSpots is a no-op', () => {
+    api!.importFriend('alice', { campIds: ['1'], eventIds: [] });
+    rerender();
+    api!.removeFriendMeetSpot('alice', 0);
+    rerender();
+    assert.deepEqual(api!.friends.alice.campIds, ['1']);
+  });
+});
+
 describe('useFriends — lookup helpers', () => {
   beforeEach(() => {
     api!.importFriend('alice', { campIds: ['1', '2'], eventIds: ['e1'] });
