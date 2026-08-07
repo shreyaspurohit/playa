@@ -1,6 +1,6 @@
 ---
 name: update-tags
-description: Audit current tag coverage against newly-fetched camps and propose additions to the TAGS taxonomy in playa/tagger.py. Use when a fresh fetch is in data/pages/ and the untagged rate or tag-per-camp count looks low, or when the user says "update the tags", "the new camps aren't being tagged", or "find new tag themes".
+description: Audit current tag coverage across directory/API camps, events, and art, then propose additions to the TAGS taxonomy in backend/src/playa/tagger.py. Use when fresh data has landed, the untagged rate or tag-per-record count looks low, or the user asks to update tags or find new themes.
 ---
 
 # update-tags
@@ -8,21 +8,25 @@ description: Audit current tag coverage against newly-fetched camps and propose 
 Grow the tag taxonomy to cover new camps without breaking existing
 tags. This is a human-in-the-loop skill — **never auto-apply changes**.
 Always show the user the proposed diff and wait for explicit approval
-before editing `playa/tagger.py` or `tests/test_tagger.py`.
+before editing `backend/src/playa/tagger.py` or
+`backend/tests/test_tagger.py`.
 
 ## When to run
 
-- Fresh data landed in `data/pages/` (either local `make fetch` or a
-  cron run that pulled in new camps).
+- Fresh directory or API data landed (either local fetch or a cron run).
 - The user wants to see if the taxonomy is keeping up.
 - A specific camp is coming back untagged and they want to know why.
 
 ## Baseline — capture before touching anything
 
+From the repository root:
+
 ```bash
-cd ~/personal-code/bm-camps
-python3 -m playa tag 2>&1 | tee /tmp/update-tags-before.log
+make tag 2>&1 | tee /tmp/update-tags-before.log
 ```
+
+Use the Make target because it loads the gitignored root `.env`; invoking the
+CLI directly does not.
 
 Record:
 - total camps
@@ -33,8 +37,10 @@ Keep this — you'll compare against it in the final step.
 
 ## Step 1 — find the gap
 
-Load every page JSON and run the current tagger against it. Collect
-camps with **0 or 1 tags** — those are where coverage is thin.
+Load every configured source through `playa.sources.make_source()` and run the
+current tagger against camps, their events, and art. Collect records with **0
+or 1 tags** — those are where coverage is thin. Direct page-JSON loading is a
+useful directory-only shortcut:
 
 ```python
 from pathlib import Path
@@ -64,9 +70,9 @@ skip stopwords + obvious common words like `camp`, `burn`, `playa`,
 
 Ignore:
 - numbers, addresses, time strings
-- proper nouns that appear only once (likely camp-specific names)
+- proper nouns that appear only once (likely record-specific names)
 - words already heavily represented in existing tags (check `TAGS` in
-  `playa/tagger.py` first — `grep -i "keyword" playa/tagger.py`)
+  `backend/src/playa/tagger.py` first)
 
 ## Step 3 — cluster into proposed tags
 
@@ -87,12 +93,10 @@ Before proposing, each regex MUST:
    "heart" or "cart"; `\byoga\b` matches "yoga" but not "yogurt".
 2. Handle plurals/variants where reasonable:
    `r"\bsnuggl(?:e|es|ing|y)\b"`.
-3. Grep the raw data to sanity-check:
-   ```bash
-   grep -ilE 'pattern' data/pages/*.json | wc -l   # how many camps
-   grep -iE 'pattern' data/pages/*.json | head -5  # what do hits look like
-   ```
-   If hits look off-theme, refine the pattern.
+3. Scan the raw data locally to sanity-check the matches, but output only
+   aggregate counts and regex-variant frequencies. Never print camp names,
+   descriptions, events, or decrypted source records into logs or chat. If
+   local inspection shows off-theme hits, refine the pattern.
 
 ## Step 5 — present the diff to the user
 
@@ -102,18 +106,15 @@ Show a structured proposal. One section per proposed change:
 ### Extend `booze`
 + r"\bmezcal\b"
 + r"\bsake\b"
-3 new camps would tag; sample hits:
-  - "Mezcal Fiesta Camp" — "Daily mezcal tastings"
-  - "Sake Bombers" — "Hot sake and karaoke"
-  - "Raising Spirits" — "Mezcal workshop"
+3 additional camps would receive this label; validated against all local
+matches with no off-theme hits.
 
 ### New tag `ice_bar`
 patterns:
   - r"\bice\s*bar\b"
   - r"\bsub[-\s]?zero\s*(?:lounge|bar)\b"
-8 new camps would tag. Sample hits:
-  - "AquaZone" — "frozen ice bar with custom cocktails"
-  - ...
+8 additional camps would receive this label; report source-level aggregate
+counts without reproducing records.
 
 ### Skipped
   - "interstellar": only 2 hits, one is a space-theme camp already
@@ -128,11 +129,11 @@ request changes, revise the proposal and ask again.
 
 ## Step 6 — apply (only after user approves)
 
-1. **Edit `playa/tagger.py`** — insert into the appropriate section
+1. **Edit `backend/src/playa/tagger.py`** — insert into the appropriate section
    of `TAGS`. For new tags, pick a section comment (e.g. `# --- Food &
    drink ---`) that fits; for extensions, add to the existing list.
 
-2. **Edit `tests/test_tagger.py`** — every new tag gets a positive and
+2. **Edit `backend/tests/test_tagger.py`** — every new tag gets a positive and
    (where a plausible false-positive risk exists) a negative case:
    ```python
    def test_ice_bar_tag(self):
@@ -161,6 +162,8 @@ request changes, revise the proposal and ask again.
 
 - **No word boundaries = no merge.** Any pattern without `\b` is a bug.
 - **Never auto-apply.** The diff-then-approve cycle is the whole point.
+- **Never expose fetched records.** Report aggregate counts only; source data
+  stays local and out of logs/chat.
 - **Never silently suppress a test failure.** If `make test` fails,
   investigate; don't edit the test to make it pass.
 - **Don't touch tests for unrelated tags.** Only add tests for new

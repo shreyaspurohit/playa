@@ -14,8 +14,9 @@ documents apply, depending on the source:
 1. **`directory.burningman.org` ToS** — covers the HTML scrape we use
    today. Personal-use only, camp-text is camp-copyrighted.
 2. **`innovate.burningman.org` API ToS** — covers the structured API
-   + S3 archives + GIS data we may migrate to. Friendlier license,
-   but adds explicit display + embargo requirements.
+   + S3 archives + GIS data. The application now embeds configured
+   `api-YYYY` snapshots, so its display, key-handling, transformation, and
+   embargo requirements are active—not a future migration concern.
 
 This doc is the central compliance record so a future maintainer
 doesn't have to re-derive what's a hard rule vs. a nice-to-have.
@@ -52,31 +53,54 @@ old artifact is overwritten.
 | §6 camp-copyright on descriptions | Password gate narrows audience to friends; `noindex, nofollow, noarchive` keeps crawlers out; takedown mailto in footer + About modal. |
 | §7(d) prohibited framing/linking | Each card carries a canonical "on directory ↗" link to the official entry, and the About modal reminds users to verify there. |
 | Innovate §4 disclaimer | App carries the verbatim *"This app is not affiliated, endorsed, or verified by Burning Man Project"* in the footer + About modal. |
-| Innovate §6.2 location embargo | When/if we migrate to the live API, gate per-camp `location` fields until the embargo lifts. Currently irrelevant since we use only the directory. |
+| Innovate §6.2 location embargo | Current-year API camp and art locations are client-masked until `BURN_WINDOW_OPEN_FROM`. Directory and past years are unaffected. Spirit-mode remains masked; trusted god-mode may bypass for internal testing by explicit operator decision. |
 | Innovate §7.2 trademark | App name "Playa Camps" avoids "Burning Man", "Black Rock City", "Decompression", "Playa Events". |
 | Innovate §5.5 modification | Tags and calendar dates are app-side transformations. About modal labels both: *"tags are keyword-matched by this app — not from Burning Man Project"* + *"calendar dates come from a configured burn-week window."* |
 | Innovate §2.3 permissions | GPS is opt-in and explained in the About modal. No camera, no notifications, no clipboard read. |
 
-### Compliance checklist before any switch to Innovate API
+### Active Innovate compliance checklist
 
 These are gate-items, not nice-to-haves. CLAUDE.md tracks the same
 list near the API migration section.
 
-- [ ] §4 disclaimer in footer + About modal (already present)
-- [ ] §6.2 location embargo wired into `Config.burn_start` /
-      `burn_end` and gated in `SiteBuilder.load_camps` based on
-      `datetime.now(tz=ZoneInfo("America/Los_Angeles"))`.
-- [ ] §7.2 trademark — re-check if renaming.
-- [ ] §5.3 republishing — using data in the app is fine; don't
+- [x] §4 disclaimer in footer + About modal for every source.
+- [x] §6.2 camp and art location masking wired to
+      `BURN_WINDOW_OPEN_FROM` in `client/src/utils/embargo.ts`.
+      Client masking and the trusted internal bypass are documented accepted
+      risk, not hard confidentiality.
+- [x] §7.2 trademark — re-check if renaming.
+- [x] §5.3 republishing — using data in the app is fine; don't
       mirror as a standalone dataset.
-- [ ] §5.5 modification — keep transformation labels current as
+- [x] §5.5 modification — keep transformation labels current as
       the pipeline grows.
-- [ ] §2.3 permissions — extend the GPS paragraph if we add camera
+- [x] §2.3 permissions — extend the GPS paragraph if we add camera
       / push.
-- [ ] §9 revocation — `revocation-plan.md` has the runbook.
-- [ ] `MIN_CAMPS` rail — never override below 500 in CI; protects
+- [x] §9 revocation — `revocation-plan.md` has the runbook.
+- [x] `MIN_CAMPS` rail — never override below 500 in CI; protects
       against an empty-API fallback overwriting the last-good
       deploy.
+
+### Source-specific disclosure rules
+
+- The exact Innovate §4 no-affiliation sentence, transformation labels, and
+  non-commercial/no-tracking statement render for every source.
+- Directory attribution, “verify on directory” guidance, canonical directory
+  links, and directory camp-owner takedown wording render only while
+  `directory` is selected.
+- The visible source must be resolved from sources actually unlocked by the
+  current password before these disclosures render; a stale persisted
+  `directory` choice must not flash directory copy to an API-only user.
+
+### Accepted operator decisions
+
+- Tags are app-generated keyword overlays and event times are normalized for
+  presentation. Source descriptions and event text are not rewritten. The
+  About modal identifies both transformations; the operator accepts remaining
+  interpretation risk under §5.5.
+- Raw current-year API locations remain in encrypted payloads so the deployed
+  app can reveal them after the cutoff. `god-mode` wrappers can be marked
+  trusted to bypass client masking for internal testing. Spirit-mode users do
+  not receive that bypass. This is intentional accepted risk; do not broaden it.
 
 ## Mechanism
 
@@ -119,14 +143,16 @@ sequenceDiagram
 - **Audience drift**: the password being shared with friends-of-
   friends could blow the "personal use" stance over time. Owner's
   job to rotate occasionally; runbook in `revocation-plan.md`.
-- **Innovate API migration is gated**, not opportunistic. Don't
-  flip endpoints until every checkbox above is closed.
+- **API safeguards can regress during UI/source changes.** Keep the checklist
+  closed, verify both directory and API-only unlocks, and treat any new source
+  or transformation as requiring another disclosure/embargo review.
 
 ## Code references
 
 - `.gitignore` — public-code/private-data stance enforced here
-- `data/denylist.txt` — committed list, takedown workflow target
-- `backend/src/playa/builder.py::load_camps` — applies denylist
+- `data/denylist*.txt` — committed IDs for directory/API camps/art
+- `backend/src/playa/sources/directory.py` and `sources/api.py` — apply
+  source-family denylists
 - `client/src/components/InfoModal.tsx` — About-modal disclaimer
   text + GPS permission language
 - `client/src/components/Footer.tsx` — affiliate disclaimer +
@@ -135,5 +161,5 @@ sequenceDiagram
 - `backend/src/playa/templates/site.html` — `noindex, nofollow,
   noarchive` meta
 - `docs/revocation-plan.md` — the runbook
-- `CLAUDE.md` "Official BM APIs + datasets (migration path)" —
+- `CLAUDE.md` "Official BM APIs + datasets" —
   living checklist mirrored here

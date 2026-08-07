@@ -66,9 +66,10 @@ export async function decryptPayload(
 /** Try to unwrap a (source, tier) DEK+IV with the user's password.
  *
  *  Returns the 48-byte concat `[dek(32) || iv(16)]` on success, or
- *  `null` on bad password (Web Crypto rejects with a descriptive
- *  exception when the AES-CBC MAC doesn't validate; we treat any
- *  exception as wrong-password).
+ *  `null` on bad password. AES-CBC has no authentication tag; Web Crypto
+ *  normally rejects when PKCS#7 padding is invalid, and we also reject any
+ *  successful decrypt whose plaintext is not exactly 48 bytes. Gate treats
+ *  either outcome as a non-matching wrapper.
  *
  *  Same primitive as `decryptPayload` — PBKDF2 + AES-CBC — just
  *  applied to a 48-byte plaintext instead of a JSON string. */

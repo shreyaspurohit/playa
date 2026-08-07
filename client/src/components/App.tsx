@@ -24,7 +24,9 @@ import {
 import { useFavorites } from '../hooks/useFavorites';
 import { useFriends } from '../hooks/useFriends';
 import { useMeetSpots } from '../hooks/useMeetSpots';
-import { useSource, migrateLegacyKeysOnce } from '../hooks/useSource';
+import {
+  useSource, migrateLegacyKeysOnce, sourceForDisplay,
+} from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute } from '../hooks/useHashRoute';
 import { ActionBar } from './ActionBar';
@@ -274,6 +276,12 @@ export function App() {
     ? availableSources.filter((s) => unlockedDeks.has(s))
     : availableSources;
 
+  // A persisted selection can point at a source this password did not
+  // unlock. The effect below fixes localStorage/state, but effects run after
+  // paint; derive the source used by visible source labels and notices so an
+  // API-only unlock never flashes directory-specific copy for one frame.
+  const visibleSource = sourceForDisplay(source, effectiveAvailableSources);
+
   // If the user's persisted source isn't in their unlocked set
   // (e.g., used to be on god-mode, now on spirit-mode), bump them
   // to the first unlocked source. Runs once after unlock.
@@ -291,8 +299,8 @@ export function App() {
   // through to the normal EnvelopeGate flow.
   //
   // Other tiers (god, demigod) stay password-gated regardless: only
-  // sources listed in burn-key.json are auto-unlocked, and only the
-  // last tier in SITE_TIERS (conventionally spirit) writes there.
+  // sources listed in burn-key.json are auto-unlocked, and the builder writes
+  // only sources belonging to the tier named exactly `spirit-mode`.
   useEffect(() => {
     if (!envelopeSources || unlockedDeks) return;
     let cancelled = false;
@@ -911,7 +919,7 @@ export function App() {
           onThemeChange={setTheme}
           onInfoClick={() => { setInfoPulse(false); setInfoOpen(true); }}
           infoPulse={infoPulse}
-          source={source}
+          source={visibleSource}
           availableSources={effectiveAvailableSources}
           onSourceChange={setSource}
         />
@@ -1140,11 +1148,16 @@ export function App() {
         </>
       )}
 
-      <Footer fetchedDate={meta.fetchedDate} contactEmail={meta.contactEmail} />
+      <Footer
+        fetchedDate={meta.fetchedDate}
+        contactEmail={meta.contactEmail}
+        source={visibleSource}
+      />
       <InfoModal
         open={infoOpen}
         fetchedDate={meta.fetchedDate}
         contactEmail={meta.contactEmail}
+        source={visibleSource}
         onImport={onImportSnapshot}
         onExport={onExportSnapshot}
         onClose={() => setInfoOpen(false)}

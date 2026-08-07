@@ -205,6 +205,77 @@ class TagMatchingTests(unittest.TestCase):
         self.assertIn("space", self.match("nebula-themed art piece"))
         self.assertIn("space", self.match("a starry constellation overhead"))
 
+    # --- 2026 event-format audit ----------------------------------
+
+    def test_speed_dating_matches_without_generic_date_false_positive(self):
+        self.assertIn("speed_dating", self.match("speed dating mixer"))
+        self.assertIn("speed_dating", self.match("singles meetup and matchmaking"))
+        self.assertNotIn("speed_dating", self.match("save the date for dinner"))
+
+    def test_comedy_matches_and_rolls_up_to_performance(self):
+        tags = self.match("stand-up comedy with local comedians")
+        self.assertIn("comedy", tags)
+        self.assertIn("performance", tags)
+        self.assertNotIn("comedy", self.match("contact improvisation class"))
+
+    def test_contact_improv_matches_and_rolls_up_to_dance(self):
+        tags = self.match("contact improvisation workshop")
+        self.assertIn("contact_improv", tags)
+        self.assertIn("dance", tags)
+        self.assertNotIn("contact_improv", self.match("improve your contacts"))
+
+    def test_body_painting_matches_not_house_painting(self):
+        self.assertIn("body_painting", self.match("body painting at sunset"))
+        self.assertNotIn("body_painting", self.match("painting a house"))
+
+    def test_drumming_matches_and_rolls_up_to_music(self):
+        tags = self.match("participatory drum circle and percussion")
+        self.assertIn("drumming", tags)
+        self.assertIn("music", tags)
+        self.assertNotIn("drumming", self.match("a drum of drinking water"))
+
+    def test_flow_arts_matches_explicit_activity_only(self):
+        self.assertIn("flow_arts", self.match("flow arts and poi spinning class"))
+        self.assertNotIn("flow_arts", self.match("go with the flow"))
+
+    def test_partner_dance_avoids_food_and_object_senses(self):
+        self.assertIn("partner_dance", self.match("beginner partner dancing"))
+        self.assertIn("partner_dance", self.match("salsa dance workshop"))
+        self.assertNotIn("partner_dance", self.match("salsa and chips"))
+        self.assertNotIn("partner_dance", self.match("sit on the porch swing"))
+
+    def test_pole_dance_matches_not_generic_pole(self):
+        self.assertIn("pole_dance", self.match("intro to pole dancing"))
+        self.assertNotIn("pole_dance", self.match("flag pole repair"))
+
+    def test_life_drawing_matches_not_generic_drawing(self):
+        self.assertIn("life_drawing", self.match("figure drawing workshop"))
+        self.assertIn("life_drawing", self.match("drawing with a nude model"))
+        self.assertNotIn("life_drawing", self.match("drawing a treasure map"))
+
+    def test_acroyoga_matches_and_rolls_up_to_yoga(self):
+        tags = self.match("AcroYoga for beginners")
+        self.assertIn("acroyoga", tags)
+        self.assertIn("yoga", tags)
+        self.assertNotIn("acroyoga", self.match("acrobatics and yogurt"))
+
+    def test_cacao_ceremony_matches_not_generic_cocoa(self):
+        self.assertIn("cacao_ceremony", self.match("cacao ceremony at dawn"))
+        self.assertNotIn("cacao_ceremony", self.match("hot cocoa and cookies"))
+
+    def test_tea_ceremony_matches_not_generic_tea(self):
+        self.assertIn("tea_ceremony", self.match("traditional tea ceremony"))
+        self.assertNotIn("tea_ceremony", self.match("iced tea bar"))
+
+    def test_fiber_arts_matches_concrete_crafts_not_metaphors(self):
+        self.assertIn("fiber_arts", self.match("sewing and embroidery workshop"))
+        self.assertIn("fiber_arts", self.match("crochet and knitting circle"))
+        self.assertNotIn("fiber_arts", self.match("weaving a story together"))
+
+    def test_self_funded_matches_api_program_not_generic_funding(self):
+        self.assertIn("self_funded", self.match("Open Self-Funded"))
+        self.assertNotIn("self_funded", self.match("funded by an honorarium"))
+
 
 class HaystackTests(unittest.TestCase):
     """Verify event text feeds into the tag text."""

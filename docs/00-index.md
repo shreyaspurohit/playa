@@ -39,13 +39,17 @@ sections wherever they apply:
 | [07](./07-offline-pwa.md) | Offline + PWA | Service worker SHELL precache, install prompt |
 | [08](./08-versioning-and-release-notes.md) | Versioning & release notes | `vYYYY.MM.DD.HHMM`, `version.txt` polling, `rn:` commits |
 | [09](./09-share-and-import.md) | Share links & snapshot import/export | Fragment-based links, JSON file transfer, self-recognition |
-| [10](./10-map-system.md) | Map system | SVG BRC grid, GPS, zoom/pan, address ↔ lat/lng |
+| [10](./10-map-system.md) | Map system | SVG BRC grid, GPS, official GIS overlays, zoom/pan, address ↔ lat/lng |
 | [11](./11-schedule-system.md) | Schedule system | Event time parsing, calendar columns, filters |
 | [12](./12-deployment-and-ci.md) | Deployment & CI | GitHub Actions, Pages, custom domain |
 | [13](./13-tos-compliance.md) | ToS compliance | directory.burningman.org + Innovate API stance |
 | [14](./14-refresh-cycle.md) | Refresh & force-refresh | What each path does, the SW interactions, the bug we fixed |
 | [15](./15-data-sources.md) | Multi-source data architecture | Directory + `api.burningman.org`, per-source state, normalization |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
+| (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
+| (ref) | [HTML scraping patterns](./dev/html-scraping-patterns.md) | Directory markup shapes used by the parsers |
+| (ref) | [Site UI](./dev/site-ui.md) | Compact embed-mode and UI reference; CLAUDE.md retains detailed behavior |
+| (plan) | [Roadmap](./roadmap.md) | Ideas and scaling thresholds, not current commitments |
 
 ## Adding a new doc
 

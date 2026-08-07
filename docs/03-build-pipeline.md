@@ -8,7 +8,7 @@ status: current
 
 ## Overview
 
-The build is the only mutation path between the upstream directory and
+The build is the only mutation path between upstream directory/API caches and
 the live site. Locally a single `make rebuild` walks the entire
 pipeline; in CI three Actions jobs (`test → build → deploy`) wrap it
 with the safety + artifact-upload story.
@@ -73,15 +73,19 @@ flowchart TD
    writes `data/pages/page_NN.json`. Sleeps 200 ms between detail
    fetches to stay polite. Falls back to listing-page data if a
    detail fetch fails.
+   `api-fetch --year YYYY` is separate: it pulls bulk camp/event/art JSON once
+   and writes the encrypted-or-plaintext `data/api/YYYY.json` year cache.
 2. **`meta`** (`write_meta`) — counts pages/camps/events, stamps an
    ISO timestamp + Pacific date + version (`vYYYY.MM.DD.HHMM`).
 3. **`merge`** (`merge_csv`) — dedupes by id, sorts alphabetically,
    writes `data/camps.csv` (tags column blank).
 4. **`tag`** (`Tagger`) — runs the keyword taxonomy from
    `tagger.py` over the haystack (name + description + events) for
-   each camp, writes `data/camps_tagged.csv`.
-5. **`build`** (`SiteBuilder.build`) — loads camps, enriches event
-   times, encrypts the JSON payload (or leaves plaintext), reads the
+   each camp and the corresponding art haystack, writes
+   `data/camps_tagged.csv` and `data/art_tagged.csv`.
+5. **`build`** (`SiteBuilder.build`) — loads each configured source's camps and
+   art, enriches event times, applies tags, gzip-compresses, emits plaintext,
+   legacy encrypted, or tiered envelope payloads, reads the
    bundle, collects `rn:` release notes, fills template placeholders,
    writes `site/index.html` + `site/sw.js` + `site/version.txt`.
 
@@ -110,8 +114,10 @@ is empty, otherwise rebuilds.
 - **Tag taxonomy is keyword-based**, so semantic misses are common.
   The /update-tags Claude skill walks the periodic audit.
 - **One artifact = no incremental updates.** A typo fix in the legend
-  text re-uploads the whole 2.7 MB site. Acceptable since deploy is
-  ~30 s end-to-end.
+  text re-uploads the whole site. The historical directory-only artifact was
+  ~2.7 MB; gzip-before-encrypt reduced it substantially, while each additional
+  embedded API year increases it again. Acceptable since deploy is ~30 s
+  end-to-end and offline reliability is the priority.
 
 ## Code references
 

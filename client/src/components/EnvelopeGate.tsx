@@ -177,9 +177,8 @@ export function EnvelopeGate({ sources, onUnlock }: Props) {
       <div class="gate-card">
         <h2>Playa Camps — private</h2>
         <p>
-          This is a personal, non-commercial index of the public Playa Info
-          directory, shared with friends. Enter the password you were given
-          to continue.
+          This is a personal, non-commercial planning tool shared with
+          friends. Enter the password you were given to continue.
         </p>
         <form onSubmit={onSubmit}>
           <input

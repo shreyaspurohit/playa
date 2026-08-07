@@ -33,8 +33,8 @@ All user state — favorites, meet spots, friends, my camp — is **scoped to
 the active source**. Switching sources is instant: every source's payload
 is already embedded in `index.html` at build time.
 
-Scope of this ADR: **camps + events only.** Art and mutant vehicles are
-deferred (the API exposes them; we just don't surface them yet).
+Scope of this ADR: **camps, events, and art.** Art is implemented as a parallel
+payload and UI surface (D14). Mutant vehicles remain deferred.
 
 ## Decisions
 
@@ -181,9 +181,10 @@ Implementation:
    `playa api-fetch` CLI writes encrypted whenever a cache password is
    set, plaintext otherwise (convenient for offline dev).
 5. To force a re-fetch (e.g., a corrected past-year dataset, or to
-   refresh the current year): `gh release delete data-api-<year>
-   --yes`, then re-run the workflow. The cache miss triggers a fresh
-   fetch + upload.
+   refresh the current year), run `workflow_dispatch` with
+   `refresh_api_years=YYYY` (comma-separated years accepted). The workflow
+   deletes those releases/tags before the cache step, so each miss triggers a
+   fresh fetch and upload. Manual release deletion remains a fallback.
 
 **`BM_CACHE_PASSWORD` vs `SITE_PASSWORD`** — separate by default,
 falls back to `SITE_PASSWORD` when unset. The threat model is
@@ -213,17 +214,14 @@ The Burning Man API ToS §6.2 enforces:
 - **Camp locations**: hidden from app users until **12:01 am, first
   Sunday of build week** (e.g., 2026-08-23). Developers receive the data
   three weeks before gates (2026-08-09).
-- **Art locations**: hidden until gate-open (Day 1 of the burn). Out of
-  scope for now since we don't surface art.
+- **Art locations**: hidden until gate-open (Day 1 of the burn).
 
-Phase 2 will add embargo logic to the API fetcher / builder:
-`load_camps_for(api-CURRENT_YEAR)` strips `location` (`""`) when
-`now() < embargo_release_datetime`. Until the embargo lifts, the
-current-year API source still ships — names, descriptions, tags — just
-without addresses on the map.
-
-For phase 1 we **do not** include `api-2026` (or any current-year API
-source). Past years (2024, 2025) have no embargo.
+The implemented embargo is client-side. When the selected source matches the
+configured burn year and the date is before `BURN_WINDOW_OPEN_FROM`,
+`applyLocationEmbargo()` and `applyArtLocationEmbargo()` clear locations from
+the normalized in-memory records before downstream views receive them. The
+encrypted payload intentionally retains raw locations; this is a UX boundary,
+not hard confidentiality. Directory and past-year API sources are unaffected.
 
 **Per-tier bypass for `god-mode`** (added 2026-04-28). The embargo is
 a UX gate, not a security boundary — full location data is in the
@@ -245,9 +243,14 @@ trusted-flag layer if that ever becomes desired).
 ### D9 — Denylist becomes per-source
 
 `data/denylist.txt` keys on numeric directory IDs. SFDC uids won't match
-those entries. Add a parallel `data/denylist-api.txt` for the API
-sources; both files are committed (just IDs, no text) per the existing
-ToS-mitigation pattern.
+those entries. The implemented files are:
+
+- `data/denylist.txt` — directory camps
+- `data/denylist-api.txt` — API camps shared across API years
+- `data/denylist-art.txt` — directory art
+- `data/denylist-art-api.txt` — API art shared across API years
+
+All contain IDs only and are committed per the existing removal pattern.
 
 Future enhancement: per-year-source denylists. Today, treat all API
 sources as sharing one denylist — a camp removed in 2024 stays removed
@@ -259,7 +262,9 @@ Different audiences get different source visibility from the *same
 deployed bundle*, gated by the password they enter. No accounts, no
 build duplication.
 
-Three concrete tiers, fixed by intent (not user-configurable):
+The conventional deployment uses three tiers. The manifest is operator-
+configurable, but the literal names `spirit-mode` and `god-mode` have the
+reserved behaviors described below:
 
 | Tier id        | Audience              | Sources unlocked                                                     |
 |----------------|-----------------------|----------------------------------------------------------------------|
@@ -292,11 +297,11 @@ at the wrong tier. For 2026 with the initial year window
 SITE_TIERS="god-mode:$GOD_PW=directory+api-2025+api-2026,demigod-mode:$DEMIGOD_PW=api-2025+api-2026,spirit-mode:$SPIRIT_PW=api-2026"
 ```
 
-CI fills `$GOD_PW` / `$DEMIGOD_PW` / `$SPIRIT_PW` from repo secrets so
-literal passwords never appear in the workflow YAML. Tier names
-`god-mode` / `demigod-mode` are arbitrary identifiers — only
-`spirit-mode` is reserved (D13's `BURN_OPEN=1` looks up that exact
-name). Backward-compat: `SITE_TIERS` unset + `SITE_PASSWORD` set
+CI stores the fully composed `SITE_TIERS` value as a repository secret so
+literal passwords never appear in workflow YAML. `spirit-mode` is reserved
+because D13's `BURN_OPEN=1` looks up that exact name; `god-mode` is reserved
+because its wrappers enter `bm-trusted-wrappers` for the internal embargo
+bypass. Backward-compat: `SITE_TIERS` unset + `SITE_PASSWORD` set
 falls through to today's "single tier covering every embedded source".
 
 **Initial year window**: 2026 ships with `BM_API_YEARS=2025,2026`.
@@ -318,10 +323,13 @@ year as new ones arrive.
 **Build-time crypto**:
 
 1. For every source referenced by any tier, generate a random 32-byte
-   `DEK` (data encryption key) and 16-byte `IV`.
-2. Encrypt the source's compressed JSON (see D12) with AES-256-CBC
-   under `(DEK, IV)`. No PBKDF2 — the DEK is full-entropy random.
-   Embed as `<script id="camps-data-<source>-cipher">{"iv": b64, "ct": b64}</script>`.
+   `DEK` (data encryption key), a 16-byte camps IV, and a separate 16-byte art
+   IV.
+2. Encrypt each compressed JSON payload (see D12) with AES-256-CBC under
+   the shared source DEK and its own IV. No PBKDF2—the DEK is full-entropy
+   random. Embed `camps-data-<source>-cipher` and
+   `art-data-<source>-cipher`; sharing the DEK avoids extra wrappers while the
+   distinct IVs prevent CBC first-block leakage.
 3. For every (tier, source) pair where the tier's source-list includes
    the source: encrypt the 48-byte `DEK || IV` blob with PBKDF2 +
    AES-256-CBC under the tier's password (fresh salt per wrapper).
@@ -349,8 +357,9 @@ year as new ones arrive.
 - Tier lists a source not in the configured `--sources` set → typo →
   reject.
 - Tier has zero sources → pointless → reject.
-- Empty `SITE_TIERS` AND empty `SITE_PASSWORD` → site would be
-  un-unlockable → reject (single-tier deploys must set one).
+- `BURN_OPEN=1` without `SITE_TIERS` or without a tier named
+  `spirit-mode` → ambiguous public unlock → reject. With neither site setting,
+  ordinary local builds intentionally use plaintext gzip+base64.
 
 **Cross-tab + share**: untouched. Password is still one string per user;
 `BroadcastChannel` keeps sharing it across tabs. `useSource` still maps
@@ -502,17 +511,15 @@ keep the other tiers' wrappers untouched.
 
 **Mechanism — sibling file, deployed only during the window**:
 
-1. Build generates a random 32-byte `BURN_DEK` for the spirit-mode
-   source (in addition to the per-tier-password wrappers from D10).
-2. Spirit-mode's source cipher is encrypted with `BURN_DEK || IV` —
-   exactly the same shape as any other source cipher in D10. The
+1. D10 generates the normal random source DEK and IV for every source,
+   including each source listed in `spirit-mode`.
+2. Spirit-mode's source cipher uses that normal `DEK || IV` shape. The
    per-tier-password wrappers (one for `god-mode`, one for
    `demigod-mode`, one for `spirit-mode`) wrap that same DEK so the
    normal password-gated path still works.
-3. Build *additionally* writes the raw `BURN_DEK || IV` to
-   `site/burn-key.json` as a separate static file. **Default deploy
-   omits this file** — `actions/upload-pages-artifact` is told to
-   exclude it when `BURN_OPEN` is unset/false.
+3. With `BURN_OPEN=1`, build writes a JSON mapping of each spirit source to
+   base64 `DEK || camps IV` in `site/burn-key.json`. With `BURN_OPEN` false,
+   the builder removes any stale file before Pages uploads `site/`.
 4. During the burn window, a workflow with `BURN_OPEN=1` (manual
    `workflow_dispatch` input, or a cron-driven date check) deploys
    *with* `burn-key.json` included.
@@ -521,9 +528,9 @@ keep the other tiers' wrappers untouched.
      directly (skip the wrapper step entirely), and proceed into the
      app on `spirit-mode`.
    - `404` / network error → fall through to today's password gate.
-6. The user can still flip to a higher tier mid-session by entering a
-   `god-mode` / `demigod-mode` password — the gate stays available
-   under a "use a passphrase instead" affordance even after auto-unlock.
+6. The current UI enters directly with the spirit source set and does not show
+   a mid-session tier-up password affordance. Adding that affordance remains a
+   possible enhancement; do not describe it as implemented.
 
 **What this gets**:
 
@@ -560,6 +567,7 @@ No human in the loop at burn-start or burn-end.
 | `BURN_WINDOW_OPEN_FROM`    | repo *variable*      | ISO date (e.g., `2026-08-30`). Workflow auto-includes `burn-key.json` from this day.  |
 | `BURN_WINDOW_OPEN_TO`      | repo *variable*      | ISO date (e.g., `2026-09-07`). Workflow auto-removes after this day (UTC end-of-day). |
 | `BURN_OPEN=0\|1`           | `workflow_dispatch` input | Manual override for "open it now" / "close it now". Wins over the date check.    |
+| `PLAYA_GO_LIVE`            | repo *variable*      | Truthy value opens spirit before `OPEN_FROM`, but never after `OPEN_TO`; location masking still follows `OPEN_FROM`. |
 
 **Window evaluation** (inside `refresh.yml`):
 
@@ -569,12 +577,17 @@ if [[ -n "$dispatch_input_BURN_OPEN" ]]; then
   effective_burn_open="$dispatch_input_BURN_OPEN"        # manual wins
 elif [[ -n "$BURN_WINDOW_OPEN_FROM" && -n "$BURN_WINDOW_OPEN_TO" ]]; then
   today_utc="$(date -u +%Y-%m-%d)"
-  if [[ "$today_utc" >= "$BURN_WINDOW_OPEN_FROM" && \
-        "$today_utc" <= "$BURN_WINDOW_OPEN_TO" ]]; then
+  if [[ "$today_utc" > "$BURN_WINDOW_OPEN_TO" ]]; then
+    effective_burn_open=0
+  elif [[ ! "$today_utc" < "$BURN_WINDOW_OPEN_FROM" ]]; then
+    effective_burn_open=1
+  elif is_truthy "$PLAYA_GO_LIVE"; then
     effective_burn_open=1
   else
     effective_burn_open=0
   fi
+elif is_truthy "$PLAYA_GO_LIVE"; then
+  effective_burn_open=1
 else
   effective_burn_open=0   # no vars + no input = closed
 fi
@@ -601,9 +614,10 @@ post-burn the slop is harmless.
   (closed). Site behaves like today. Default-deny.
 - Cron misses a day (GitHub Actions outage): no problem on the next
   run — `burn-key.json` either appears or disappears one day late.
-- One of the two window vars set, the other unset → treat as misconfigured,
-  fall through to closed + emit a workflow warning. (Sanity check from
-  earlier in this section.)
+- One of the two required window vars missing → the workflow resolution remains
+  default-closed unless `PLAYA_GO_LIVE` is truthy, and the subsequent build
+  fails its required-date validation. Fix the repository variables; do not add
+  code-side year defaults.
 - `BURN_WINDOW_OPEN_FROM > BURN_WINDOW_OPEN_TO` → workflow fails loud
   (already listed under build-time sanity checks).
 
@@ -629,7 +643,10 @@ code, no rebuild beyond the next scheduled cron.
       wrapper[tier] = AES-CBC-PBKDF2(DEK_spirit||IV, tier_password)
 
 [D13 addition]
-  if BURN_OPEN: write site/burn-key.json = base64(DEK_spirit||IV)
+  if BURN_OPEN:
+    write site/burn-key.json = {spirit_source: base64(DEK_spirit||IV)}
+  else:
+    remove stale site/burn-key.json if present
 ```
 
 The other two source-tier combinations (god, demigod) get no
@@ -646,25 +663,24 @@ on boot:
   if burnKey:
     decrypt spirit cipher directly with burnKey.dek + burnKey.iv
     set source = 'api-CURRENT_YEAR', skip gate
-    keep "Enter passphrase" affordance for tier-up
+    enter with only the burn-key sources (no tier-up affordance today)
   else:
     show gate as today
 ```
 
 **Failure modes**:
 
-- `burn-key.json` exists but `dek` is wrong (operator error /
-  build-skew): client tries it, AES-CBC throws, treat as 404 and fall
-  through to gate. No crash.
+- A malformed base64 entry or one not exactly 48 bytes is skipped; if no valid
+  entries remain, the normal password gate appears. A well-formed but incorrect
+  key reaches source decryption, logs the failure, and yields empty source data;
+  it does not currently return to the gate automatically.
 - File present but `BURN_OPEN` was meant to be off (mistake): visible
   as soon as a public link surfaces. Mitigation = redeploy. Same blast
   radius as posting a password publicly by mistake.
-- Service worker caches `burn-key.json` past the burn-end deploy: the
-  SW's existing cache-first + version-stamp strategy already evicts
-  on next deploy (cache key changes with `__VERSION__`). One-tab race
-  where a user has the old SW + cached `burn-key.json` after a redeploy
-  ends — they're already inside the app and have the cipher; not a
-  new attack surface.
+- The client requests `burn-key.json` with `cache: 'no-store'`, and the service
+  worker does not add it to the shell precache. A user who saved the key while
+  it was available can still retain it; that is already included in the stated
+  threat model.
 
 **Sanity checks at build time**:
 
@@ -804,19 +820,22 @@ out of the existing storage-event plumbing — no special-case wiring.
 ### Source registry
 
 ```python
-# playa/sources.py
+# backend/src/playa/sources/__init__.py
 class Source(Protocol):
     name: str
     def load_camps(self, config: Config) -> list[Camp]: ...
+    def load_art(self, config: Config) -> list[Art]: ...
 
 class DirectorySource:
     name = "directory"
-    def load_camps(self, config): ...      # current Fetcher → parsers
+    def load_camps(self, config): ...      # normalized cached page JSON
+    def load_art(self, config): ...
 
 class APISource:
     name: str                              # "api-2024" etc.
     year: int
-    def load_camps(self, config): ...      # urllib + JSON, with cache
+    def load_camps(self, config): ...      # encrypted/plain year cache
+    def load_art(self, config): ...
 
 def make_source(spec: str) -> Source: ...
 ```
@@ -834,11 +853,11 @@ playa all --sources directory   # nightly default — no API hits unless asked
 - **Bundle size**: each year of API data adds ~1–2 MB plaintext (~1.5–3
   MB encrypted) to `index.html`. Three years live in the dropdown today is
   a soft ceiling; if we add 2015–2025 we want per-source lazy loading
-  (separate files, fetched on source-change). Documented as Phase 2.
+  (separate files, fetched on source-change). This remains future scaling work.
 
 - **API rate limits**: spec exposes `X-RateLimit-Limit` headers; we have
-  no published number. Phase 1 retries with backoff on 429. Phase 2
-  caching makes this a non-issue for past years.
+  no published number. The API adapter retries with backoff on 429, and the
+  implemented encrypted Release cache makes this a non-issue for past years.
 
 - **ID-space split**: a user with 30 starred camps under `directory`
   switches to `api-2025` and sees zero stars. By design — different IDs
@@ -859,15 +878,16 @@ playa all --sources directory   # nightly default — no API hits unless asked
   occurrence, others remain unstarred. Acceptable trade-off vs.
   inventing a per-occurrence star UI.
 
-- **Embargo staleness**: Phase 1 ships without embargo logic, but also
-  without `api-CURRENT_YEAR` — so the failure mode is "we can't ship
-  current-year API data until embargo logic lands." Bounded scope.
+- **Embargo staleness**: masking is applied when payloads enter client memory.
+  A tab kept open across `BURN_WINDOW_OPEN_FROM` needs a refresh to reveal the
+  locations; the app shows an embargo-lift refresh notice. Raw encrypted data
+  and the trusted internal bypass make this a UX boundary, not confidentiality.
 
 - **ToS §4 disclaimer**: the API ToS requires a verbatim
   *"This app is not affiliated, endorsed, or verified by Burning Man
-  Project."* string in the footer + about modal. Already shipping (per
-  the existing compliance checklist in CLAUDE.md). When the API source
-  starts producing data that ships in the bundle, we re-verify.
+  Project."* string in the footer + about modal. It ships for every source.
+  Directory attribution/verification/takedown copy is additionally conditional
+  on the selected source so API-only users do not see irrelevant directory copy.
 
 - **ToS §5.5 modification**: tag generation + calendar canonicalization
   are transformations on Event Data; both are already disclosed in the
@@ -876,7 +896,7 @@ playa all --sources directory   # nightly default — no API hits unless asked
 
 ## Code references
 
-Backend (added in Phase 1):
+Backend:
 
 - `backend/src/playa/sources/__init__.py` — `Source` protocol + `make_source()`
 - `backend/src/playa/sources/directory.py` — wraps existing `Fetcher`
@@ -886,7 +906,7 @@ Backend (added in Phase 1):
 - `backend/src/playa/templates/site.html` — `__DATA_SCRIPTS__` placeholder
 - `backend/tests/test_api_source.py` — fixture-based JSON parse tests
 
-Client (added in Phase 1):
+Client:
 
 - `client/src/types.ts` — `Source` literal type, namespaced LS keys
 - `client/src/data.ts` — multi-script reader keyed on source
@@ -897,7 +917,7 @@ Client (added in Phase 1):
 - `client/src/components/SourceSwitcher.tsx` — header dropdown
 - `client/src/components/App.tsx` — wires source → all the above
 
-Phase 3 work (decisions D10–D13, planned not yet implemented):
+Implemented work (decisions D10–D14):
 
 - Tiered access via envelope encryption (D10) — `SITE_TIERS` env, build
   emits per-source ciphers + per-(source,tier) wrappers, client unlock
@@ -914,13 +934,13 @@ Phase 3 work (decisions D10–D13, planned not yet implemented):
   only with `BURN_OPEN=1`; client fetches on boot, decrypts
   spirit-mode source directly when present, falls through to gate
   otherwise. Stacks on D10 with no architectural rework.
+- Art (D14) — parallel directory/API models, payloads, ciphers, favorites,
+  search, cards, map pins, denylists, and current-year location masking.
 
 Always-deferred work (separate ADR if it grows):
 
-- API current-year embargo logic (§6.2: hide camp `location` until
-  12:01am first Sunday of build week; same for art at gate-open).
-- Art / mutant vehicle support (the API exposes both via
-  `/api/art` + `/api/mv`; we just don't surface them yet).
+- Mutant vehicle support as a distinct surface (the API exposes `/api/mv`;
+  ordinary art category data can still receive the `mutant_vehicle` tag).
 - Per-source lazy loading — split each source's data into a separate
   same-origin JSON file, fetched on source-change. Becomes attractive
   if D12 compression isn't enough as the year history grows.

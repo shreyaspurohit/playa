@@ -8,8 +8,10 @@ status: current
 
 ## Overview
 
-The user's typed site password is the key to the entire app — it
-unlocks the camp data and stays remembered across visits. Two design
+The user's typed site/tier password unlocks the permitted source payloads and
+stays remembered across visits. `Gate` handles legacy single-password builds;
+`EnvelopeGate` tries the same entered password against per-source tier wrappers.
+Two design
 problems sit on top of that:
 
 1. **Don't make the user retype after every tab kill** — mobile
@@ -144,6 +146,8 @@ unlock state survives the click.
 ## Code references
 
 - `client/src/components/Gate.tsx` — gate UI + unlock orchestration
+- `client/src/components/EnvelopeGate.tsx` — multi-tier wrapper walk using the
+  same secure password cache
 - `client/src/utils/secureStore.ts` — `cachePassword` /
   `loadCachedPassword` / `clearCachedPassword`
 - `client/src/components/InfoModal.tsx` — "Clear all local data"

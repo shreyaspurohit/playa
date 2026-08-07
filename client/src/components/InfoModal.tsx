@@ -1,10 +1,10 @@
 // About & disclaimer modal + a "How to use" quick-reference tab.
-// About is the default tab because the disclaimer ("unofficial, always
-// verify against directory.burningman.org, takedown path") matters
-// more to a first-timer than the feature walkthrough. The guide is
-// one click away.
+// Directory-specific attribution, verification, and takedown guidance
+// is shown only while the directory source is active. The required
+// no-affiliation notice and general app information remain visible for
+// every source.
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { LS, SS } from '../types';
+import { LS, SS, type Source } from '../types';
 import { removeKey } from '../utils/storage';
 import { clearCachedPassword } from '../utils/secureStore';
 import { forceRefresh } from '../utils/refresh';
@@ -13,6 +13,7 @@ interface Props {
   open: boolean;
   fetchedDate: string;
   contactEmail: string;
+  source: Source;
   /** File-import handler. Lives in App.tsx because picking, parsing,
    *  and dispatching needs access to the friends API + own nickname.
    *  This component just renders the button and calls the prop. */
@@ -27,7 +28,7 @@ interface Props {
 type Tab = 'guide' | 'about';
 
 export function InfoModal({
-  open, fetchedDate, contactEmail, onImport, onExport, onClose,
+  open, fetchedDate, contactEmail, source, onImport, onExport, onClose,
 }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>('about');
@@ -37,8 +38,8 @@ export function InfoModal({
   useEffect(() => {
     if (!open) return;
     setRefreshState('idle');
-    // Every open resets to About — the disclaimer + takedown path
-    // is the thing we want a first-time viewer to actually see.
+    // Every open resets to About so the source-appropriate notice and
+    // general app information are the first things a viewer sees.
     setTab('about');
   }, [open]);
 
@@ -186,6 +187,7 @@ export function InfoModal({
             <AboutTab
               fetchedDate={fetchedDate}
               takedownHref={takedownHref}
+              showDirectoryDisclaimer={source === 'directory'}
               onForceRefresh={handleForceRefresh}
               onExport={handleExport}
               onImport={onImport}
@@ -346,12 +348,13 @@ function GuideTab() {
 // === About tab =====================================================
 
 function AboutTab({
-  fetchedDate, takedownHref,
+  fetchedDate, takedownHref, showDirectoryDisclaimer,
   onForceRefresh, onExport, onImport, onClearAll,
   refreshState, refreshLabel,
 }: {
   fetchedDate: string;
   takedownHref: string;
+  showDirectoryDisclaimer: boolean;
   onForceRefresh: () => void;
   onExport: () => void;
   onImport: () => void;
@@ -365,58 +368,67 @@ function AboutTab({
         <span class="warn">⚠ Unofficial &amp; best-effort</span>
         <span class="badge">Built for Burners, not commercial</span>
       </p>
+      {showDirectoryDisclaimer && (
+        <>
+          <p>
+            This is an unofficial personal project to help friends browse and
+            filter the{' '}
+            <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
+              official Burning Man Playa Info directory
+            </a>. All camp names, descriptions, events, and locations are the
+            property of their respective camps and the directory operators.
+          </p>
+          <p>
+            <strong>Provided as is.</strong> Camp details here can be stale,
+            incomplete, mis-parsed, or mis-tagged.{' '}
+            <strong>
+              Always verify on{' '}
+              <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
+                directory.burningman.org
+              </a>
+            </strong>{' '}
+            before acting on anything you see here. Use this tool to{' '}
+            <em>narrow down</em> a shortlist of possible camps — not as the
+            source of truth.
+          </p>
+          <p>
+            Data is fetched nightly from the public directory and shown here
+            for personal browsing only. For the canonical, up-to-date
+            listing, please use{' '}
+            <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
+              directory.burningman.org
+            </a>. This site has{' '}
+            <strong>
+              no ads, no analytics, no tracking, no accounts, and no commercial
+              purpose
+            </strong>.
+          </p>
+          <p>
+            <strong>Camp owner? Want your camp removed?</strong>{' '}
+            <a href={takedownHref}>Email a takedown request</a> — please
+            include the camp name and directory URL, and the entry will be
+            removed on the next build.
+          </p>
+        </>
+      )}
       <p>
-        This is an unofficial personal project to help friends browse and
-        filter the{' '}
-        <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
-          official Burning Man Playa Info directory
-        </a>. All camp names, descriptions, events, and locations are the
-        property of their respective camps and the directory operators.
+        <strong>What this app adds:</strong>{' '}
+        tags are keyword-matched by this app — <em>not</em> supplied by
+        Burning Man Project. Event times are normalized against the
+        configured burn-week calendar so they can be searched and displayed
+        consistently.
       </p>
       <p>
-        <strong>Provided as is.</strong> Camp details here can be stale,
-        incomplete, mis-parsed, or mis-tagged.{' '}
-        <strong>
-          Always verify on{' '}
-          <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
-            directory.burningman.org
-          </a>
-        </strong>{' '}
-        before acting on anything you see here. Use this tool to{' '}
-        <em>narrow down</em> a shortlist of possible camps — not as the
-        source of truth.
+        <strong>What you can trust less:</strong> those auto-generated tags,
+        normalized event times, and anything changed upstream after the last
+        refresh.
       </p>
-      <p>
-        <strong>What this app adds on top of the directory:</strong>{' '}
-        tags are keyword-matched by this app — <em>not</em> from
-        Burning Man Project. Calendar dates come from a
-        <em> configured burn-week window</em> so events line up on
-        the real dates for volunteers + early arrivals; the directory's
-        per-event date tuples can be stale.
-      </p>
-      <p>
-        <strong>What you can trust less:</strong> those auto-generated
-        tags, event times, and anything that changed on the directory
-        after the last nightly refresh.
-      </p>
-      <p>
-        Data is fetched nightly from the public directory and shown here
-        for personal browsing only. For the canonical, up-to-date
-        listing, please use{' '}
-        <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
-          directory.burningman.org
-        </a>. This site has{' '}
-        <strong>
-          no ads, no analytics, no tracking, no accounts, and no commercial
-          purpose
-        </strong>.
-      </p>
-      <p>
-        <strong>Camp owner? Want your camp removed?</strong>{' '}
-        <a href={takedownHref}>Email a takedown request</a> — please
-        include the camp name and directory URL, and the entry will be
-        removed on the next build.
-      </p>
+      {!showDirectoryDisclaimer && (
+        <p>
+          This is a personal, non-commercial tool with no ads, analytics,
+          tracking, or accounts, and no commercial purpose.
+        </p>
+      )}
       <p>
         <strong>Found a bug or a mis-parse?</strong>{' '}
         <a href="https://github.com/shreyaspurohit/playa/issues" target="_blank" rel="noopener">
@@ -424,8 +436,8 @@ function AboutTab({
         </a>{' '}— include the camp name and what looks wrong.
       </p>
       <p>
-        <strong>Stored on this device:</strong> theme, password (per
-        tab), the camps and events you've starred, any days you've
+        <strong>Stored on this device:</strong> theme, an encrypted password
+        cache, the camps and events you've starred, any days you've
         hidden on the schedule, your nickname + home camp + meet spots,
         and any friends' favorites you've imported via share link.
         Nothing leaves your browser. See <strong>Actions</strong> below

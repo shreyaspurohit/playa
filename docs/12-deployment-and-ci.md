@@ -27,9 +27,10 @@ other so a broken parser can never overwrite the live site.
 - **`fetch-depth: 200` on checkout.** Default is `1`, which would
   hide all `rn:` commits from `_collect_release_notes`. 200 is plenty
   of history for any realistic gap between visits.
-- **No data-side state across runs.** Every nightly fetches fresh.
-  Each runner is ephemeral; nothing persists between builds except
-  what's in git.
+- **Directory data has no state across runs; API snapshots do.** Every nightly
+  fetches directory pages fresh on an ephemeral runner. API year snapshots are
+  intentionally persisted as encrypted GitHub Release assets so immutable years
+  do not consume API calls on every build. Nothing fetched is committed to git.
 
 ## Mechanism
 
@@ -63,6 +64,11 @@ flowchart LR
 - Same setup.
 - Bundle the client (`npm run build`).
 - `python -m playa all` — fetches everything, encrypts, builds.
+- Downloads each configured `api-YYYY` encrypted Release cache; a cache miss or
+  explicitly requested `refresh_api_years` fetches from the API and uploads a
+  replacement asset.
+- Resolves `BURN_OPEN` from manual override, burn-window dates, and optional
+  `PLAYA_GO_LIVE` before building the spirit-mode sidecar.
 - Verifies `openssl version`, `node --version`, etc. as a sanity
   preamble.
 - Uploads `site/` as the `github-pages` artifact via
@@ -78,14 +84,17 @@ flowchart LR
 
 ### Secrets
 
-- `SITE_PASSWORD` — drives the encrypted-payload mode. If unset,
-  the build emits a plaintext payload (used for local dev only;
-  CI always sets it).
+- `SITE_TIERS` — production multi-tier source/password manifest.
+- `SITE_PASSWORD` — legacy single-tier mode and cache-password fallback.
+- `BM_API_KEY` — used only for API cache creation/refresh.
+- `BM_CACHE_PASSWORD` — encrypts/decrypts API Release caches.
 - `CONTACT_EMAIL` — replaces the placeholder in the footer's
   takedown mailto.
 
-Set both under **Settings → Secrets and variables → Actions** before
-the first build.
+Repository variables: `BM_API_YEARS`, `BURN_WINDOW_OPEN_FROM`,
+`BURN_WINDOW_OPEN_TO`, and optional `PLAYA_GO_LIVE`. Configure the applicable
+secrets and variables under **Settings → Secrets and variables → Actions**
+before the first production build.
 
 ### Local mirror of CI
 

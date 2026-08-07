@@ -50,6 +50,17 @@ export function availableSources(): Source[] {
   return parts.length > 0 ? parts : ['directory'];
 }
 
+/** Pick the source that visible labels and source-specific notices should use.
+ *  A persisted selection can be outside an envelope password's unlocked set;
+ *  state is corrected in an effect, but this synchronous fallback prevents a
+ *  one-frame display of copy for an unavailable source. */
+export function sourceForDisplay(
+  selected: Source,
+  available: Source[],
+): Source {
+  return available.includes(selected) ? selected : (available[0] ?? selected);
+}
+
 /** One-shot copy of legacy unsuffixed keys → `<key>/directory`.
  *  Idempotent: safe to call on every mount; the flag short-circuits
  *  after the first run. Bare keys are NOT removed (compat for any

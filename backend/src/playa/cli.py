@@ -74,7 +74,7 @@ def _parser() -> argparse.ArgumentParser:
 
     sp_api = sub.add_parser(
         "api-fetch",
-        help="cache an api.burningman.org year (camps + events). Requires BM_API_KEY.",
+        help="cache an api.burningman.org year (camps + events + art). Requires BM_API_KEY.",
     )
     sp_api.add_argument(
         "--year", type=int, required=True,

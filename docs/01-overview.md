@@ -11,7 +11,8 @@ status: current
 Playa Camps is a **single-page static site** that lets a private group
 of friends browse + plan around the official Burning Man theme-camp
 directory before and during the burn. The pipeline pulls public data
-from `directory.burningman.org`, transforms it, and ships a
+from `directory.burningman.org` plus configured cached `api-YYYY` snapshots,
+transforms it, and ships a
 self-contained, password-gated, offline-capable PWA to GitHub Pages.
 
 The shape of every architectural decision falls out of three
@@ -42,6 +43,10 @@ constraints:
 - **Public repo, hard `.gitignore`.** Code lives publicly, data never
   hits git. Every CI run fetches fresh from upstream and uploads only
   the built artifact.
+- **Parallel source and entity payloads.** Directory/API sources normalize to
+  shared models but keep independent IDs and user state. Camps and art travel
+  as parallel per-source payloads. `SITE_TIERS` uses envelope encryption so one
+  password unlocks only its configured source subset.
 
 ## Mechanism
 
@@ -64,7 +69,10 @@ Two halves of the codebase:
   fetch HTML, parse, tag, encrypt, write `site/index.html` + `sw.js` +
   `version.txt`.
 - **`client/src/`** (TypeScript + Preact + esbuild): bundled into one
-  `~35 KB` IIFE that the Python builder inlines into the HTML. The
+  IIFE that the Python builder inlines into the HTML. The core client was
+  historically ~35 KB before the `pwa-install` dependency; that library is
+  dynamically imported in source but folded into the single IIFE by the current
+  non-splitting esbuild format, adding roughly 50 KB gzip. The
   client decrypts the embedded payload at runtime, renders the UI,
   manages favorites, runs the map, etc.
 
@@ -79,6 +87,8 @@ placeholder tokens (`__DATA_SCRIPT__`, `__BUNDLE__`, `__VERSION__`,
   a rebuild + redeploy + re-distribution to friends. Acceptable since
   the audience is small. See
   [revocation-plan.md](./revocation-plan.md).
+  Multi-tier deployments have the same rebuild/redistribution property for any
+  rotated tier password; encrypted API-cache password rotation is independent.
 - **Build is the only update path.** Tag changes, parser fixes, etc.
   require a CI run to reach users. Force-refresh handles the
   sub-day window; nightly cron is the worst case.

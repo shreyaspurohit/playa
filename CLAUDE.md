@@ -1,5 +1,12 @@
 # bm-camps
 
+`AGENTS.md` is a symlink to this file. Keep one source of truth: edit
+`CLAUDE.md`, never replace the symlink with a second copy. These instructions
+are shared by human contributors and coding assistants, so keep them
+tool-agnostic. Prefer focused edits over wholesale rewrites, and preserve
+accurate operational knowledge unless the owner explicitly approves its
+removal or condensation.
+
 Directory fetcher + single-file static site for the Burning Man theme-camp directory
 (`https://directory.burningman.org/camps/`). Goal: public-code, private-data
 GitHub Pages deploy with password gate at `playa.purohit.dev`, for
@@ -30,6 +37,10 @@ change touches one of these subsystems.
 - [`docs/14-refresh-cycle.md`](docs/14-refresh-cycle.md) — refresh / force-refresh paths + SW interaction
 - [`docs/15-data-sources.md`](docs/15-data-sources.md) — multi-source architecture (directory + `api.burningman.org`), per-source state, normalization
 - [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
+- [`docs/dev/client-architecture.md`](docs/dev/client-architecture.md) — compact client implementation reference
+- [`docs/dev/html-scraping-patterns.md`](docs/dev/html-scraping-patterns.md) — directory HTML parser patterns
+- [`docs/dev/site-ui.md`](docs/dev/site-ui.md) — compact data-embed and UI reference
+- [`docs/roadmap.md`](docs/roadmap.md) — future ideas, not implemented architecture
 
 When adding a new subsystem worth of decisions, follow the template in
 `docs/00-index.md` and add a row to its index + a bullet here.
@@ -97,14 +108,32 @@ Mitigations baked into this project (so we can point to them if challenged):
   raw data isn't committed, takedowns are genuine removals (no git
   history to unwind). Reversing a takedown is removing the id from
   `denylist.txt`.
-- **No ads, no analytics, no monetization.** Keeps the "commercial
-  endeavor" clause from applying.
+- **No ads, no analytics, no tracking, no accounts, no monetization, and no
+  commercial purpose.** Keeps the "commercial endeavor" clause from applying.
 
 **Remaining residual risk:** §6 still applies to every camp's description
 text as it exists in the live site. This is mitigated (password-gated,
 non-indexed, takedown available, not in the public code repo) but not
 eliminated. If Burning Man or a specific camp objects, fulfill the
 takedown and move on. Don't push back against a removal request.
+
+The API/dataset terms are tracked separately at
+<https://innovate.burningman.org/terms-of-service-for-burning-man-apis-and-datasets/>.
+The exact required notice — “This app is not affiliated, endorsed, or verified
+by Burning Man Project.” — must render for every source. Directory attribution,
+directory verification guidance, and directory-specific takedown wording render
+only when `directory` is selected. The non-commercial/no-tracking statement and
+the app-generated tags/time disclosure render for every source.
+
+Two operator decisions are intentional and carry accepted ToS risk:
+
+- Tags are keyword classifications layered on source records; event times are
+  normalized for display. Source descriptions and event text are not rewritten,
+  and the About modal labels these transformations.
+- Current-year API locations remain in encrypted payloads for later reveal.
+  Normal users are masked until `BURN_WINDOW_OPEN_FROM`; trusted `god-mode`
+  wrappers may bypass the client mask for internal testing. Spirit-mode remains
+  masked. Do not broaden this exception.
 
 ## Pipeline
 
@@ -114,7 +143,7 @@ The **server-side fetcher/builder** (Python) pulls the directory,
 assembles the HTML template, and injects the bundle + data payload.
 
 ```
-npm run build                  → client/dist/bundle.js  (~34 KB minified)
+npm run build                  → client/dist/bundle.js  (core was ~34 KB before bundled pwa-install; see below)
 python -m playa fetch <N>      → data/pages/page_NN.json
 python -m playa fetch-all      → all camp pages in parallel
 python -m playa fetch-art <N>  → data/art_pages/art_NN.json
@@ -124,6 +153,7 @@ python -m playa merge          → data/camps.csv + data/art.csv
 python -m playa tag            → data/camps_tagged.csv + data/art_tagged.csv
 python -m playa build          → site/index.html  (injects bundle + camps + art)
 python -m playa all            → nightly pipeline (bundle must already exist)
+python -m playa api-fetch --year YYYY → data/api/YYYY.json (camps + events + art cache)
 ```
 
 `make fetch`, `make rebuild`, `make build` all include the bundle step
@@ -197,12 +227,14 @@ wrapping them in classes would have been pure ceremony.
 | `PARALLEL`           | `5`                           | Parallelism for fetch (used by `fetch_all.sh`)                                                   |
 | `BM_API_KEY`         | *(unset)*                     | api.burningman.org access key — required by `playa api-fetch` and the CI cache-fetch step        |
 | `BM_API_BASE_URL`    | `https://api.burningman.org`  | Override the API base (testing / staging only)                                                   |
+| `BM_API_TIMEOUT`     | `120`                         | Timeout in seconds for each bulk API request                                                     |
 | `BM_API_YEARS`       | *(unset)*                     | Comma-separated years (`2024,2025`) — auto-derives `--sources directory,api-2024,api-2025`       |
 | `BM_CACHE_PASSWORD`  | falls back to `SITE_PASSWORD` | Password used to AES-256-CBC encrypt API cache assets uploaded to GitHub Releases                |
 | `SITE_TIERS`         | *(unset)*                     | Multi-tier access. Format: `name1:pw1=src1+src2,name2:pw2=src3,…`. Each tier (name + password) unlocks its source list via per-source envelope encryption. Tier names required — `spirit-mode` is the reserved name D13 looks up for burn-key.json; `god-mode` is the reserved name D8 looks up to flag wrappers as trusted (location-embargo bypass). Conventional shape: `god-mode:$GOD_PW=directory+api-2025+api-2026,demigod-mode:$DEMIGOD_PW=api-2025+api-2026,spirit-mode:$SPIRIT_PW=api-2026`. Unset → falls through to single-tier `SITE_PASSWORD`. See ADR D10. |
 | `BURN_OPEN`          | `0` / unset                   | `workflow_dispatch` override for D13 burn-window auto-unlock. When `1`, deploys `site/burn-key.json` alongside `index.html` so the client auto-unlocks `spirit-mode` without a password. `god-mode` / `demigod-mode` stay password-gated. |
 | `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` | unset | Repo *variables* (Settings → Secrets and variables → Actions → Variables). ISO dates. When both set, the nightly cron evaluates today-in-window and auto-includes / auto-removes `burn-key.json` — set-once-forget, no manual flip per burn. Manual `BURN_OPEN` input always wins. See ADR D13. |
 | `PLAYA_GO_LIVE`      | unset / `false`               | Repo *variable* (truthy/falsy). Forces `BURN_OPEN=1` on builds whose date is BEFORE `BURN_WINDOW_OPEN_FROM` so spirit-mode auto-unlocks ahead of the burn week (e.g., for early stress-testing or operator preview). Past `BURN_WINDOW_OPEN_TO` the flag is ignored — the deploy closes regardless. Manual `workflow_dispatch` `burn_open` input still wins over this. |
+| `MIN_CAMPS`          | `500`                         | Primary-source build safety rail. `0` is for intentionally small local fixtures only; never set it in CI. |
 
 Local dev: leave `SITE_PASSWORD` unset to produce a plaintext build for
 quick preview. CI sets both via repo secrets. The API source caches are
@@ -279,11 +311,11 @@ historical artifact and renaming would break anyone who's cloned it.
 - `renovate.json` — Renovate bot config (see "Dependency updates"
   section below).
 
-Python tests live at `backend/tests/` (one file per `playa` module:
-`test_parsers.py`, `test_tagger.py`, `test_timeparser.py`,
-`test_meta.py`, `test_merger.py`, `test_builder.py`). JS tests live at
+Python tests live at `backend/tests/` (module-focused files plus API, art,
+release-note, and builder integration coverage). JS tests live at
 `client/tests/`.
-- `data/` — fetch artifacts. **Gitignored in full except `denylist.txt`**
+- `data/` — fetch artifacts. **Gitignored in full except the committed
+  `denylist*.txt` ID files**
   (public-repo / private-data stance, see top of file).
   - `pages/page_NN.json` — raw per-page fetch. Each camp dict maps 1:1
     to `Camp.to_dict()`: `{id, name, location, description, website,
@@ -293,9 +325,14 @@ Python tests live at `backend/tests/` (one file per `playa` module:
     Filtered out of the site at build. Takedown requests land here.
   - `camps.csv` — merged CSV (tags blank).
   - `camps_tagged.csv` — final CSV.
+  - `art.csv`, `art_tagged.csv` — parallel art merge/tag outputs.
+  - `api/YYYY.json` — plaintext or openssl-encrypted API year snapshot;
+    never committed.
 - `site/` — published artifacts. **`index.html` is gitignored**; other
   files are Pages config that ride along in the artifact.
-  - `index.html` — self-contained site (plaintext ~1.7 MB, encrypted ~2.2 MB).
+  - `index.html` — self-contained site. Historical directory-only builds were
+    ~1.7 MB plaintext / ~2.2 MB encrypted; gzip-before-encrypt reduced that
+    baseline, while additional embedded sources increase it.
   - `robots.txt` — `Disallow: /` for all user-agents.
   - `.nojekyll` — disables Jekyll processing on GH Pages.
   - `CNAME` — `playa.purohit.dev`. DNS side: a `CNAME` record for `playa`
@@ -307,21 +344,22 @@ Python tests live at `backend/tests/` (one file per `playa` module:
 dispatch. Three jobs: `test` (runs the unit suite), `build` (runs
 `python -m playa all` on the runner, uploads Pages artifact —
 **does not commit anything**), `deploy` (publishes to GitHub Pages via
-`actions/deploy-pages@v4`). `build` needs `test`, so a broken parser
-can never produce a broken nightly. Secrets consumed: `SITE_PASSWORD`,
-`CONTACT_EMAIL`. Permission set is `contents: read` (no push needed).
+`actions/deploy-pages@v5`). `build` needs `test`, so a broken parser
+can never produce a broken nightly. The test job uses `contents: read`; the
+build job uses `contents: write` solely for encrypted API-cache Releases, and
+the deploy job uses `pages: write` + `id-token: write`.
 
 **Runtime dependencies** (all pre-installed on `ubuntu-latest` —
 nothing to apt-get): `openssl` (encrypted-payload path). Python 3.12
-comes from `actions/setup-python`. Node 20 comes from
+comes from `actions/setup-python`. Node 22 comes from
 `actions/setup-node` (for the client bundle + JS tests). Python
 project code is stdlib-only; JS project restores deps via
 `npm ci` (cached on `package-lock.json`).
 
 **How deploy works** — the runner generates `site/index.html` etc. on
-its local filesystem, `actions/upload-pages-artifact@v3` tars up
+its local filesystem, `actions/upload-pages-artifact@v5` tars up
 `site/` and uploads it as the `github-pages` artifact,
-`actions/deploy-pages@v4` takes that artifact and serves it from
+`actions/deploy-pages@v5` takes that artifact and serves it from
 Pages. At no point does the fetched data touch git. Verified against
 the official docs for both actions.
 
@@ -353,7 +391,7 @@ committed). For template/tag/CSS tweaks, **rebuild locally** with
   `<a class="list-group-item" href="/events/{id}/">` blocks with the same
   3-col row shape (col-sm-3 name, col-sm-6 desc, col-sm-3 time).
 
-All regexes live at the top of `fetch_page.py`.
+All regexes live at the top of `parsers.py`.
 
 ## Rerun from scratch
 
@@ -391,11 +429,10 @@ make rebuild    # or: python -m playa {meta,merge,tag,build}
 All tag definitions live in the `TAGS` dict in `backend/src/playa/tagger.py`.
 Each entry is `"tag_name": [regex, regex, …]`.
 
-**For a structured audit**: invoke the project skill
-`.claude/skills/update-tags/` (auto-loaded as `update-tags` when running
-Claude Code in this repo). It walks through: baseline snapshot → find
+**For a structured audit**: follow
+`.claude/skills/update-tags/SKILL.md`. It walks through: baseline snapshot → find
 thinly-tagged camps → cluster into proposed patterns → validate with
-`\b` boundaries + grep sanity checks → show diff → apply on approval
+`\b` boundaries + local sanity checks → show proposal → apply on approval
 → run tests + rebuild → report delta. Good for after a fresh fetch
 when the untagged count drifts up.
 
@@ -411,23 +448,28 @@ when the untagged count drifts up.
 
 **Workflow for adding or changing a tag:**
 
-1. Edit `TAGS` in `backend/src/playa/tagger.py`.
-2. Add a quick test in `tests/test_tagger.py` — a positive case (should
+1. Capture the current `make tag` baseline and audit every configured source.
+   Report aggregate counts only; never reproduce fetched records in logs,
+   diffs, or review output.
+2. Present the proposed regex changes and expected aggregate impact to the
+   owner. Do not edit the taxonomy or tests until the owner explicitly approves.
+3. Edit `TAGS` in `backend/src/playa/tagger.py`.
+4. Add a focused test in `backend/tests/test_tagger.py` — a positive case (should
    tag) and ideally a negative case (should not tag):
    ```python
    def test_new_tag_hot_tub(self):
        self.assertIn("hot_tub", self.match("soak in our hot tub"))
        self.assertNotIn("hot_tub", self.match("hot chocolate"))
    ```
-3. Run `make test` — make sure you haven't broken word-boundary invariants.
-4. Run `make rebuild` to regenerate `camps_tagged.csv` and
+5. Run `make test` — make sure you haven't broken word-boundary invariants.
+6. Run `make rebuild` to regenerate `camps_tagged.csv` and
    `site/index.html` without re-fetching.
-5. Check the `top 30 tags` summary that the `tag` command prints — if
+7. Check the `top 30 tags` summary that the `tag` command prints — if
    your new tag isn't hitting as expected, your regex is probably too strict.
 
 **Debugging a tag that fires too often:**
-Grep for the offending text: `grep -i "substring" data/pages/*.json` to
-find camps that matched. Refine the regex with tighter boundaries.
+Inspect all local matches without copying source records into external output.
+Refine the regex with tighter boundaries and add a regression test.
 
 **Debugging a tag that doesn't fire:**
 Drop into a REPL:
@@ -747,35 +789,39 @@ samples and extend `_BEGINS_RE`/`_FROM_RE` or add a third regex.
 ## Tests
 
 ```bash
-make test        # runs both suites: Python (92) + JS (46)
-make test-py     # Python unit tests only (stdlib unittest, ~0.15s)
-make test-js     # JS/TS tests via node --test + happy-dom (~4.5s)
+make test        # runs both suites
+make test-py     # Python unit tests (stdlib unittest)
+make test-js     # JS/TS tests via node --test + happy-dom
 ```
 
-Combined: **138 tests, 0 failures**. CI runs both in the `test` job
-before the `build` job touches anything.
+Do not hardcode suite counts in documentation; they change frequently. CI runs
+both suites in the `test` job before the `build` job touches anything.
 
-- `tests/test_parsers.py` — `_clean()`, `ListingParser.parse()`,
+- `backend/tests/test_parsers.py` — `_clean()`, `ListingParser.parse()`,
   `DetailParser.parse()`. Fixture HTML inlined; the network-touching
   `Fetcher.fetch()` is deliberately not exercised (would make CI flaky).
-- `tests/test_tagger.py` — core taxonomy invariants: `\b` boundaries
+- `backend/tests/test_tagger.py` — core taxonomy invariants: `\b` boundaries
   (`art` ≠ `heart`), case-insensitivity, multi-tag firing, a floor of
   ~100 tags so accidental deletions are caught, `Tagger.haystack()`
   event-text inclusion.
-- `tests/test_timeparser.py` — AM/PM↔24h boundary conversions, both
+- `backend/tests/test_timeparser.py` — AM/PM↔24h boundary conversions, both
   `Begins`/`From` shapes, `Day2` suffix handling, week-map derivation
   (most-common-wins on conflicts), day compaction (range / daily /
   comma-list), and the year-free display guarantee.
-- `tests/test_merger.py` — column order, dedupe by id, alphabetical
+- `backend/tests/test_merger.py` — column order, dedupe by id, alphabetical
   sort, handling of legacy JSONs that predate the `website` field.
-- `tests/test_meta.py` — `fetched_at` format (ISO-8601 UTC),
+- `backend/tests/test_meta.py` — `fetched_at` format (ISO-8601 UTC),
   version/date coupling, zero-page fallback, event counting.
-- `tests/test_builder.py` — **OpenSSL encryption round-trip** (encrypt
+- `backend/tests/test_builder.py` — **OpenSSL encryption round-trip** (encrypt
   with Python → decrypt with `openssl enc -d`), denylist filtering +
   comment stripping, `SiteBuilder.load_meta()` fallback to page mtime,
   `load_camps()` dedupe + denylist + canonical URL, and a full
   plaintext build smoke test. Encryption tests require `openssl` on
   PATH (same hard dep as production).
+- `backend/tests/test_api_source.py` — API camp/event/art normalization,
+  occurrence grouping, cache encryption, denylists, and partial shapes.
+- `backend/tests/test_art_model.py` — art-model serialization and normalization.
+- `backend/tests/test_release_notes.py` — `rn:` history parsing and safe embeds.
 
 All tests construct a `Config(root=tmp_path)` and operate entirely in
 temp dirs — no module-level `patch.object` hacks. That's the main
@@ -789,12 +835,17 @@ nightly build.
 
 One-time setup in the repo:
 
-1. Push to a private GitHub repo.
+1. Push the repository to GitHub. This project intentionally uses a public code
+   repository with fetched/generated data excluded by `.gitignore`.
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions**
    (not "Deploy from a branch").
 3. **Settings → Secrets and variables → Actions → New repository secret:**
    - `SITE_PASSWORD` — the shared password for friends.
+   - `SITE_TIERS` — production envelope tier/password/source manifest.
+   - `BM_API_KEY` and `BM_CACHE_PASSWORD` — API refresh + encrypted cache.
    - `CONTACT_EMAIL` — where takedown mail should go.
+   Add repository variables `BM_API_YEARS`, `BURN_WINDOW_OPEN_FROM`,
+   `BURN_WINDOW_OPEN_TO`, and optionally `PLAYA_GO_LIVE`.
 4. Custom domain: `site/CNAME` is already committed with
    `playa.purohit.dev`. Add a `CNAME` DNS record for `playa` at
    `purohit.dev` pointing to `<github-user>.github.io`. **Settings →
@@ -961,12 +1012,12 @@ measurements PDF, and the themed street names from the city-plan page;
 then does targeted edits to `client/src/map/data.ts` + bumps the
 "Last refreshed" comment. Only rendering code stays hands-off.
 
-## Official BM APIs + datasets (migration path)
+## Official BM APIs + datasets
 
-Researched 2026-04-22. Burning Man publishes camp/event/art data through
-two channels that we could lean on instead of (or alongside) the HTML
-fetch. The fetch stays as the only pre-burn source for the *current*
-year, but both channels reduce our fragility and open up new features.
+Researched 2026-04-22 and updated after the API integration landed. Burning Man
+publishes camp/event/art data through the archive, live API, and GIS channels.
+The application currently supports the directory and cached `api-YYYY` sources;
+the archive and direct GIS ingestion remain possible future additions.
 
 ### Channel 1 — JSON archive (no key, post-burn historical)
 
@@ -999,7 +1050,11 @@ planning in the current year.
 
 ### Channel 2 — `api.burningman.org` (keyed, live-ish)
 
-Official live API. Requires an API key (request at the endpoint). Per
+Official live API. Requires an API key. The implemented adapter fetches the
+bulk `/api/camp`, `/api/event`, and `/api/art` endpoints and normalizes them to
+the shared `Camp`, `Event`, and `Art` models. Snapshots are cached per year and
+encrypted with `BM_CACHE_PASSWORD`; see `docs/15-data-sources.md` D2 and D7.
+Per
 the 2025 schedule on `innovate.burningman.org/apis-page/`:
 
 | Data          | Developer release | Public release |
@@ -1011,9 +1066,8 @@ Release-timing restriction: *developers must not release art locations
 to users until gates open.* We'd need to respect that if we auto-build
 nightly during burn week.
 
-Endpoint paths, response formats, and rate limits are **not documented
-publicly** — available only after API-key request. Treat as unverified
-until we pull a key and confirm.
+Do not infer new endpoints, fields, or rate limits from memory. Verify them
+against the current API and update the adapter fixtures before relying on them.
 
 ### Channel 3 — GIS data (no key, city geometry)
 
@@ -1031,10 +1085,10 @@ would eliminate most of the annual copy-paste work.
 
 ### Migration strategy
 
-**Keep HTML fetch as the primary source** for the current-year use
-case until the live API is opened to us and we've confirmed its shape.
-The fetch is fragile but it's the only channel that gives us pre-burn
-data without key friction, and we already have the infrastructure.
+**Keep directory and API as parallel sources.** The directory remains useful
+for early planning and canonical directory links; `api-YYYY` provides
+structured, year-specific snapshots. Do not merge their ID spaces or silently
+substitute one when another fails.
 
 **Layer the archive JSON in as a secondary source** for historical /
 year-over-year features (already listed as a future extension). A new
@@ -1043,13 +1097,11 @@ given year and produce the same `Camp`/`Event` dataclasses our current
 pipeline uses. No merge logic needed for single-year builds; only
 matters if we add diffing.
 
-**Request an API key** off-season (anytime before Aug 1) so the live
-API is available as a fallback. Don't switch to it as primary until:
-(1) the key is granted, (2) endpoints + schemas are documented, (3)
-we've verified it returns pre-burn camp data (not just art locations).
-The camp directory at `directory.burningman.org` is populated *weeks*
-before Aug 4 developer access, so the API may never fully supersede
-the fetch for our "plan your burn before gates open" use case.
+**The API integration is implemented, not a future migration.** An API key is
+still required for cache creation or refresh. Existing encrypted year caches
+build without another API request. The directory may be populated weeks before
+the API's scheduled location release, so the API does not fully supersede the
+planning value of the directory.
 
 **Migrate `map/data.ts` to GeoJSON first.** It's the lowest-risk
 integration: pure geometry, one-shot annual refresh, no ToS mitigations
@@ -1057,16 +1109,14 @@ needed (the GeoJSON is explicitly licensed open). Would replace the
 hand-edited constants (street radii, clock bearings, themed street
 names) with a parsed GeoJSON build step in the `/update-map` skill.
 
-### Compliance checklist — MUST do before switching to `api.burningman.org` / `bm-innovate.s3.amazonaws.com/archive/`
+### Compliance checklist — MUST preserve while using API/archive data
 
 Source: <https://innovate.burningman.org/terms-of-service-for-burning-man-apis-and-datasets/>
 
-Once we pull any camp/event/art data from those endpoints, the
-Innovate ToS applies in addition to (or instead of) the
-directory.burningman.org ToS. These items are gate-items for the
-switch-over; none are optional.
+The Innovate ToS applies to the API data already in use. These safeguards and
+documented operator decisions are active requirements; none are optional.
 
-- [ ] **§4 disclaimer**: keep the required verbatim string —
+- [x] **§4 disclaimer**: keep the required verbatim string —
       *"This app is not affiliated, endorsed, or verified by Burning
       Man Project."* — in the footer + About modal (already shipping
       as of the rename to "Playa Camps"). Must appear "in a prominent
@@ -1094,38 +1144,39 @@ switch-over; none are optional.
       client knows which wrappers earn the bypass without exposing
       tier names in the DOM. demigod / spirit / single-tier
       `SITE_PASSWORD` builds keep the embargo on.
-- [ ] **§6.2 location embargo (art)**: not yet relevant — we don't
-      surface art. When art is added, mirror the camp-embargo path
-      but use gate-open (Day 1) as the cutoff instead of build-week
-      Sunday.
-- [ ] **§7.2 trademark**: app name must not contain "Burning Man",
+- [x] **§6.2 location embargo (art)**: `applyArtLocationEmbargo()` uses
+      the same source/date/trusted decision as camps. The configured
+      `BURN_WINDOW_OPEN_FROM` gate-open cutoff is exact for art and
+      conservative for camps. The intentional god-mode internal bypass
+      applies to both; spirit-mode stays masked.
+- [x] **§7.2 trademark**: app name must not contain "Burning Man",
       "Black Rock City", "Decompression", or "Playa Events". Current
       name is "Playa Camps" — OK. If renaming again, check this rule.
-- [ ] **§5.3 republishing**: the expected reading (per project owner)
+- [x] **§5.3 republishing**: the expected reading (per project owner)
       is "don't distribute as if we are the provider" — using the
       data *in our app* is fine, as long as the §4 disclaimer is
       present and we don't mirror it as a standalone dataset.
-- [ ] **§5.5 modification**: the auto-generated tags and the
+- [x] **§5.5 modification**: the auto-generated tags and the
       calendar-date canonicalization are both transformations on
       Event Data. The About modal already calls both out explicitly
       — *"tags are keyword-matched by this app — not from Burning
       Man Project"* + *"calendar dates come from a configured
       burn-week window"*. Keep those labels current if the pipeline
       adds more transforms.
-- [ ] **§2.3 permissions transparency**: the GPS/location copy in
+- [x] **§2.3 permissions transparency**: the GPS/location copy in
       the About modal already covers this. If we ever add camera
       or push access, extend that paragraph.
-- [ ] **§9 revocation**: `docs/revocation-plan.md` has the runbook.
+- [x] **§9 revocation**: `docs/revocation-plan.md` has the runbook.
       The `SITE_PASSWORD` rotation path preserves the showcase
       value; the §5 "destroy all copies" path is only needed if the
       takedown explicitly targets data.
-- [ ] **MIN_CAMPS rail**: `SiteBuilder.build()` refuses to produce
+- [x] **MIN_CAMPS rail**: `SiteBuilder.build()` refuses to produce
       `site/index.html` when fewer than 500 camps loaded. Don't
       override `MIN_CAMPS=0` in CI — the rail is specifically there
       so a broken fetch / empty API response doesn't overwrite the
       last-good deploy.
 
-### Concrete next steps (when someone picks this up)
+### Remaining source-data work
 
 1. Write `backend/src/playa/archive.py` — fetches
    `bm-innovate.s3.amazonaws.com/archive/<year>/{camps,events}.json`,
@@ -1139,11 +1190,9 @@ switch-over; none are optional.
    the GeoJSON files. Keep the verification pass — the GeoJSON is
    authoritative for geometry, not for themed-street naming (those
    still come from the theme-year announcement).
-5. Request `api.burningman.org` key (Calm/personal email). Document
-   the schema here once the welcome packet lands. **Do not** hardcode
-   endpoint paths from memory or from this CLAUDE.md — verify by
-   hitting the real API first. (See user CLAUDE.md "VERIFY BEFORE
-   STATING".)
+5. API key acquisition and the camp/event/art adapter are complete. For any
+   new endpoint, **do not** hardcode paths or schema from memory—verify against
+   the real API and add fixture-based tests first.
 
 ### What to preserve across any migration
 

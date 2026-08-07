@@ -83,6 +83,7 @@ TAGS: dict[str, list[str]] = {
         r"\bperformance(?:s)?\b", r"\bshow(?:s|case)?\b", r"\btheatre?\b",
         r"\bcircus\b", r"\bfire\s*(?:spinn(?:ers?|ing)|dancers?|performers?|show)\b",
         r"\bburlesque\b", r"\bcabaret\b", r"\baerial(?:ist|ists|s)?\b",
+        r"\bcomed(?:y|ian|ians)\b",
     ],
     "costume": [
         r"\bcostumes?\b", r"\bdress[-\s]?up\b", r"\bwardrobe\b", r"\bcouture\b",
@@ -161,13 +162,13 @@ TAGS: dict[str, list[str]] = {
     # --- Music & dance ---
     "music": [
         r"\bmusic\b", r"\blive\s*music\b", r"\bbands?\b", r"\bconcert(?:s)?\b",
-        r"\bgigs?\b",
+        r"\bgigs?\b", r"\bdrum\s*circle\b", r"\bdrumming\b", r"\bpercussion\b",
     ],
     "dj": [r"\bdj(?:s|ed|ing)?\b", r"\bturntables?\b", r"\bdecks\b"],
     "sound_camp": [r"\bsound\s*camp\b", r"\bsoundsystem\b", r"\bsound\s*system\b"],
     "dance": [
         r"\bdanc(?:e|es|ing|er|ers|efloor)\b", r"\brave(?:s)?\b", r"\bdisco\b",
-        r"\bsilent\s*disco\b",
+        r"\bsilent\s*disco\b", r"\bcontact\s*improv(?:isation|ization)?\b",
     ],
     "karaoke": [r"\bkaraoke\b", r"\bsing[-\s]?along\b"],
     "electronic": [
@@ -178,7 +179,10 @@ TAGS: dict[str, list[str]] = {
     "live_music": [r"\blive\s*music\b", r"\bacoustic\s*set\b", r"\bjam\s*session\b", r"\bopen\s*mic\b"],
 
     # --- Wellness ---
-    "yoga": [r"\byoga\b", r"\basanas?\b", r"\bvinyasa\b"],
+    "yoga": [
+        r"\byoga\b", r"\basanas?\b", r"\bvinyasa\b",
+        r"\bacro[-\s]?yoga\b", r"\bacrobatic\s+yoga\b",
+    ],
     "meditation": [r"\bmeditat(?:e|es|ed|ing|ion|ions)\b", r"\bmindful(?:ness)?\b"],
     "massage": [r"\bmassage(?:s)?\b", r"\bbodywork\b"],
     "spa": [r"\bspa\b", r"\bsauna\b", r"\bhot\s*tub\b", r"\bjacuzzi\b", r"\bsteam\s*room\b"],
@@ -187,11 +191,22 @@ TAGS: dict[str, list[str]] = {
     "sound_bath": [r"\bsound\s*bath\b", r"\bsound\s*healing\b", r"\bgong\s*bath\b"],
     "tantra": [r"\btantra\b", r"\btantric\b"],
     "ecstatic_dance": [r"\becstatic\s*dance\b"],
+    "acroyoga": [r"\bacro[-\s]?yoga\b", r"\bacrobatic\s+yoga\b"],
+    "cacao_ceremony": [
+        r"\b(?:cacao|cocoa)\s*(?:ceremony|circle|ritual)\b",
+    ],
 
     # --- Social / party ---
     "lounge": [r"\blounge\b", r"\bchill\s*(?:zone|spot|space|lounge)\b", r"\bcozy\b"],
     "party": [r"\bpart(?:y|ies|ying)\b", r"\bbash\b", r"\bshindig\b"],
     "hangout": [r"\bhangout\b", r"\bhang[-\s]?out\b", r"\bhang\s*out\b"],
+    "speed_dating": [
+        r"\bspeed\s*dat(?:e|es|ing)\b",
+        r"\bdating\s*(?:games?|mixer)\b",
+        r"\bsingles?\s*(?:mixer|meetup|night)\b",
+        r"\bmatchmak(?:e|er|ers|ing)\b",
+        r"\bblind\s*date\b",
+    ],
 
     # --- Workshops / learning ---
     "workshops": [
@@ -199,6 +214,37 @@ TAGS: dict[str, list[str]] = {
         r"\blearn(?:ing)?\b", r"\beducational\b", r"\bskill[-\s]?share\b",
     ],
     "talks": [r"\btalks?\b", r"\blectures?\b", r"\bspeakers?\b", r"\bpanels?\b"],
+
+    # --- Recurring event formats ---
+    "comedy": [r"\bcomed(?:y|ian|ians)\b"],
+    "contact_improv": [r"\bcontact\s*improv(?:isation|ization)?\b"],
+    "body_painting": [r"\bbody\s*paint(?:ing|ed)?\b"],
+    "drumming": [r"\bdrum\s*circle\b", r"\bdrumming\b", r"\bpercussion\b"],
+    "flow_arts": [
+        r"\bflow\s*arts?\b",
+        r"\bpoi\s*(?:spinn(?:ing|ers?)|workshops?|classes?)\b",
+    ],
+    "partner_dance": [
+        r"\bpartner\s*danc(?:e|es|ing)\b",
+        r"\b(?:salsa|bachata|tango|swing)\s+"
+        r"(?:danc(?:e|es|ing)|lessons?|classes|workshops?)\b",
+        r"\b(?:danc(?:e|es|ing)|lessons?|classes|workshops?)\s+"
+        r"(?:salsa|bachata|tango|swing)\b",
+    ],
+    "pole_dance": [r"\bpole\s*danc(?:e|es|ing)\b"],
+    "life_drawing": [
+        r"\b(?:life|figure|nude)\s*drawing\b",
+        r"\bdrawing\s*(?:from|with)\s*(?:a\s*)?"
+        r"(?:live|nude)\s*model\b",
+    ],
+    "tea_ceremony": [r"\btea\s*ceremon(?:y|ies)\b"],
+    "fiber_arts": [
+        r"\bsew(?:ing|n)?\b", r"\bmend(?:ing|ed|s)?\b",
+        r"\bembroider(?:y|ed|ing|ies)?\b",
+        r"\bcrochet(?:ing|ed|s)?\b", r"\bknit(?:ting|ted|s)?\b",
+        r"\bfiber\s+arts?\b",
+        r"\btextile\s+(?:arts?|workshops?|classes|crafts?|installations?|sculptures?)\b",
+    ],
 
     # --- Games & play ---
     "games": [r"\bgames?\b", r"\btournament\b", r"\bcompetition\b", r"\bcontests?\b",
@@ -328,6 +374,8 @@ TAGS: dict[str, list[str]] = {
     "man_pavilion": [
         r"\bman\s*pavilion\b", r"\bmanpavgrant\b", r"\bmanpav\b",
     ],
+    # API program classification, parallel to Honorarium / Man Pavilion.
+    "self_funded": [r"\bself[-\s]?funded\b"],
 
     # --- Personal care / pampering ---
     "pampering": [
