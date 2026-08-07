@@ -24,6 +24,12 @@ function mountInfo(source: Source) {
     fetchedDate: '2026-08-06',
     contactEmail: 'test@example.com',
     source,
+    locationPolicy: {
+      year: 2026,
+      campReleaseAt: '2026-08-23T00:00:00-07:00',
+      artReleaseAt: '2026-08-30T00:00:00-07:00',
+    },
+    trusted: false,
     onImport: () => {},
     onExport: () => {},
     onClose: () => {},
@@ -66,6 +72,9 @@ describe('source-specific directory disclaimer', () => {
     assert.match(mount.textContent ?? '', /tags are keyword-matched by this app/);
     assert.match(mount.textContent ?? '', /Event times are normalized/);
     assert.match(mount.textContent ?? '', /no commercial purpose/);
+    assert.match(mount.textContent ?? '', /camp locations starting August 23 at 12:00 AM PDT/);
+    assert.match(mount.textContent ?? '', /art locations starting August 30 at 12:00 AM PDT/);
+    assert.match(mount.textContent ?? '', /Events do not carry a separate location coordinate/);
   });
 
   test('Clear all local data removes persisted map-layer preferences', () => {

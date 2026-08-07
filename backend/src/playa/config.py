@@ -32,10 +32,10 @@ class Config:
     pages: int = 30
     parallel: int = 5
 
-    # Burn week window (ISO YYYY-MM-DD).
+    # Burn week / spirit-access window (ISO YYYY-MM-DD).
     #
-    # `burn_start` = gate-open day, also the location-embargo cutoff
-    # (D8) and the spirit-mode auto-unlock window's open edge (D13).
+    # `burn_start` = the spirit-mode auto-unlock window's open edge
+    # (D13) and the schedule's configured fallback start.
     # `burn_end` = end of the public-access window (D13) and the
     # calendar's last column.
     #
@@ -52,6 +52,16 @@ class Config:
     # not a code change.
     burn_start: str = ""
     burn_end:   str = ""
+
+    # Current-year API location-release policy (ADR D8). These are
+    # deliberately separate because Burning Man publishes camp
+    # locations to users one week before art locations. Values must
+    # be timezone-aware ISO-8601 timestamps so the client observes
+    # Pacific midnight exactly rather than UTC midnight. Required
+    # when `api-<directory_map_year>` is embedded; past-year API and
+    # directory-only builds do not need them.
+    camp_location_release_at: str = ""
+    art_location_release_at: str = ""
 
     # HTTP client settings (directory + API share these).
     base_url: str = "https://directory.burningman.org"
@@ -197,11 +207,17 @@ class Config:
             # repo variables in CI (or `export BURN_WINDOW_OPEN_FROM=…
             # BURN_WINDOW_OPEN_TO=…` locally). Empty values surface as
             # a build-time error in SiteBuilder.__init__ rather than
-            # silently producing a broken site. One date semantically
-            # serves multiple roles (calendar window edges + access
-            # window + embargo cutoff) — see Config docstring above.
+            # silently producing a broken site. Location disclosure
+            # has its own timestamp settings below; do not reuse this
+            # schedule/access date for the D8 embargo.
             burn_start=os.environ.get("BURN_WINDOW_OPEN_FROM", "").strip(),
             burn_end=os.environ.get("BURN_WINDOW_OPEN_TO", "").strip(),
+            camp_location_release_at=os.environ.get(
+                "CAMP_LOCATION_RELEASE_AT", "",
+            ).strip(),
+            art_location_release_at=os.environ.get(
+                "ART_LOCATION_RELEASE_AT", "",
+            ).strip(),
             bm_api_key=os.environ.get("BM_API_KEY", "").strip(),
             bm_api_base_url=os.environ.get(
                 "BM_API_BASE_URL", "https://api.burningman.org",

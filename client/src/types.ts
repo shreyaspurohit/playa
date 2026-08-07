@@ -130,10 +130,9 @@ export const LS = {
   // multi-source landed. On first load, we copy each into its
   // `/directory` slot. This flag tells us not to repeat that copy.
   legacyKeysMigrated: 'bm-legacy-migrated',
-  // Per-burn-year flag: '1' once the user has seen (and refreshed or
-  // dismissed) the EmbargoLiftedBanner for that year. Suffixed with
-  // the burn year so it auto-resets next year. Compose at use site
-  // via `${LS.embargoLiftAcked}/${year}`.
+  // Per-burn-year + kind flag: '1' once the user has seen (and refreshed
+  // or dismissed) the EmbargoLiftedBanner. Camp and art have different
+  // release dates, so compose `${base}/${year}/${kind}`.
   embargoLiftAcked: 'bm-embargo-lift-acked',
 } as const;
 

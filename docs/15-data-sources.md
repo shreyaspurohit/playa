@@ -209,19 +209,40 @@ Why GitHub Releases over alternatives:
 
 ### D8 — Current-year API and the §6.2 location embargo
 
-The Burning Man API ToS §6.2 enforces:
+The Burning Man API ToS §6.2 and the
+[official annual API schedule](https://innovate.burningman.org/apis-page/)
+enforce:
 
-- **Camp locations**: hidden from app users until **12:01 am, first
-  Sunday of build week** (e.g., 2026-08-23). Developers receive the data
-  three weeks before gates (2026-08-09).
+- **Camp locations**: the generic ToS says **12:01 am, first Sunday of
+  build week**; the official 2026 schedule gives **August 23 at 12:00 am
+  PDT**. The annual schedule is the exact operational value. Developers
+  receive the data three weeks before gates (2026-08-09).
 - **Art locations**: hidden until gate-open (Day 1 of the burn).
 
-The implemented embargo is client-side. When the selected source matches the
-configured burn year and the date is before `BURN_WINDOW_OPEN_FROM`,
-`applyLocationEmbargo()` and `applyArtLocationEmbargo()` clear locations from
-the normalized in-memory records before downstream views receive them. The
-encrypted payload intentionally retains raw locations; this is a UX boundary,
-not hard confidentiality. Directory and past-year API sources are unaffected.
+The implemented embargo is client-side and intentionally uses two independent,
+annual, timezone-aware timestamps:
+
+- `CAMP_LOCATION_RELEASE_AT` (2026: `2026-08-23T00:00:00-07:00`)
+- `ART_LOCATION_RELEASE_AT` (2026: `2026-08-30T00:00:00-07:00`)
+
+The builder embeds those values with `BRC_MAP_YEAR` as
+`bm-camp-location-release-at`, `bm-art-location-release-at`, and
+`bm-location-release-year`. They are not aliases for `BURN_WINDOW_OPEN_FROM`:
+that variable controls the schedule fallback and spirit auto-unlock window,
+while fetched volunteer events may move the effective schedule start earlier.
+The explicit `-07:00` offset makes the releases occur at Pacific midnight,
+not seven hours early at UTC midnight.
+
+For untrusted sessions, `applyLocationEmbargo()` clears `Camp.location` until
+the camp timestamp and `applyArtLocationEmbargo()` independently clears
+`Art.location` until the art timestamp. Events have no separate location field;
+their displayed/map location follows the host camp. Names, descriptions,
+events, favorites, and public GIS overlays are not embargoed. The encrypted
+payload intentionally retains raw locations; this is a UX boundary, not hard
+confidentiality. Directory and past-year API sources are unaffected. A future
+`api-YYYY` fails closed (locations stay masked) until `BRC_MAP_YEAR` and both
+annual timestamps are advanced. A current-year API build with either timestamp
+missing, timezone-naive, reversed, or from the wrong year fails before deploy.
 
 **Per-tier bypass for `god-mode`** (added 2026-04-28). The embargo is
 a UX gate, not a security boundary — full location data is in the
@@ -235,8 +256,13 @@ the wrapper indices that belong to `god-mode` (alongside the existing
 `bm-tier-wrappers`). When the user's password unwraps a trusted
 wrapper, `App.tsx` flips `unlockedTrusted=true` and
 `isLocationEmbargoed`/`applyLocationEmbargo` short-circuit. Burn-key
-auto-unlock (D13, spirit-mode only) leaves trust at false — embargo
-still applies. Only the literal tier name `god-mode` is privileged;
+auto-unlock (D13, spirit-mode only) leaves trust at false — both embargoes
+still apply. The 2026 API publishes developer fields on August 9; god-mode can
+use fields present in that payload immediately, while spirit-mode waits for the
+August 23 / August 30 public dates. Because the encrypted API Release cache is
+not re-fetched nightly, the operator must run the workflow with
+`refresh_api_years=2026` on/after August 9 (and for later upstream corrections).
+Only the literal tier name `god-mode` is privileged;
 operator-defined synonyms aren't recognized (rename or add another
 trusted-flag layer if that ever becomes desired).
 
@@ -569,8 +595,10 @@ No human in the loop at burn-start or burn-end.
 |----------------------------|----------------------|---------------------------------------------------------------------------------------|
 | `BURN_WINDOW_OPEN_FROM`    | repo *variable*      | ISO date (e.g., `2026-08-30`). Workflow auto-includes `burn-key.json` from this day.  |
 | `BURN_WINDOW_OPEN_TO`      | repo *variable*      | ISO date (e.g., `2026-09-07`). Workflow auto-removes after this day (UTC end-of-day). |
+| `CAMP_LOCATION_RELEASE_AT` | repo *variable*      | Timezone-aware current-year camp public-release timestamp (2026: `2026-08-23T00:00:00-07:00`). |
+| `ART_LOCATION_RELEASE_AT`  | repo *variable*      | Timezone-aware current-year art public-release timestamp (2026: `2026-08-30T00:00:00-07:00`). |
 | `BURN_OPEN=0\|1`           | `workflow_dispatch` input | Manual override for "open it now" / "close it now". Wins over the date check.    |
-| `PLAYA_GO_LIVE`            | repo *variable*      | Truthy value opens spirit before `OPEN_FROM`, but never after `OPEN_TO`; location masking still follows `OPEN_FROM`. |
+| `PLAYA_GO_LIVE`            | repo *variable*      | Truthy value opens spirit before `OPEN_FROM`, but never after `OPEN_TO`; it does not bypass either location timestamp. |
 
 **Window evaluation** (inside `refresh.yml`):
 
@@ -629,11 +657,14 @@ post-burn the slop is harmless.
 1. Settings → Secrets and variables → Actions → Variables tab.
 2. New repository variable: `BURN_WINDOW_OPEN_FROM` = `2026-08-30`.
 3. New repository variable: `BURN_WINDOW_OPEN_TO`   = `2026-09-07`.
-4. Done. Next nightly cron after Aug 30 deploys with `burn-key.json`;
+4. Set `CAMP_LOCATION_RELEASE_AT` = `2026-08-23T00:00:00-07:00` and
+   `ART_LOCATION_RELEASE_AT` = `2026-08-30T00:00:00-07:00` from the
+   official annual API schedule. These do not control `burn-key.json`.
+5. Done. Next nightly cron after Aug 30 deploys with `burn-key.json`;
    first cron after Sep 7 removes it.
 
-For the next year (2027): bump both vars to the new burn dates. No
-code, no rebuild beyond the next scheduled cron.
+For the next year (2027): bump all four annual date variables. No code change;
+the current-year API build rejects stale-year location timestamps.
 
 **Build flow change** (delta on D10):
 
@@ -774,12 +805,10 @@ tags (interactive, fire, sound, sculpture, …) apply equally well
 to either entity type. The `category="Mutant Vehicles"` field
 specifically surfaces the existing `mutant_vehicle` tag.
 
-**Embargo:** art uses the SAME burn_start cutoff as camps
-(`isLocationEmbargoed` is type-agnostic — checks source + date
-only). Per ToS §6.2 art locations release at gate-open, camps at
-build-week-Sunday; we use gate-open for both (conservative for
-camps, exact for art). `god-mode` trusted bypass applies
-identically.
+**Embargo:** art has its own `ART_LOCATION_RELEASE_AT` cutoff. Per ToS §6.2,
+art locations release at gate-open while camps release on build-week Sunday;
+the client therefore evaluates the same source/year/trust policy against two
+different timestamps. The `god-mode` trusted bypass applies identically.
 
 **Operational note:** the `directory` scrape's `/artwork/` page set
 is much smaller than `/camps/` (~10 pages vs 30). The shared
@@ -882,9 +911,11 @@ playa all --sources directory   # nightly default — no API hits unless asked
   inventing a per-occurrence star UI.
 
 - **Embargo staleness**: masking is applied when payloads enter client memory.
-  A tab kept open across `BURN_WINDOW_OPEN_FROM` needs a refresh to reveal the
-  locations; the app shows an embargo-lift refresh notice. Raw encrypted data
-  and the trusted internal bypass make this a UX boundary, not confidentiality.
+  A tab kept open across either camp or art release timestamp needs a refresh
+  to reveal that field. The app tracks and acknowledges the two notices
+  independently, so dismissing the August 23 camp notice cannot suppress the
+  August 30 art notice. Raw encrypted data and the trusted internal bypass make
+  this a UX boundary, not confidentiality.
 
 - **ToS §4 disclaimer**: the API ToS requires a verbatim
   *"This app is not affiliated, endorsed, or verified by Burning Man

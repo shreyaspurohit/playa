@@ -264,8 +264,9 @@ jobs:
       #      BURN_OPEN=1.
       #   4. Before BURN_WINDOW_OPEN_FROM but `vars.PLAYA_GO_LIVE`
       #      is truthy: BURN_OPEN=1 (early go-live for spirit-mode).
-      #      Note: locations stay hidden until `BURN_WINDOW_OPEN_FROM`
-      #      regardless — only the password gate is bypassed early.
+      #      Note: spirit locations remain governed independently by
+      #      CAMP_LOCATION_RELEASE_AT / ART_LOCATION_RELEASE_AT — only
+      #      the password gate is bypassed early.
       #   5. Default: BURN_OPEN=0 (closed). Site builds normally.
       #
       # Comparison is done in UTC at day granularity. Worst-case
@@ -304,7 +305,7 @@ jobs:
                     && "${PLAYA_GO_LIVE,,}" != "false" \
                     && "${PLAYA_GO_LIVE,,}" != "no" ]]; then
               effective=1
-              echo "burn-window: today=${today_utc} pre-FROM but PLAYA_GO_LIVE=${PLAYA_GO_LIVE} → BURN_OPEN=1 (early go-live; locations still embargoed until ${BURN_WINDOW_OPEN_FROM})"
+              echo "burn-window: today=${today_utc} pre-FROM but PLAYA_GO_LIVE=${PLAYA_GO_LIVE} → BURN_OPEN=1 (early go-live; location fields follow their independent release timestamps)"
             else
               effective=0
               echo "burn-window: today=${today_utc} before FROM=${BURN_WINDOW_OPEN_FROM}, no PLAYA_GO_LIVE → BURN_OPEN=0"
@@ -326,13 +327,18 @@ jobs:
           # placeholder email. Set both before the first real deploy.
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
-          # Burn-week dates — REQUIRED. One pair drives all calendar
-          # edges + public-access window + location-embargo cutoff
-          # (see Config.burn_start / burn_end). No code-side default;
+          # Burn-week dates — REQUIRED. This pair drives the calendar
+          # fallback + public-access window (see Config.burn_start /
+          # burn_end). No code-side default;
           # if the operator hasn't set these repo vars, the build
           # fails loud rather than producing a site with stale dates.
           BURN_WINDOW_OPEN_FROM: ${{ vars.BURN_WINDOW_OPEN_FROM }}
           BURN_WINDOW_OPEN_TO: ${{ vars.BURN_WINDOW_OPEN_TO }}
+          # D8: independent public disclosure timestamps for the
+          # current API year's location fields. Keep the explicit
+          # Pacific offset; the build rejects missing/naive values.
+          CAMP_LOCATION_RELEASE_AT: ${{ vars.CAMP_LOCATION_RELEASE_AT }}
+          ART_LOCATION_RELEASE_AT: ${{ vars.ART_LOCATION_RELEASE_AT }}
           # API source plumbing. BM_API_YEARS drives both the cache
           # step above AND `_resolve_sources()` in playa.cli — the
           # same value picks the years to fetch and the years to

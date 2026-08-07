@@ -133,9 +133,10 @@ Two operator decisions are intentional and carry accepted ToS risk:
   normalized for display. Source descriptions and event text are not rewritten,
   and the About modal labels these transformations.
 - Current-year API locations remain in encrypted payloads for later reveal.
-  Normal users are masked until `BURN_WINDOW_OPEN_FROM`; trusted `god-mode`
-  wrappers may bypass the client mask for internal testing. Spirit-mode remains
-  masked. Do not broaden this exception.
+  Normal users follow separate `CAMP_LOCATION_RELEASE_AT` and
+  `ART_LOCATION_RELEASE_AT` timestamps; trusted `god-mode` wrappers may bypass
+  the client mask for internal testing. Spirit-mode remains masked. Do not
+  broaden this exception.
 
 ## Pipeline
 
@@ -247,6 +248,7 @@ wrapping them in classes would have been pure ceremony.
 | `SITE_TIERS`         | *(unset)*                     | Multi-tier access. Format: `name1:pw1=src1+src2,name2:pw2=src3,…`. Each tier (name + password) unlocks its source list via per-source envelope encryption. Tier names required — `spirit-mode` is the reserved name D13 looks up for burn-key.json; `god-mode` is the reserved name D8 looks up to flag wrappers as trusted (location-embargo bypass). Conventional shape: `god-mode:$GOD_PW=directory+api-2025+api-2026,demigod-mode:$DEMIGOD_PW=api-2025+api-2026,spirit-mode:$SPIRIT_PW=api-2026`. Unset → falls through to single-tier `SITE_PASSWORD`. See ADR D10. |
 | `BURN_OPEN`          | `0` / unset                   | `workflow_dispatch` override for D13 burn-window auto-unlock. When `1`, deploys `site/burn-key.json` alongside `index.html` so the client auto-unlocks `spirit-mode` without a password. `god-mode` / `demigod-mode` stay password-gated. |
 | `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` | unset | Repo *variables* (Settings → Secrets and variables → Actions → Variables). ISO dates. When both set, the nightly cron evaluates today-in-window and auto-includes / auto-removes `burn-key.json` — set-once-forget, no manual flip per burn. Manual `BURN_OPEN` input always wins. See ADR D13. |
+| `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT` | unset | Repo *variables*. Timezone-aware ISO-8601 public release timestamps for the current API year's camp and art location fields (2026: `2026-08-23T00:00:00-07:00` / `2026-08-30T00:00:00-07:00`). Required when `api-<BRC_MAP_YEAR>` is embedded; independent of the burn/spirit-access window. See ADR D8. |
 | `PLAYA_GO_LIVE`      | unset / `false`               | Repo *variable* (truthy/falsy). Forces `BURN_OPEN=1` on builds whose date is BEFORE `BURN_WINDOW_OPEN_FROM` so spirit-mode auto-unlocks ahead of the burn week (e.g., for early stress-testing or operator preview). Past `BURN_WINDOW_OPEN_TO` the flag is ignored — the deploy closes regardless. Manual `workflow_dispatch` `burn_open` input still wins over this. |
 | `MIN_CAMPS`          | `500`                         | Primary-source build safety rail. `0` is for intentionally small local fixtures only; never set it in CI. |
 
@@ -879,7 +881,8 @@ One-time setup in the repo:
    - `BM_API_KEY` and `BM_CACHE_PASSWORD` — API refresh + encrypted cache.
    - `CONTACT_EMAIL` — where takedown mail should go.
    Add repository variables `BM_API_YEARS`, `BRC_MAP_YEAR`, `BURN_WINDOW_OPEN_FROM`,
-   `BURN_WINDOW_OPEN_TO`, and optionally `PLAYA_GO_LIVE`.
+   `BURN_WINDOW_OPEN_TO`, `CAMP_LOCATION_RELEASE_AT`,
+   `ART_LOCATION_RELEASE_AT`, and optionally `PLAYA_GO_LIVE`.
 4. Custom domain: `site/CNAME` is already committed with
    `playa.purohit.dev`. Add a `CNAME` DNS record for `playa` at
    `purohit.dev` pointing to `<github-user>.github.io`. **Settings →
@@ -1112,9 +1115,10 @@ the 2025 schedule on `innovate.burningman.org/apis-page/`:
 | Camp locs     | Aug 4, 12am PDT   | Aug 17, 12am PDT |
 | Art locs      | Aug 4, 12am PDT   | Aug 24, 12am PDT |
 
-Release-timing restriction: *developers must not release art locations
-to users until gates open.* We'd need to respect that if we auto-build
-nightly during burn week.
+Release-timing restriction: camps and art have different public dates each
+year (camps on build-week Sunday, art at gate-open). This is implemented via
+the independent `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT` policy
+in ADR D8; do not collapse either value into the burn/calendar window.
 
 Do not infer new endpoints, fields, or rate limits from memory. Verify them
 against the current API and update the adapter fixtures before relying on them.
@@ -1174,20 +1178,22 @@ documented operator decisions are active requirements; none are optional.
       may be downloaded."
 - [x] **§6.2 location embargo (camps)**: enforced **client-side**
       in `client/src/utils/embargo.ts` (`isLocationEmbargoed` +
-      `applyLocationEmbargo`). When the source is `api-<burn_year>`
-      AND today (UTC, day-granularity) is strictly before
-      `<meta name="bm-burn-start">`, `App.tsx` masks
+      `applyLocationEmbargo`). When the source is `api-<BRC_MAP_YEAR>`
+      and the exact time is before the timezone-aware
+      `<meta name="bm-camp-location-release-at">`, `App.tsx` masks
       `camp.location = ''` on every camp at decrypt-time. Downstream
       consumers (CampCard, ScheduleView, MapView) see empty strings
       and naturally hide the data. Build artifacts (`index.html`,
       cache JSONs) keep full location data; the embargo is a UX
       gate, not a security boundary — relies on ToS §6.2's "shown
       to your users" wording rather than "stored anywhere". A user
-      keeping the page open across burn-start needs to refresh to
+      keeping the page open across the camp release needs to refresh to
       see locations appear (acceptable trade-off vs. ticking-clock
       state). Directory and past-year API sources are untouched.
-      Conservative cutoff — uses gate-open rather than the ToS-
-      allowed first Sunday of build week (~7 days earlier).
+      Future API years fail closed until the annual config advances.
+      The build rejects a missing, timezone-naive, reversed, or wrong-year
+      camp/art timestamp. `BURN_WINDOW_OPEN_FROM` is only a schedule/access
+      setting and MUST NOT be reused for location disclosure.
       **Per-tier bypass**: god-mode (inner circle) sees locations
       pre-burn — see ADR D8 in `docs/15-data-sources.md`. The build
       emits a parallel `<meta name="bm-trusted-wrappers">` so the
@@ -1195,10 +1201,11 @@ documented operator decisions are active requirements; none are optional.
       tier names in the DOM. demigod / spirit / single-tier
       `SITE_PASSWORD` builds keep the embargo on.
 - [x] **§6.2 location embargo (art)**: `applyArtLocationEmbargo()` uses
-      the same source/date/trusted decision as camps. The configured
-      `BURN_WINDOW_OPEN_FROM` gate-open cutoff is exact for art and
-      conservative for camps. The intentional god-mode internal bypass
-      applies to both; spirit-mode stays masked.
+      the same source/year/trusted policy as camps but compares against the
+      independent `<meta name="bm-art-location-release-at">` gate-open
+      timestamp. The intentional god-mode internal bypass applies to both;
+      spirit-mode stays masked. For 2026 the configured public dates are
+      August 23 for camps and August 30 for art, both midnight PDT.
 - [x] **§7.2 trademark**: app name must not contain "Burning Man",
       "Black Rock City", "Decompression", or "Playa Events". Current
       name is "Playa Camps" — OK. If renaming again, check this rule.

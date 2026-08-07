@@ -84,21 +84,25 @@ describe('indexArtHaystacks', () => {
 });
 
 describe('applyArtLocationEmbargo', () => {
-  const BURN = '2026-08-30';
+  const POLICY = {
+    year: 2026,
+    campReleaseAt: '2026-08-23T00:00:00-07:00',
+    artReleaseAt: '2026-08-30T00:00:00-07:00',
+  };
   test('clears location pre-burn for current-year API source', () => {
     const art = [mkArt({ id: '1', location: '6:00 & A' })];
     const out = applyArtLocationEmbargo(
-      art, 'api-2026', BURN, new Date('2026-04-30T00:00:00Z'),
+      art, 'api-2026', POLICY, new Date('2026-04-30T00:00:00Z'),
     );
     assert.equal(out[0].location, '');
     // Other fields preserved.
     assert.equal(out[0].name, 'Sky Portal');
   });
 
-  test('passes through after burn-start', () => {
+  test('passes through after the art release timestamp', () => {
     const art = [mkArt({ location: '6:00 & A' })];
     const out = applyArtLocationEmbargo(
-      art, 'api-2026', BURN, new Date('2026-09-01T00:00:00Z'),
+      art, 'api-2026', POLICY, new Date('2026-09-01T00:00:00Z'),
     );
     assert.equal(out[0].location, '6:00 & A');
     // Same array reference returned (no clone) when embargo inactive.
@@ -108,7 +112,7 @@ describe('applyArtLocationEmbargo', () => {
   test('trusted=true bypasses even pre-burn for current year', () => {
     const art = [mkArt({ location: '6:00 & A' })];
     const out = applyArtLocationEmbargo(
-      art, 'api-2026', BURN, new Date('2026-04-30T00:00:00Z'), true,
+      art, 'api-2026', POLICY, new Date('2026-04-30T00:00:00Z'), true,
     );
     assert.equal(out[0].location, '6:00 & A');
     assert.equal(out, art);
@@ -117,7 +121,7 @@ describe('applyArtLocationEmbargo', () => {
   test('directory source: never embargoed', () => {
     const art = [mkArt({ location: '6:00 & A' })];
     const out = applyArtLocationEmbargo(
-      art, 'directory', BURN, new Date('2026-04-30T00:00:00Z'),
+      art, 'directory', POLICY, new Date('2026-04-30T00:00:00Z'),
     );
     assert.equal(out[0].location, '6:00 & A');
   });

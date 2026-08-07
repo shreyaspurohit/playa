@@ -8,12 +8,15 @@ import { LS, SS, type Source } from '../types';
 import { removeKey } from '../utils/storage';
 import { clearCachedPassword } from '../utils/secureStore';
 import { forceRefresh } from '../utils/refresh';
+import type { LocationReleasePolicy } from '../utils/embargo';
 
 interface Props {
   open: boolean;
   fetchedDate: string;
   contactEmail: string;
   source: Source;
+  locationPolicy: LocationReleasePolicy;
+  trusted: boolean;
   /** File-import handler. Lives in App.tsx because picking, parsing,
    *  and dispatching needs access to the friends API + own nickname.
    *  This component just renders the button and calls the prop. */
@@ -28,7 +31,8 @@ interface Props {
 type Tab = 'guide' | 'about';
 
 export function InfoModal({
-  open, fetchedDate, contactEmail, source, onImport, onExport, onClose,
+  open, fetchedDate, contactEmail, source, locationPolicy, trusted,
+  onImport, onExport, onClose,
 }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>('about');
@@ -189,6 +193,9 @@ export function InfoModal({
               fetchedDate={fetchedDate}
               takedownHref={takedownHref}
               showDirectoryDisclaimer={source === 'directory'}
+              showCurrentApiSchedule={source === `api-${locationPolicy.year}`}
+              locationPolicy={locationPolicy}
+              trusted={trusted}
               onForceRefresh={handleForceRefresh}
               onExport={handleExport}
               onImport={onImport}
@@ -348,14 +355,31 @@ function GuideTab() {
 
 // === About tab =====================================================
 
+function formatReleaseTime(value: string): string {
+  const stamp = new Date(value);
+  if (Number.isNaN(stamp.getTime())) return 'the configured release time';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Los_Angeles',
+    timeZoneName: 'short',
+  }).format(stamp);
+}
+
 function AboutTab({
   fetchedDate, takedownHref, showDirectoryDisclaimer,
+  showCurrentApiSchedule, locationPolicy, trusted,
   onForceRefresh, onExport, onImport, onClearAll,
   refreshState, refreshLabel,
 }: {
   fetchedDate: string;
   takedownHref: string;
   showDirectoryDisclaimer: boolean;
+  showCurrentApiSchedule: boolean;
+  locationPolicy: LocationReleasePolicy;
+  trusted: boolean;
   onForceRefresh: () => void;
   onExport: () => void;
   onImport: () => void;
@@ -428,6 +452,29 @@ function AboutTab({
         <p>
           This is a personal, non-commercial tool with no ads, analytics,
           tracking, or accounts, and no commercial purpose.
+        </p>
+      )}
+      {showCurrentApiSchedule && (
+        <p>
+          <strong>{locationPolicy.year} API location timing:</strong>{' '}
+          normal/spirit access shows camp locations starting{' '}
+          {formatReleaseTime(locationPolicy.campReleaseAt)}, and art locations
+          starting {formatReleaseTime(locationPolicy.artReleaseAt)}. Before
+          each cutoff, only that location field is hidden; names,
+          descriptions, schedules, favorites, and public GIS map layers remain
+          available. Events do not carry a separate location coordinate.
+          {' '}<a
+            href="https://innovate.burningman.org/apis-page/"
+            target="_blank"
+            rel="noopener"
+          >Official annual API schedule</a>.
+          {trusted && (
+            <>
+              {' '}This trusted internal session bypasses the public cutoffs,
+              so developer-released location fields are visible as soon as
+              they are present in the API payload.
+            </>
+          )}
         </p>
       )}
       <p>

@@ -1,6 +1,4 @@
-// Pre-burn location embargo (ADR D8 / BM API ToS §6.2).
-// Verifies the source × date matrix that decides whether
-// `camp.location` should be hidden from the UI.
+// Distinct current-year camp/art location release gates (ADR D8).
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -8,171 +6,140 @@ import {
 } from '../src/utils/embargo';
 import type { Camp } from '../src/types';
 
-const BURN = '2026-08-30';   // gate-open day used in tests below
-
-function fixedDate(iso: string): Date {
-  return new Date(iso);
-}
+const POLICY = {
+  year: 2026,
+  campReleaseAt: '2026-08-23T00:00:00-07:00',
+  artReleaseAt: '2026-08-30T00:00:00-07:00',
+};
 
 function mkCamp(over: Partial<Camp> = {}): Camp {
   return {
     id: '1', name: 'X', location: '6:00 & A',
-    description: '', website: '', url: '',
-    tags: [], events: [],
+    description: '', website: '', url: '', tags: [], events: [],
     ...over,
   };
 }
 
 describe('isLocationEmbargoed', () => {
-  test('directory: never embargoed', () => {
+  test('directory is never embargoed', () => {
     assert.equal(
-      isLocationEmbargoed('directory', BURN, fixedDate('2026-04-30T00:00:00Z')),
-      false,
-    );
-    assert.equal(
-      isLocationEmbargoed('directory', BURN, fixedDate('2026-09-01T00:00:00Z')),
+      isLocationEmbargoed('directory', POLICY, 'camp', new Date('2026-08-01T00:00:00Z')),
       false,
     );
   });
 
-  test('api-current-year + before burn-start → embargoed', () => {
+  test('camp locations lift at Pacific midnight on August 23', () => {
     assert.equal(
-      isLocationEmbargoed('api-2026', BURN, fixedDate('2026-04-30T00:00:00Z')),
+      isLocationEmbargoed('api-2026', POLICY, 'camp', new Date('2026-08-23T06:59:59Z')),
       true,
     );
-    // Even just before the cutoff (Aug 29 23:59 UTC).
     assert.equal(
-      isLocationEmbargoed('api-2026', BURN, fixedDate('2026-08-29T23:59:00Z')),
+      isLocationEmbargoed('api-2026', POLICY, 'camp', new Date('2026-08-23T07:00:00Z')),
+      false,
+    );
+  });
+
+  test('art remains hidden for the extra week until gate-open', () => {
+    assert.equal(
+      isLocationEmbargoed('api-2026', POLICY, 'art', new Date('2026-08-23T07:00:00Z')),
+      true,
+    );
+    assert.equal(
+      isLocationEmbargoed('api-2026', POLICY, 'art', new Date('2026-08-30T06:59:59Z')),
+      true,
+    );
+    assert.equal(
+      isLocationEmbargoed('api-2026', POLICY, 'art', new Date('2026-08-30T07:00:00Z')),
+      false,
+    );
+  });
+
+  test('past years pass through; future years fail closed', () => {
+    assert.equal(
+      isLocationEmbargoed('api-2025', POLICY, 'camp', new Date('2026-08-01T00:00:00Z')),
+      false,
+    );
+    assert.equal(
+      isLocationEmbargoed('api-2027', POLICY, 'camp', new Date('2026-09-01T00:00:00Z')),
       true,
     );
   });
 
-  test('api-current-year on burn-start day at midnight → not embargoed', () => {
+  test('missing or malformed current-year policy fails closed', () => {
     assert.equal(
-      isLocationEmbargoed('api-2026', BURN, fixedDate('2026-08-30T00:00:00Z')),
-      false,
-    );
-  });
-
-  test('api-current-year after burn-start → not embargoed', () => {
-    assert.equal(
-      isLocationEmbargoed('api-2026', BURN, fixedDate('2026-09-01T12:00:00Z')),
-      false,
-    );
-  });
-
-  test('past-year API: never embargoed (post-burn data)', () => {
-    assert.equal(
-      isLocationEmbargoed('api-2025', BURN, fixedDate('2026-04-30T00:00:00Z')),
-      false,
-    );
-    assert.equal(
-      isLocationEmbargoed('api-2024', BURN, fixedDate('2026-04-30T00:00:00Z')),
-      false,
-    );
-  });
-
-  test('future-year API: not embargoed (only matches configured burn year)', () => {
-    // Operator hasn't bumped burn_start to 2027 yet — api-2027 isn't
-    // the "current burn year" yet.
-    assert.equal(
-      isLocationEmbargoed('api-2027', BURN, fixedDate('2026-04-30T00:00:00Z')),
-      false,
-    );
-  });
-
-  test('empty / missing burnStart → not embargoed (defensive)', () => {
-    assert.equal(
-      isLocationEmbargoed('api-2026', '', fixedDate('2026-04-30T00:00:00Z')),
-      false,
-    );
-  });
-
-  test('malformed burnStart → not embargoed (no crash)', () => {
-    assert.equal(
-      isLocationEmbargoed('api-2026', 'not-a-date', fixedDate('2026-04-30T00:00:00Z')),
-      false,
-    );
-  });
-
-  test('trusted (god-mode) bypasses the embargo even when otherwise active', () => {
-    // Without trusted: pre-burn api-2026 → embargoed.
-    assert.equal(
-      isLocationEmbargoed('api-2026', BURN, fixedDate('2026-04-30T00:00:00Z'), false),
+      isLocationEmbargoed(
+        'api-2026', { ...POLICY, campReleaseAt: '' }, 'camp',
+        new Date('2026-08-01T00:00:00Z'),
+      ),
       true,
     );
-    // With trusted: same inputs → bypassed.
     assert.equal(
-      isLocationEmbargoed('api-2026', BURN, fixedDate('2026-04-30T00:00:00Z'), true),
-      false,
+      isLocationEmbargoed(
+        'api-2026', { ...POLICY, year: Number.NaN }, 'camp',
+        new Date('2026-08-01T00:00:00Z'),
+      ),
+      true,
     );
+  });
+
+  test('trusted god-mode bypasses both location cutoffs', () => {
+    for (const kind of ['camp', 'art'] as const) {
+      assert.equal(
+        isLocationEmbargoed(
+          'api-2026', POLICY, kind, new Date('2026-08-09T07:00:00Z'), true,
+        ),
+        false,
+      );
+    }
   });
 });
 
 describe('maskLocation', () => {
-  test('returns empty string when embargo is active', () => {
+  test('masks current-year camp fields before the camp release', () => {
     assert.equal(
-      maskLocation('6:00 & A', 'api-2026', BURN, fixedDate('2026-04-30T00:00:00Z')),
+      maskLocation(
+        '6:00 & A', 'api-2026', POLICY, new Date('2026-08-22T12:00:00Z'),
+      ),
       '',
     );
   });
 
-  test('passes through when embargo is inactive', () => {
+  test('passes through after the camp release', () => {
     assert.equal(
-      maskLocation('6:00 & A', 'directory', BURN, fixedDate('2026-04-30T00:00:00Z')),
-      '6:00 & A',
-    );
-    assert.equal(
-      maskLocation('6:00 & A', 'api-2026', BURN, fixedDate('2026-09-01T00:00:00Z')),
+      maskLocation(
+        '6:00 & A', 'api-2026', POLICY, new Date('2026-08-23T07:00:00Z'),
+      ),
       '6:00 & A',
     );
   });
 });
 
 describe('applyLocationEmbargo', () => {
-  test('clears location on every camp when embargo active', () => {
+  test('clears every camp location without mutating the input', () => {
     const camps = [
       mkCamp({ id: '1', location: '6:00 & A' }),
       mkCamp({ id: '2', location: '7:30 & E' }),
     ];
     const out = applyLocationEmbargo(
-      camps, 'api-2026', BURN, fixedDate('2026-04-30T00:00:00Z'),
+      camps, 'api-2026', POLICY, new Date('2026-08-22T12:00:00Z'),
     );
-    assert.equal(out[0].location, '');
-    assert.equal(out[1].location, '');
-    // Other fields preserved.
-    assert.equal(out[0].id, '1');
-    assert.equal(out[1].name, 'X');
+    assert.deepEqual(out.map((camp) => camp.location), ['', '']);
+    assert.equal(camps[0].location, '6:00 & A');
   });
 
-  test('returns identical reference (no clone) when embargo inactive', () => {
+  test('returns the identical array when inactive or trusted', () => {
     const camps = [mkCamp()];
-    const out = applyLocationEmbargo(
-      camps, 'directory', BURN, fixedDate('2026-04-30T00:00:00Z'),
+    assert.equal(
+      applyLocationEmbargo(
+        camps, 'directory', POLICY, new Date('2026-08-01T00:00:00Z'),
+      ),
+      camps,
     );
-    assert.equal(out, camps);    // same array, no copy
-  });
-
-  test('does not mutate the input array', () => {
-    const camps = [mkCamp({ location: 'original' })];
-    applyLocationEmbargo(
-      camps, 'api-2026', BURN, fixedDate('2026-04-30T00:00:00Z'),
+    assert.equal(
+      applyLocationEmbargo(
+        camps, 'api-2026', POLICY, new Date('2026-08-01T00:00:00Z'), true,
+      ),
+      camps,
     );
-    // Source array preserved — mask returns a clone.
-    assert.equal(camps[0].location, 'original');
-  });
-
-  test('trusted=true bypasses masking, returns identical reference', () => {
-    const camps = [
-      mkCamp({ id: '1', location: '6:00 & A' }),
-      mkCamp({ id: '2', location: '7:30 & E' }),
-    ];
-    const out = applyLocationEmbargo(
-      camps, 'api-2026', BURN, fixedDate('2026-04-30T00:00:00Z'), true,
-    );
-    // No clone, no masking — god-mode users see real locations.
-    assert.equal(out, camps);
-    assert.equal(out[0].location, '6:00 & A');
-    assert.equal(out[1].location, '7:30 & E');
   });
 });

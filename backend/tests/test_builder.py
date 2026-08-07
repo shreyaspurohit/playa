@@ -21,7 +21,7 @@ from unittest import mock
 
 from playa.builder import SiteBuilder
 from playa.config import Config
-from playa.models import Camp
+from playa.models import Camp, Event
 
 
 HAS_OPENSSL = shutil.which("openssl") is not None
@@ -42,6 +42,8 @@ class _TmpConfigMixin:
         defaults = {
             "burn_start": "2026-08-30",
             "burn_end":   "2026-09-07",
+            "camp_location_release_at": "2026-08-23T00:00:00-07:00",
+            "art_location_release_at": "2026-08-30T00:00:00-07:00",
         }
         defaults.update(overrides)
         base = Config(root=root, **defaults)
@@ -686,6 +688,72 @@ class LoadCampsTests(unittest.TestCase, _TmpConfigMixin):
                          ["APPLE", "banana", "zebra"])
 
 
+class LocationReleasePolicyTests(unittest.TestCase, _TmpConfigMixin):
+    """Current API builds fail closed on missing/ambiguous D8 cutoffs."""
+
+    def test_directory_only_does_not_require_location_dates(self):
+        config = self._make_config(
+            camp_location_release_at="", art_location_release_at="",
+        )
+        SiteBuilder(config, sources=["directory"])._validate_location_release_policy()
+
+    def test_past_api_year_does_not_require_current_policy(self):
+        config = self._make_config(
+            camp_location_release_at="", art_location_release_at="",
+        )
+        SiteBuilder(config, sources=["api-2025"])._validate_location_release_policy()
+
+    def test_current_api_requires_both_timestamps(self):
+        config = self._make_config(camp_location_release_at="")
+        with self.assertRaisesRegex(RuntimeError, "CAMP_LOCATION_RELEASE_AT"):
+            SiteBuilder(config, sources=["api-2026"])._validate_location_release_policy()
+
+    def test_current_api_rejects_timezone_naive_timestamp(self):
+        config = self._make_config(
+            camp_location_release_at="2026-08-23T00:00:00",
+        )
+        with self.assertRaisesRegex(RuntimeError, "explicit timezone"):
+            SiteBuilder(config, sources=["api-2026"])._validate_location_release_policy()
+
+    def test_current_api_rejects_wrong_year_or_reversed_order(self):
+        wrong_year = self._make_config(
+            camp_location_release_at="2027-08-23T00:00:00-07:00",
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not match BRC_MAP_YEAR"):
+            SiteBuilder(wrong_year, sources=["api-2026"])._validate_location_release_policy()
+
+        reversed_dates = self._make_config(
+            camp_location_release_at="2026-08-30T00:00:00-07:00",
+            art_location_release_at="2026-08-23T00:00:00-07:00",
+        )
+        with self.assertRaisesRegex(RuntimeError, "must be earlier"):
+            SiteBuilder(reversed_dates, sources=["api-2026"])._validate_location_release_policy()
+
+
+class MultiSourceCalendarWindowTests(unittest.TestCase, _TmpConfigMixin):
+    def test_later_source_cannot_overwrite_earlier_site_start(self):
+        builder = SiteBuilder(self._make_config())
+        early = Camp(
+            id="1", name="Early", location="", description="", website="",
+            url="", events=[Event(
+                id="e1", name="Setup", description="",
+                time="Begins Tue (8/25) at 6:00 PM, Ends 7:30 PM",
+            )],
+        )
+        burn_week = Camp(
+            id="2", name="Burn", location="", description="", website="",
+            url="", events=[Event(
+                id="e2", name="Recurring", description="",
+                time="From 11:00 AM to 3:00 PM on Mon, Tue",
+            )],
+        )
+
+        builder._enrich_event_times([early])
+        self.assertEqual(builder._effective_start, "2026-08-25")
+        builder._enrich_event_times([burn_week])
+        self.assertEqual(builder._effective_start, "2026-08-25")
+
+
 class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
     """Smoke test: a minimal fetch → site/index.html plaintext build."""
 
@@ -727,6 +795,17 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         self.assertIn('name="bm-version"', html)
         self.assertIn('name="bm-fetched-date"', html)
         self.assertIn('name="bm-contact-email"', html)
+        self.assertIn('name="bm-location-release-year" content="2026"', html)
+        self.assertIn(
+            'name="bm-camp-location-release-at" '
+            'content="2026-08-23T00:00:00-07:00"',
+            html,
+        )
+        self.assertIn(
+            'name="bm-art-location-release-at" '
+            'content="2026-08-30T00:00:00-07:00"',
+            html,
+        )
         # Multi-source meta lists which sources are embedded; `directory`
         # is the only one in this smoke test.
         self.assertIn('name="bm-sources"', html)

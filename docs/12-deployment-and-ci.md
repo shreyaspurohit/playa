@@ -100,7 +100,10 @@ flowchart LR
   takedown mailto.
 
 Repository variables: `BM_API_YEARS`, `BRC_MAP_YEAR`, `BURN_WINDOW_OPEN_FROM`,
-`BURN_WINDOW_OPEN_TO`, and optional `PLAYA_GO_LIVE`. Configure the applicable
+`BURN_WINDOW_OPEN_TO`, `CAMP_LOCATION_RELEASE_AT`,
+`ART_LOCATION_RELEASE_AT`, and optional `PLAYA_GO_LIVE`. The two location
+values are timezone-aware annual API publication cutoffs, not burn-window
+aliases. Configure the applicable
 secrets and variables under **Settings → Secrets and variables → Actions**
 before the first production build.
 

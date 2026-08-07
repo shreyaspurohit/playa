@@ -110,7 +110,7 @@ coordinates or infer a participant-facing purpose from an opaque GIS name.
 | `.github/workflows/refresh.yml` | Bump the fallback map year; normal production configuration should come from repository variables. |
 | `Makefile` | Update year examples/default descriptions if they name the old year. Do not put secrets here. |
 | `.env` (local, ignored) | Set the new map year, burn window, API years, and tier manifest for a production-shaped local build. |
-| GitHub Actions variables | Update `BRC_MAP_YEAR`, `BM_API_YEARS`, `BURN_WINDOW_OPEN_FROM`, and `BURN_WINDOW_OPEN_TO`. |
+| GitHub Actions variables | Update `BRC_MAP_YEAR`, `BM_API_YEARS`, `BURN_WINDOW_OPEN_FROM`, `BURN_WINDOW_OPEN_TO`, `CAMP_LOCATION_RELEASE_AT`, and `ART_LOCATION_RELEASE_AT`. |
 | GitHub Actions secrets | If a new `api-YYYY` source is enabled, update the `SITE_TIERS` source lists and ensure the API/cache credentials are configured. |
 | `backend/tests/test_gis.py` | Add annual aliases/introduction-year cases; keep prior-year drift as regression coverage. |
 | `client/tests/gis.test.ts` and `MapView.test.ts` | Preserve layer defaults, old-cache toilet migration, selection, accessibility, and extent/aspect-ratio coverage. |
@@ -392,19 +392,31 @@ still pending. Map geometry and GIS completion can follow independently:
    `BRC_MAP_YEAR` fallback in `Config.from_env()`.
 3. `.github/workflows/refresh.yml`: fallback `BRC_MAP_YEAR`.
 4. `Makefile` and operational examples that claim a particular default year.
-5. Local `.env`: `BRC_MAP_YEAR`, new burn-window dates, and any new API source.
+5. Local `.env`: `BRC_MAP_YEAR`, new burn-window dates, the official camp/art
+   location release timestamps (with Pacific offset), and any new API source.
 6. GitHub repository variables: `BRC_MAP_YEAR`, `BM_API_YEARS`,
-   `BURN_WINDOW_OPEN_FROM`, and `BURN_WINDOW_OPEN_TO`.
+   `BURN_WINDOW_OPEN_FROM`, `BURN_WINDOW_OPEN_TO`,
+   `CAMP_LOCATION_RELEASE_AT`, and `ART_LOCATION_RELEASE_AT`.
 7. `SITE_TIERS` secret/source lists if `api-YYYY` is introduced. Confirm that
    god/demigod/spirit tiers unlock exactly the intended sources.
 
-The burn window is intentionally configuration, not a Python constant. Get the
-dates from the current official ticketing/event page. A missing date or reversed
-window must remain a build failure rather than falling back to the prior year.
+The burn window and API location schedule are intentionally configuration, not
+Python constants. Get the burn dates from the current ticketing/event page and
+the two public location timestamps from the official Innovate API schedule.
+They serve different purposes. A current-year API build must fail on missing,
+timezone-naive, reversed, or prior-year location timestamps rather than reuse a
+stale cutoff.
 
 Before adding `api-YYYY` to `BM_API_YEARS` or a tier, ensure its encrypted API
 cache exists and can be decrypted with the configured `BM_CACHE_PASSWORD`.
 Map geometry being ready does not imply camp/event/art API data is ready.
+
+On the official **developer** location release (2026: August 9 at midnight
+PDT), manually run **Refresh camps directory** with
+`refresh_api_years=YYYY`. The Release cache is otherwise intentionally reused,
+so a snapshot fetched before that date will not acquire the newly populated
+location fields by itself. Verify god-mode sees those fields after deploy while
+spirit-mode still masks camps/art until their separate public timestamps.
 
 ## Step 7 — automated verification
 

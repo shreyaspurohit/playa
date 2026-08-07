@@ -53,7 +53,7 @@ old artifact is overwritten.
 | §6 camp-copyright on descriptions | Password gate narrows audience to friends; `noindex, nofollow, noarchive` keeps crawlers out; takedown mailto in footer + About modal. |
 | §7(d) prohibited framing/linking | Each card carries a canonical "on directory ↗" link to the official entry, and the About modal reminds users to verify there. |
 | Innovate §4 disclaimer | App carries the verbatim *"This app is not affiliated, endorsed, or verified by Burning Man Project"* in the footer + About modal. |
-| Innovate §6.2 location embargo | Current-year API camp and art locations are client-masked until `BURN_WINDOW_OPEN_FROM`. Directory and past years are unaffected. Spirit-mode remains masked; trusted god-mode may bypass for internal testing by explicit operator decision. |
+| Innovate §6.2 location embargo | Current-year API camp locations are client-masked until `CAMP_LOCATION_RELEASE_AT`; art locations independently remain masked until `ART_LOCATION_RELEASE_AT`. Directory and past years are unaffected. Spirit-mode remains masked; trusted god-mode may bypass for internal testing by explicit operator decision. |
 | Innovate §7.2 trademark | App name "Playa Camps" avoids "Burning Man", "Black Rock City", "Decompression", "Playa Events". |
 | Innovate §5.5 modification | Tags and calendar dates are app-side transformations. About modal labels both: *"tags are keyword-matched by this app — not from Burning Man Project"* + *"calendar dates come from a configured burn-week window."* |
 | Innovate §2.3 permissions | GPS is opt-in and explained in the About modal. No camera, no notifications, no clipboard read. |
@@ -64,8 +64,11 @@ These are gate-items, not nice-to-haves. CLAUDE.md tracks the same
 list near the API migration section.
 
 - [x] §4 disclaimer in footer + About modal for every source.
-- [x] §6.2 camp and art location masking wired to
-      `BURN_WINDOW_OPEN_FROM` in `client/src/utils/embargo.ts`.
+- [x] §6.2 camp and art location masking wired to their separate,
+      timezone-aware annual timestamps in `client/src/utils/embargo.ts`.
+      The current-year API build fails if either value is missing, naive,
+      reversed, or belongs to another `BRC_MAP_YEAR`; future API years fail
+      closed in the client. `BURN_WINDOW_OPEN_FROM` is not a disclosure gate.
       Client masking and the trusted internal bypass are documented accepted
       risk, not hard confidentiality.
 - [x] §7.2 trademark — re-check if renaming.

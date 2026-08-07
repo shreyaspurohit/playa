@@ -143,6 +143,58 @@ runtime aren't fixable from JS in any browser-based app.
 wiped. Combined with the sessionStorage clear, nothing identifying the
 unlock state survives the click.
 
+## God-mode password rotation runbook
+
+Use this when the trusted password may have been forwarded, copied into a chat,
+or otherwise left the intended inner circle. This rotates only god-mode; normal
+spirit users, their favorites, and the encrypted API Release caches should not
+be disturbed.
+
+1. Generate a new unique password in a password manager (at least 20 random
+   characters). Do not derive it from the old password or put it in a commit,
+   issue, shell history, or release note.
+2. In **GitHub → Settings → Secrets and variables → Actions → Secrets**, edit
+   `SITE_TIERS`. Replace only the password in the literal `god-mode:<password>=…`
+   entry. Preserve the tier name and source list exactly; leave demigod/spirit
+   passwords unchanged.
+3. Do **not** rotate `BM_CACHE_PASSWORD`. It protects the GitHub Release cache,
+   is unrelated to browser access, and changing it would make existing cache
+   assets unreadable without a re-fetch.
+4. Run **Actions → Refresh camps directory → Run workflow**. The build generates
+   fresh per-source DEKs and wrappers, then deploys a site that no longer has a
+   wrapper decryptable by the old god password.
+5. Verify in a clean/private browser profile:
+   - the old god password is rejected;
+   - the new god password unlocks every intended god source;
+   - before the public cutoffs, god-mode sees any API location fields already
+     released to developers;
+   - the unchanged spirit password/auto-unlock still works and continues to
+     hide camp/art locations until their separate public timestamps.
+6. Share the replacement only through the password manager's secure sharing
+   feature, preferably to named recipients with expiry/revocation. Record the
+   rotation date, not the password, in the operator log.
+
+### Effect on existing devices and caches
+
+- A device running the new deployment first tries its encrypted cached password.
+  The old value cannot unwrap any new wrapper, so `EnvelopeGate` calls
+  `clearCachedPassword()` and prompts. This does not clear favorites, nickname,
+  friends, map layers, or any other user state.
+- Devices that cached the unchanged spirit/demigod password continue to unlock;
+  their wrappers were regenerated but remain decryptable with the same tier
+  password.
+- The service worker can retain a previously deployed offline `index.html`.
+  Someone who stays offline with that old artifact and the old god password can
+  still read that old snapshot. A static offline-first PWA cannot remotely erase
+  bytes already stored on another device. Once the device reconnects and force
+  refreshes, the new deployment rejects the old password.
+- Changing `SITE_TIERS` does not change the API cache encryption key and does not
+  require refetching historical API data.
+
+If the concern is an actual data-revocation request rather than credential
+hygiene, follow [revocation-plan.md](./revocation-plan.md); password rotation
+alone is not data deletion.
+
 ## Code references
 
 - `client/src/components/Gate.tsx` — gate UI + unlock orchestration

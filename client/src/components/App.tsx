@@ -14,6 +14,7 @@ import { decryptSource, decryptPayload } from '../crypto';
 import {
   applyLocationEmbargo, applyArtLocationEmbargo, isLocationEmbargoed,
 } from '../utils/embargo';
+import type { LocationKind, LocationReleasePolicy } from '../utils/embargo';
 import { readString, writeString } from '../utils/storage';
 import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
@@ -57,12 +58,14 @@ interface Meta {
   fetchedAt: string;
   version: string;
   contactEmail: string;
-  /** Burn window (ISO YYYY-MM-DD). `burnStart` is the gate-open day —
-   *  also the location-embargo cutoff (D8) and the spirit-mode
-   *  auto-unlock window's open edge (D13). The schedule view uses
-   *  the [burnStart, burnEnd] range as its calendar window. */
+  /** Schedule window (ISO YYYY-MM-DD). Independent from D8 location
+   *  disclosure; fetched early events may move burnStart earlier. */
   burnStart: string;
   burnEnd: string;
+  /** Explicit current-year public release policy for API location fields. */
+  locationReleaseYear: number;
+  campLocationReleaseAt: string;
+  artLocationReleaseAt: string;
 }
 
 function readMeta(): Meta {
@@ -76,11 +79,23 @@ function readMeta(): Meta {
     contactEmail: get('bm-contact-email') || 'bm-camps@example.com',
     burnStart:    get('bm-burn-start') || '',
     burnEnd:      get('bm-burn-end')   || '',
+    locationReleaseYear: Number.parseInt(get('bm-location-release-year'), 10),
+    campLocationReleaseAt: get('bm-camp-location-release-at') || '',
+    artLocationReleaseAt: get('bm-art-location-release-at') || '',
   };
 }
 
 export function App() {
   const meta = useMemo(readMeta, []);
+  const locationPolicy: LocationReleasePolicy = useMemo(() => ({
+    year: meta.locationReleaseYear,
+    campReleaseAt: meta.campLocationReleaseAt,
+    artReleaseAt: meta.artLocationReleaseAt,
+  }), [
+    meta.locationReleaseYear,
+    meta.campLocationReleaseAt,
+    meta.artLocationReleaseAt,
+  ]);
   const { theme, setTheme } = useTheme();
   const { view, goto } = useHashRoute();
   const { updateAvailable, latest: latestVersion } = useVersionCheck();
@@ -95,12 +110,13 @@ export function App() {
 
   const [camps, setCamps] = useState<Camp[] | null>(null);
   const [encEnvelope, setEncEnvelope] = useState<EncryptedPayload | null>(null);
-  // True if any ingest pass during this session masked locations
-  // under the pre-burn embargo. Drives the EmbargoLiftedBanner — we
-  // only nudge the user to refresh when their in-memory camps were
-  // actually masked at some point. Stays sticky once flipped on.
-  const [embargoActiveAtIngest, setEmbargoActiveAtIngest] = useState(false);
-  const [embargoLifted, setEmbargoLifted] = useState(false);
+  // Track camp and art independently: camps become public one week before
+  // art, so a tab can legitimately need two different refresh nudges.
+  const [embargoedAtIngest, setEmbargoedAtIngest] = useState({
+    camp: false,
+    art: false,
+  });
+  const [embargoLifted, setEmbargoLifted] = useState<LocationKind | null>(null);
   // Envelope-mode (D10) state. `envelopeSources` is the build-embedded
   // ciphers + wrappers; `unlocked.deks` is what the password unlocked
   // (one DEK+IV per source the user has access to). Both null in
@@ -146,14 +162,17 @@ export function App() {
         const p = await readEmbeddedPayload(source);
         if (cancelled) return;
         if (p.kind === 'plain') {
-          // Apply pre-burn location embargo (D8). For api-<burn_year>
-          // pre-burn-start, this clears `camp.location` on every camp;
+          // Apply the camp-specific location embargo (D8). For the
+          // current api year before its public camp release timestamp,
+          // this clears `camp.location` on every camp;
           // outside the embargo window (or for trusted/god-mode users)
           // it's a no-op.
-          if (isLocationEmbargoed(source, meta.burnStart, new Date(), unlockedTrusted)) {
-            setEmbargoActiveAtIngest(true);
+          if (isLocationEmbargoed(source, locationPolicy, 'camp', new Date(), unlockedTrusted)) {
+            setEmbargoedAtIngest((state) => ({ ...state, camp: true }));
           }
-          const masked = applyLocationEmbargo(p.camps, source, meta.burnStart, new Date(), unlockedTrusted);
+          const masked = applyLocationEmbargo(
+            p.camps, source, locationPolicy, new Date(), unlockedTrusted,
+          );
           indexHaystacks(masked);
           setCamps(masked);
           setEncEnvelope(null);
@@ -193,8 +212,11 @@ export function App() {
         const p = await readEmbeddedArt(source);
         if (cancelled) return;
         if (p.kind === 'plain') {
+          if (isLocationEmbargoed(source, locationPolicy, 'art', new Date(), unlockedTrusted)) {
+            setEmbargoedAtIngest((state) => ({ ...state, art: true }));
+          }
           const masked = applyArtLocationEmbargo(
-            p.art, source, meta.burnStart, new Date(), unlockedTrusted,
+            p.art, source, locationPolicy, new Date(), unlockedTrusted,
           );
           indexArtHaystacks(masked);
           setArt(masked);
@@ -240,10 +262,12 @@ export function App() {
           const jsonText = await decryptSource(env.cipher, dekIv);
           if (cancelled) return;
           const raw = JSON.parse(jsonText) as Camp[];
-          if (isLocationEmbargoed(source, meta.burnStart, new Date(), unlockedTrusted)) {
-            setEmbargoActiveAtIngest(true);
+          if (isLocationEmbargoed(source, locationPolicy, 'camp', new Date(), unlockedTrusted)) {
+            setEmbargoedAtIngest((state) => ({ ...state, camp: true }));
           }
-          const arr = applyLocationEmbargo(raw, source, meta.burnStart, new Date(), unlockedTrusted);
+          const arr = applyLocationEmbargo(
+            raw, source, locationPolicy, new Date(), unlockedTrusted,
+          );
           indexHaystacks(arr);
           decryptedRef.current.set(source, arr);
           setCamps(arr);
@@ -253,8 +277,11 @@ export function App() {
           const artText = await decryptSource(env.artCipher, dekIv);
           if (cancelled) return;
           const rawArt = JSON.parse(artText) as Art[];
+          if (isLocationEmbargoed(source, locationPolicy, 'art', new Date(), unlockedTrusted)) {
+            setEmbargoedAtIngest((state) => ({ ...state, art: true }));
+          }
           const arr = applyArtLocationEmbargo(
-            rawArt, source, meta.burnStart, new Date(), unlockedTrusted,
+            rawArt, source, locationPolicy, new Date(), unlockedTrusted,
           );
           indexArtHaystacks(arr);
           decryptedArtRef.current.set(source, arr);
@@ -324,40 +351,39 @@ export function App() {
           } catch { /* skip malformed entry */ }
         }
         // Burn-key auto-unlock is spirit-mode only by design — never
-        // trusted. Embargo continues to apply (relevant only between
-        // PLAYA_GO_LIVE and burn-start; trusted=false is correct).
+        // trusted. Camp and art release timestamps continue to apply
+        // independently; trusted=false is the important boundary.
         if (!cancelled && map.size > 0) setUnlocked({ deks: map, trusted: false });
       } catch { /* network error / not deployed → fall through to gate */ }
     })();
     return () => { cancelled = true; };
   }, [envelopeSources, unlockedDeks]);
 
-  // ADR D8 follow-up: nudge the user to refresh once the embargo
-  // lifts mid-session. Conditions:
-  //   1. Their in-memory camps were masked at ingest
-  //      (`embargoActiveAtIngest`). If they loaded fresh post-burn,
-  //      this stays false and the banner never fires.
-  //   2. The cutoff (`meta.burnStart`) has passed — checked on a
-  //      1-min poll so a tab open across midnight UTC catches it.
-  //   3. Per-burn-year LS flag isn't already set (one-shot per device).
-  // Cleared by either button on the banner; refresh re-loads with
-  // the masked state false, so the banner won't reappear.
-  const embargoYear = meta.burnStart
-    ? meta.burnStart.slice(0, 4)
+  // ADR D8 follow-up: camps and art lift on different days. Poll both
+  // timezone-aware timestamps and show a kind-specific refresh nudge only
+  // when this tab actually ingested masked records of that kind.
+  const embargoYear = Number.isInteger(locationPolicy.year)
+    ? String(locationPolicy.year)
     : '';
-  const embargoAckKey = `${LS.embargoLiftAcked}/${embargoYear}`;
   useEffect(() => {
-    if (!embargoActiveAtIngest) return;
     if (embargoLifted) return;
     if (!embargoYear) return;
-    if (readString(embargoAckKey, '') === '1') return;
 
-    const liftTime = new Date(meta.burnStart + 'T00:00:00Z').getTime();
-    if (Number.isNaN(liftTime)) return;
+    const releaseCandidates: Array<{ kind: LocationKind; time: number }> = [
+      { kind: 'camp', time: Date.parse(locationPolicy.campReleaseAt) },
+      { kind: 'art', time: Date.parse(locationPolicy.artReleaseAt) },
+    ];
+    const releases = releaseCandidates.filter(({ kind, time }) => (
+      embargoedAtIngest[kind]
+      && !Number.isNaN(time)
+      && readString(`${LS.embargoLiftAcked}/${embargoYear}/${kind}`, '') !== '1'
+    )).sort((a, b) => a.time - b.time);
+    if (releases.length === 0) return;
 
     function check() {
-      if (Date.now() >= liftTime) {
-        setEmbargoLifted(true);
+      const released = releases.find(({ time }) => Date.now() >= time);
+      if (released) {
+        setEmbargoLifted(released.kind);
         return true;
       }
       return false;
@@ -370,18 +396,19 @@ export function App() {
       if (check()) clearInterval(interval);
     }, 60_000);
     return () => clearInterval(interval);
-  }, [embargoActiveAtIngest, embargoLifted, embargoYear, embargoAckKey, meta.burnStart]);
+  }, [embargoedAtIngest, embargoLifted, embargoYear, locationPolicy]);
 
   function ackEmbargoLift() {
-    writeString(embargoAckKey, '1');
+    if (!embargoLifted || !embargoYear) return;
+    writeString(`${LS.embargoLiftAcked}/${embargoYear}/${embargoLifted}`, '1');
   }
 
   const onUnlock = useCallback(async (jsonText: string, password: string) => {
     const raw = JSON.parse(jsonText) as Camp[];
-    if (isLocationEmbargoed(source, meta.burnStart)) {
-      setEmbargoActiveAtIngest(true);
+    if (isLocationEmbargoed(source, locationPolicy, 'camp')) {
+      setEmbargoedAtIngest((state) => ({ ...state, camp: true }));
     }
-    const unlocked = applyLocationEmbargo(raw, source, meta.burnStart);
+    const unlocked = applyLocationEmbargo(raw, source, locationPolicy);
     indexHaystacks(unlocked);
     setCamps(unlocked);
     setEncEnvelope(null);
@@ -393,16 +420,22 @@ export function App() {
     try {
       const artPayload = await readEmbeddedArt(source);
       if (artPayload.kind === 'plain') {
+        if (isLocationEmbargoed(source, locationPolicy, 'art')) {
+          setEmbargoedAtIngest((state) => ({ ...state, art: true }));
+        }
         const arr = applyArtLocationEmbargo(
-          artPayload.art, source, meta.burnStart,
+          artPayload.art, source, locationPolicy,
         );
         indexArtHaystacks(arr);
         setArt(arr);
       } else if (artPayload.kind === 'encrypted') {
         const text = await decryptPayload(artPayload.enc, password);
         const rawArt = JSON.parse(text) as Art[];
+        if (isLocationEmbargoed(source, locationPolicy, 'art')) {
+          setEmbargoedAtIngest((state) => ({ ...state, art: true }));
+        }
         const arr = applyArtLocationEmbargo(
-          rawArt, source, meta.burnStart,
+          rawArt, source, locationPolicy,
         );
         indexArtHaystacks(arr);
         setArt(arr);
@@ -413,7 +446,7 @@ export function App() {
       console.warn('art ingest after Gate unlock failed:', err);
       setArt([]);
     }
-  }, [source, meta.burnStart]);
+  }, [source, locationPolicy]);
 
   const [query, setQuery] = useState('');
   const queryLower = query.toLowerCase().trim();
@@ -967,8 +1000,9 @@ export function App() {
         />
         {embargoLifted && (
           <EmbargoLiftedBanner
+            kind={embargoLifted}
             onRefresh={() => { ackEmbargoLift(); location.reload(); }}
-            onDismiss={() => { ackEmbargoLift(); setEmbargoLifted(false); }}
+            onDismiss={() => { ackEmbargoLift(); setEmbargoLifted(null); }}
           />
         )}
         {updateAvailable && <UpdateBanner latest={latestVersion} />}
@@ -1185,6 +1219,8 @@ export function App() {
         fetchedDate={meta.fetchedDate}
         contactEmail={meta.contactEmail}
         source={visibleSource}
+        locationPolicy={locationPolicy}
+        trusted={unlockedTrusted}
         onImport={onImportSnapshot}
         onExport={onExportSnapshot}
         onClose={() => setInfoOpen(false)}

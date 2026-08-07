@@ -18,6 +18,9 @@ Placeholders in the template:
     __VERSION__         — vYYYY.MM.DD
     __FETCHED_DATE__    — YYYY-MM-DD
     __FETCHED_AT__      — YYYY-MM-DDTHH:MM:SSZ (tooltip)
+    __LOCATION_RELEASE_YEAR__ — current live API/map year
+    __CAMP_LOCATION_RELEASE_AT__ — camp public-release ISO timestamp
+    __ART_LOCATION_RELEASE_AT__  — art public-release ISO timestamp
 """
 from __future__ import annotations
 
@@ -68,9 +71,10 @@ class SiteBuilder:
         # them via repo variables in CI (BURN_WINDOW_OPEN_FROM /
         # BURN_WINDOW_OPEN_TO) or `.env` locally. Fail loud here
         # rather than later with an unhelpful "Invalid isoformat: ''"
-        # deep in the event parser. One date drives the calendar
-        # edges, the public-access window, and the location-embargo
-        # cutoff — see Config docstring.
+        # deep in the event parser. These dates drive the calendar
+        # fallback and public-access window only; D8 location release
+        # timestamps are validated separately when the current API
+        # source is included.
         if not config.burn_start or not config.burn_end:
             raise RuntimeError(
                 "BURN_WINDOW_OPEN_FROM and BURN_WINDOW_OPEN_TO must "
@@ -91,6 +95,54 @@ class SiteBuilder:
         # Sources to embed. First entry is the default selection on
         # cold-start (matches the existing behavior — directory only).
         self.source_specs: list[str] = sources or ["directory"]
+
+    def _validate_location_release_policy(self) -> None:
+        """Fail closed for a current-year API build with bad D8 dates.
+
+        Past-year API records are already public, and directory data is
+        governed by its own source policy, so only the API source matching
+        ``directory_map_year`` requires the annual release timestamps.
+        """
+        current_api = f"api-{self.config.directory_map_year}"
+        if current_api not in self.source_specs:
+            return
+
+        values = {
+            "CAMP_LOCATION_RELEASE_AT": self.config.camp_location_release_at,
+            "ART_LOCATION_RELEASE_AT": self.config.art_location_release_at,
+        }
+        parsed: dict[str, datetime] = {}
+        for name, value in values.items():
+            if not value:
+                raise RuntimeError(
+                    f"{name} must be set when {current_api} is embedded. "
+                    "Use a timezone-aware ISO-8601 timestamp, for example "
+                    "2026-08-23T00:00:00-07:00.",
+                )
+            try:
+                stamp = datetime.fromisoformat(value)
+            except ValueError as e:
+                raise RuntimeError(
+                    f"{name}={value!r} is not a valid ISO-8601 timestamp.",
+                ) from e
+            if stamp.tzinfo is None or stamp.utcoffset() is None:
+                raise RuntimeError(
+                    f"{name}={value!r} must include an explicit timezone "
+                    "offset (for example -07:00 for PDT).",
+                )
+            if stamp.year != self.config.directory_map_year:
+                raise RuntimeError(
+                    f"{name} year {stamp.year} does not match BRC_MAP_YEAR="
+                    f"{self.config.directory_map_year}.",
+                )
+            parsed[name] = stamp
+
+        if parsed["CAMP_LOCATION_RELEASE_AT"] >= parsed["ART_LOCATION_RELEASE_AT"]:
+            raise RuntimeError(
+                "CAMP_LOCATION_RELEASE_AT must be earlier than "
+                "ART_LOCATION_RELEASE_AT; the official camp release "
+                "precedes the art/gate-open release.",
+            )
 
     # --- data loading -----------------------------------------------------
 
@@ -145,9 +197,10 @@ class SiteBuilder:
         uids). The builder then runs Tagger + event-time enrichment
         uniformly across whatever the source returned.
 
-        Note: pre-burn location embargo is enforced **client-side**,
-        not here. Build artifacts retain full location data; the UI
-        hides locations for `api-<burn_year>` until `burn_start`.
+        Note: the current-year API location embargo is enforced
+        **client-side**, not here. Build artifacts retain full location
+        data; the UI compares camp and art against their independent
+        annual public-release timestamps.
         See `client/src/utils/embargo.ts` and ADR D8.
         """
         source: Source = make_source(spec)
@@ -163,9 +216,8 @@ class SiteBuilder:
         have events). Source's `load_art()` handles dedupe + denylist;
         builder applies Tagger + alphabetic sort uniformly.
 
-        Embargo treatment is identical to camps — see ADR D8. Build
-        artifacts retain full location data; client hides locations
-        for `api-<burn_year>` until `burn_start`."""
+        Embargo policy is shared with camps but uses art's later cutoff —
+        see ADR D8. Build artifacts retain full location data."""
         source: Source = make_source(spec)
         art = source.load_art(self.config)
         for piece in art:
@@ -194,12 +246,18 @@ class SiteBuilder:
                 parses.append((ev, parse_event_time(ev.time)))
         parsed_only = [p for _, p in parses if p]
 
-        # Derive the calendar window + canonical day→date map once.
-        self._effective_start = effective_burn_start(
+        # Derive this source's calendar window + canonical day→date map.
+        # Preserve the earliest start seen across every embedded source;
+        # otherwise the last-loaded API source can overwrite an earlier
+        # directory volunteer-week date in the global meta tag.
+        source_effective_start = effective_burn_start(
             parsed_only, self.config.burn_start, self.config.burn_end,
         )
-        week_map = canonical_week_map(self._effective_start, self.config.burn_end)
-        self._week_map = week_map
+        self._effective_start = min(self._effective_start, source_effective_start)
+        week_map = canonical_week_map(source_effective_start, self.config.burn_end)
+        self._week_map = canonical_week_map(
+            self._effective_start, self.config.burn_end,
+        )
 
         # Pass 2: stamp canonical dates + format display strings.
         recognized = 0
@@ -224,8 +282,9 @@ class SiteBuilder:
         if parses:
             print(f"  event times parsed: {recognized}/{len(parses)} "
                   f"({100 * recognized // len(parses)}%); "
-                  f"effective window: {self._effective_start} → "
+                  f"source window: {source_effective_start} → "
                   f"{self.config.burn_end}; "
+                  f"site start: {self._effective_start}; "
                   f"week map: {dict(sorted(week_map.items()))}")
 
     # --- encryption -------------------------------------------------------
@@ -844,6 +903,9 @@ class SiteBuilder:
 
     def build(self) -> Path:
         # `__init__` already validated BURN_START / BURN_END are set.
+        # Validate the independent, year-specific D8 location cutoffs
+        # before loading any potentially expensive source data.
+        self._validate_location_release_policy()
         # Load each configured source. The MIN_CAMPS rail applies to
         # the FIRST (default) source — that's the "is the primary
         # data path broken?" signal CI uses to refuse a degraded
@@ -1031,6 +1093,18 @@ class SiteBuilder:
             .replace("__FETCHED_AT__",         meta.get("fetched_at", "unknown"))
             .replace("__BURN_START__",         self._effective_start)
             .replace("__BURN_END__",           self.config.burn_end)
+            .replace(
+                "__LOCATION_RELEASE_YEAR__",
+                str(self.config.directory_map_year),
+            )
+            .replace(
+                "__CAMP_LOCATION_RELEASE_AT__",
+                self.config.camp_location_release_at,
+            )
+            .replace(
+                "__ART_LOCATION_RELEASE_AT__",
+                self.config.art_location_release_at,
+            )
         )
 
         self.config.site_html.parent.mkdir(parents=True, exist_ok=True)
