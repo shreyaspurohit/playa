@@ -67,4 +67,21 @@ describe('source-specific directory disclaimer', () => {
     assert.match(mount.textContent ?? '', /Event times are normalized/);
     assert.match(mount.textContent ?? '', /no commercial purpose/);
   });
+
+  test('Clear all local data removes persisted map-layer preferences', () => {
+    localStorage.setItem('bm-map-layers/v1', '["boundary","arrival"]');
+    Object.defineProperty(globalThis, 'confirm', {
+      configurable: true,
+      value: () => true,
+    });
+    mountInfo('directory');
+
+    const clear = [...mount.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Clear all local data'));
+    assert.ok(clear);
+    clear.click();
+
+    assert.equal(localStorage.getItem('bm-map-layers/v1'), null);
+    delete (globalThis as { confirm?: () => boolean }).confirm;
+  });
 });

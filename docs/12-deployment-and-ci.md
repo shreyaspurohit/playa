@@ -63,7 +63,15 @@ flowchart LR
 - Checkout with `fetch-depth: 200`.
 - Same setup.
 - Bundle the client (`npm run build`).
-- `python -m playa all` — fetches everything, encrypts, builds.
+- `python -m playa all` — fetches everything, encrypts, builds. Its GIS refresh
+  is failure-isolated per year: a timeout or validation/name drift
+  produces a visible Actions warning, then the last valid same-year overlay
+  (or base map) is used without losing the camp/event/art refresh.
+- Before building, resolves the official GIS repository's `master` commit and
+  restores `data/gis` with an exact `actions/cache` key that also includes the
+  configured directory/API years. An unchanged revision makes no GeoJSON
+  requests. An upstream or year-set change misses and refreshes once; no prefix
+  restore is used, so stale data cannot masquerade as the new revision.
 - Downloads each configured `api-YYYY` encrypted Release cache; a cache miss or
   explicitly requested `refresh_api_years` fetches from the API and uploads a
   replacement asset.
@@ -91,7 +99,7 @@ flowchart LR
 - `CONTACT_EMAIL` — replaces the placeholder in the footer's
   takedown mailto.
 
-Repository variables: `BM_API_YEARS`, `BURN_WINDOW_OPEN_FROM`,
+Repository variables: `BM_API_YEARS`, `BRC_MAP_YEAR`, `BURN_WINDOW_OPEN_FROM`,
 `BURN_WINDOW_OPEN_TO`, and optional `PLAYA_GO_LIVE`. Configure the applicable
 secrets and variables under **Settings → Secrets and variables → Actions**
 before the first production build.

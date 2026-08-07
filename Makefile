@@ -1,6 +1,6 @@
 .PHONY: help bootstrap install-backend client-install test test-py test-js \
         bundle bundle-watch fetch fetch-small build rebuild tag meta merge \
-        preview clean dev snapshot-pages fetch-api
+        preview clean dev snapshot-pages fetch-api gis-fetch gis-prepare map-audit
 
 CLIENT_DIR  := client
 BACKEND_DIR := backend
@@ -54,6 +54,9 @@ help:
 	@echo "  meta            — write data/meta.json"
 	@echo "  merge           — write data/camps.csv"
 	@echo "  tag             — retag + write data/camps_tagged.csv"
+	@echo "  gis-fetch       — strictly fetch/validate official annual map layers"
+	@echo "  map-audit       — derive reviewed base-grid candidates from a local"
+	@echo "                    official street_lines.geojson"
 	@echo ""
 	@echo "============================================================"
 	@echo "  HOUSEKEEPING (no env vars)"
@@ -111,6 +114,9 @@ help:
 	@echo "                          (defaults to directory only)"
 	@echo "    BM_CACHE_PASSWORD   used to DECRYPT data/api/YYYY.json when"
 	@echo "                          building. Same key set by fetch-api."
+	@echo "    BRC_MAP_YEAR       year for the live directory + map (default 2026)"
+	@echo "    BM_GIS_BASE_URL    official annual GIS base URL (normally unchanged)"
+	@echo "    BM_GIS_TIMEOUT     GIS request timeout in seconds (default 30)"
 	@echo ""
 	@echo "    -- Multi-tier (ADR D10) --"
 	@echo "    SITE_TIERS          name1:pw1=src1+src2,name2:pw2=src3,…"
@@ -210,6 +216,27 @@ fetch-api: install-backend
 	@echo "==> Cached at data/api/$(YEAR).json"
 	@echo "    Build with: BM_API_YEARS=$(YEAR) make rebuild"
 
+gis-fetch: install-backend
+	python3 -m playa gis-fetch
+
+# Build-facing GIS refresh: network/schema failures are isolated because map
+# overlays are optional. The explicit `gis-fetch` target above stays strict for
+# annual review and troubleshooting.
+gis-prepare: install-backend
+	python3 -m playa gis-fetch --best-effort
+
+# Read-only annual base-grid audit. This never participates in build/dev:
+# street_lines.geojson is an operator input, not a runtime map dependency.
+# Example:
+#   make map-audit YEAR=2027 STREET_LINES=/tmp/brc-2027-street-lines.geojson \
+#     CENTER=40.123,-119.123 ESPLANADE_RADIUS=2500
+map-audit: install-backend
+	@if [ -z "$(YEAR)" ] || [ -z "$(STREET_LINES)" ] || [ -z "$(CENTER)" ] || [ -z "$(ESPLANADE_RADIUS)" ]; then \
+		echo "==> Required: YEAR, STREET_LINES, CENTER=LAT,LNG, ESPLANADE_RADIUS"; exit 1; \
+	fi
+	python3 -m playa map-audit --year $(YEAR) --street-lines "$(STREET_LINES)" \
+		--center "$(CENTER)" --esplanade-radius-feet $(ESPLANADE_RADIUS)
+
 # One-command dev loop: first run fetches the full directory once;
 # subsequent runs reuse the cached data/pages and just rebuild the site.
 # Use `make fetch` to force a fresh pull (auto-snapshots the old one).
@@ -217,6 +244,7 @@ dev: install-backend bundle
 	@if ls data/pages/*.json >/dev/null 2>&1; then \
 		n=$$(ls data/pages/*.json | wc -l | tr -d ' '); \
 		echo "==> Using cached data/pages ($$n pages) — rebuilding only"; \
+		python3 -m playa gis-fetch --best-effort && \
 		python3 -m playa meta && \
 		python3 -m playa merge && \
 		python3 -m playa tag && \
@@ -226,13 +254,13 @@ dev: install-backend bundle
 		python3 -m playa all; \
 	fi
 
-rebuild: install-backend bundle
+rebuild: install-backend bundle gis-prepare
 	python3 -m playa meta
 	python3 -m playa merge
 	python3 -m playa tag
 	python3 -m playa build
 
-build: install-backend bundle
+build: install-backend bundle gis-prepare
 	python3 -m playa build
 
 tag: install-backend

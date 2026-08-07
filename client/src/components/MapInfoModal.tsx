@@ -83,6 +83,44 @@ export function MapInfoModal({ open, onClose, brc }: Props) {
           </p>
 
           <p>
+            <strong>Official map points:</strong> colored, shaped, and lettered icons come
+            from Burning Man&rsquo;s year-specific GIS map. Tap any icon or
+            toilet footprint for its name, details, distance, bearing, and
+            walk/bike estimate. The silhouette remains useful when the glyph
+            is too small to read: Medical is a red octagon <code>✚</code>,
+            Rangers an indigo shield <code>R</code>, the Temple a gold diamond{' '}
+            <code>T</code>, Arctica a blue hexagon <code>❄</code>, Playa Info
+            a blue square <code>i</code>, and toilets a wide blue <code>WC</code>
+            capsule. Medical, Rangers, and the Temple stay visible. The layer pills above
+            the map control:
+          </p>
+          <ul>
+            <li><strong>Boundary:</strong> the exact dashed pink trash fence; off by default so the city grid stays large.</li>
+            <li><strong>Essentials:</strong> Arctica ice <code>❄</code>.</li>
+            <li><strong>Toilets:</strong> portable-toilet banks <code>WC</code>; off by default to keep the map readable.</li>
+            <li><strong>Services:</strong> Playa Info, ARTery, recycling, and Yellow Bikes.</li>
+            <li><strong>Transport:</strong> Burner Express Bus and the airport.</li>
+            <li><strong>Arrival:</strong> Gate, Greeters, Box Office, Will Call, DMV, and Media Mecca.</li>
+          </ul>
+          <p class="footnote">
+            Essentials starts on; Boundary, Toilets, and the other optional
+            layers start off. Your choices are saved on this device.
+            Official coordinates change each year, so verify signage and
+            current event guidance on playa.
+          </p>
+
+          <p>
+            <strong>Your map markers use a separate shape vocabulary:</strong>{' '}
+            a teal tent is your home camp, a gold bookmark <code>★</code> is
+            a camp you starred, a five-point magenta star is art you starred,
+            a violet four-point marker is your meet spot, and the blue bullseye is your
+            current GPS position. Friend variants keep the same entity
+            silhouettes with contrasting colors. A dashed orange crosshair is
+            an unstarred camp navigation target; a hollow magenta star is an
+            unstarred art navigation target.
+          </p>
+
+          <p>
             <strong>Art locations work differently.</strong> Camps live on
             the city grid (clock + letter ring), but a lot of art sits
             either in the <em>open playa</em> beyond <code>K</code> street
@@ -113,8 +151,8 @@ export function MapInfoModal({ open, onClose, brc }: Props) {
 
           <p>
             <strong>Orientation:</strong> for {brc.year}, True North runs along
-            the <code>4:30</code> axis, so <code>12:00</code> points SW
-            (bearing {brc.twelveBearingDeg}&deg;) and <code>6:00</code> points NE.
+            the <code>4:30</code> axis, so <code>12:00</code> points NE
+            (bearing {brc.twelveBearingDeg}&deg;) and <code>6:00</code> points SW.
           </p>
 
           <p>

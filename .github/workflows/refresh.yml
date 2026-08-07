@@ -106,6 +106,39 @@ jobs:
           node --version
           gh --version
 
+      # The runner is ephemeral, but official GIS changes infrequently. Resolve
+      # one small upstream revision token and restore only an EXACT cache for
+      # that revision + configured year set. No restore prefix is intentional:
+      # after an upstream/year change, stale normalized data must not suppress
+      # a fresh fetch. If revision lookup itself is unavailable, use a unique
+      # key; GIS remains best-effort and the rest of the build still proceeds.
+      - name: Resolve official GIS cache key
+        id: gis-revision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}
+          BM_API_YEARS: ${{ vars.BM_API_YEARS }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api repos/burningmantech/innovate-GIS-data/commits/master --jq .sha 2>/dev/null || true)"
+          if [ -z "$sha" ]; then
+            sha="unavailable-${GITHUB_RUN_ID}"
+            echo "::warning title=GIS revision unavailable::Could not resolve the upstream GIS revision; GIS fetch will remain best-effort."
+          fi
+          api_years="${BM_API_YEARS//[[:space:]]/}"
+          api_years="${api_years//,/+}"
+          if [ -z "$api_years" ]; then api_years="directory-only"; fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "scope=${BRC_MAP_YEAR}-${api_years}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore official GIS cache
+        uses: actions/cache@v6
+        with:
+          path: data/gis
+          # Include the normalizer itself: presentation aliases/addresses and
+          # cache schema can change even when upstream GeoJSON does not.
+          key: brc-gis-v3-${{ hashFiles('backend/src/playa/gis.py') }}-${{ steps.gis-revision.outputs.sha }}-${{ steps.gis-revision.outputs.scope }}
+
       - name: Install client deps
         run: npm ci
         working-directory: client
@@ -307,6 +340,10 @@ jobs:
           BM_API_KEY: ${{ secrets.BM_API_KEY }}
           BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
+          # Live directory/GIS year. Keep the fallback aligned with the
+          # newest BRC_BY_YEAR entry; next year can be switched via a repo
+          # variable after the annual map constants are reviewed.
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}
           # D10 multi-tier passwords + source manifest. Operator
           # composes SITE_TIERS from the per-tier secrets so literal
           # passwords don't sit in the workflow YAML.

@@ -31,6 +31,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import Config
+from .gis import validate_normalized_gis
 from .models import Art, Camp
 from .sources import Source, make_source
 from .tagger import Tagger
@@ -561,6 +562,60 @@ class SiteBuilder:
             )
         return bundle_path.read_text(encoding="utf-8")
 
+    def _gis_data_scripts(self, sources: list[str]) -> tuple[str, list[str]]:
+        """Embed one public, normalized GIS payload per active map year.
+
+        GIS is shared across passwords and sources for the same year, so it is
+        gzip/base64 encoded but not duplicated into source encryption
+        envelopes. Missing local GIS is a development fallback: the hand-built
+        base map still works and the build logs a loud warning. The nightly
+        pipeline fetches/validates GIS before calling the builder.
+        """
+        years: set[int] = set()
+        for source in sources:
+            if source == "directory":
+                years.add(self.config.directory_map_year)
+            if source.startswith("api-"):
+                try:
+                    years.add(int(source[4:]))
+                except ValueError:
+                    continue
+        tags: list[str] = []
+        embedded: list[str] = []
+        for year in sorted(years):
+            path = self.config.gis_payload_file(year)
+            if not path.exists():
+                print(
+                    f"  WARNING: GIS {year} cache missing at {path}; "
+                    f"run `python -m playa gis-fetch --year {year}`. "
+                    "Building the base map without official overlays."
+                )
+                continue
+            try:
+                raw = path.read_bytes()
+                # Parsing here catches a truncated/manual cache before it
+                # reaches the browser; the fetcher owns deeper schema
+                # validation. GIS is an optional subsystem, so an unusable
+                # cache removes only that year's overlay—not the whole site.
+                parsed = json.loads(raw)
+                validate_normalized_gis(parsed, year)
+                b64 = base64.b64encode(
+                    gzip.compress(raw, compresslevel=9),
+                ).decode("ascii")
+            except Exception as exc:
+                print(
+                    f"  WARNING: GIS {year} cache unusable at {path} "
+                    f"({type(exc).__name__}: {exc}). Building without that "
+                    "year's official overlays."
+                )
+                continue
+            tags.append(
+                f'<script id="gis-data-{year}" '
+                f'type="application/x-gzip-base64">{b64}</script>'
+            )
+            embedded.append(str(year))
+        return "\n".join(tags), embedded
+
     def _write_service_worker(self, version: str) -> Path:
         """Emit site/sw.js so the site works fully offline after first
         load. Three caches:
@@ -927,8 +982,15 @@ class SiteBuilder:
         # default if there's no `bm-source` in localStorage.
         sources_meta = (
             f'<meta name="bm-sources" content="'
-            f'{",".join(spec for spec, _ in loaded)}">'
+            f'{",".join(spec for spec, _ in loaded)}">\n'
+            f'<meta name="bm-directory-map-year" '
+            f'content="{self.config.directory_map_year}">'
         )
+        gis_script, gis_years = self._gis_data_scripts(
+            [spec for spec, _ in loaded],
+        )
+        if gis_script:
+            data_script = data_script + "\n" + gis_script
         bundle_js = self._read_bundle()
 
         # Guard: our placeholder isn't a substring that could legally appear
@@ -993,6 +1055,7 @@ class SiteBuilder:
         print(f"  modes: {', '.join(modes)}")
         print(f"  contact: {self.config.contact_email}")
         print(f"  version: {meta.get('version', '?')} ({meta.get('fetched_date', '?')})")
+        print(f"  GIS years: {', '.join(gis_years) if gis_years else 'none'}")
         art_by_source: dict[str, list[Art]] = {s: lst for s, lst in loaded_art}
         for spec, camps in loaded:
             total_events = sum(len(c.events) for c in camps)

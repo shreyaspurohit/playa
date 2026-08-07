@@ -19,11 +19,9 @@ export interface BrcMapData {
   center: { lat: number; lng: number };
   /**
    * Compass bearing (degrees clockwise from True North) of the BRC 12:00
-   * radial, looking outward from the Man. True North aligns with the
-   * 4:30 axis (design constant since the city's earliest years), so
-   * 12:00 bearing is always 360° − 4.5h × 30°/h = 225° (SW). Encoded
-   * here for forward-compatibility in case a future year breaks the
-   * convention; today every year sets it to 225.
+   * radial, looking outward from the Man. Current official GIS anchors place
+   * 12:00 northeast at about 45° and 6:00 southwest at about 225°. Encoded
+   * per year so a future layout can change the convention.
    */
   twelveBearingDeg: number;
   /** Concentric street radii from the Man, in feet. Parallel to `streetNames`. */
@@ -32,9 +30,12 @@ export interface BrcMapData {
   streetLetters: string[];
   /** Display names (Esplanade + the year's themed names). */
   streetNames: string[];
-  /** Clock positions with a radial street (every 15min between 2:00 and 10:00
-      for the outer arcs; inner streets drop most 15min positions). */
-  radialClockPositions: string[];
+  /** Radial streets in the occupied 2:00–10:00 arc. Quarter-hour streets
+      begin at F; the other radials begin at Esplanade. */
+  radialStreets: Array<{
+    clock: string;
+    innerStreet: string;
+  }>;
   /** Trash-fence pentagon vertices in decimal degrees. Used to clip the
       map view and compute off-playa detection. */
   fencePentagon: Array<{ lat: number; lng: number }>;
@@ -45,13 +46,31 @@ export interface BrcMapData {
  *  as camp locations so `parseAddress` resolves it to a pin position.
  *  The `kind` is a thin categorization the renderer can key off for
  *  icon/color selection. */
+export type PoiLayer =
+  | 'base' | 'essentials' | 'toilets' | 'services' | 'transport' | 'arrival';
+
+/** User-toggleable map overlays. `boundary` is geometry rather than a POI,
+ * so it stays out of `BrcPOI.layer` while sharing the persisted layer UI. */
+export type MapLayer = PoiLayer | 'boundary';
+
+export type PoiKind =
+  | 'center-camp' | 'playa-info' | 'plaza' | 'other'
+  | 'medical' | 'ranger' | 'ice' | 'temple' | 'toilet' | 'info'
+  | 'art-services' | 'recycle' | 'bike' | 'bus' | 'airport'
+  | 'dmv' | 'media' | 'greeters' | 'gate' | 'box-office' | 'will-call';
+
 export interface BrcPOI {
+  /** Stable within a map year. Official GIS ids are semantic slugs. */
+  id: string;
   name: string;
-  kind:
-    | 'center-camp' | 'playa-info' | 'ranger' | 'medical' | 'toilets'
-    | 'plaza' | 'other';
-  address: string;
+  kind: PoiKind;
+  layer: PoiLayer;
+  address?: string;
   description?: string;
+  /** Official points carry exact GPS coordinates. Legacy POIs use address. */
+  lat?: number;
+  lng?: number;
+  source_name?: string;
 }
 
 /**
@@ -77,69 +96,78 @@ export interface BrcPOI {
  */
 export const POIS: BrcPOI[] = [
   {
-    name: 'Center Camp',
+    id: 'center-camp',
+    name: 'Center Camp Plaza',
     kind: 'center-camp',
-    address: '6:00 & Esplanade',
-    description: 'Café, community hub, ice.',
+    layer: 'base',
+    address: '6:00 & B',
+    description: 'The Canopy and Center Camp community hub.',
   },
   {
+    id: 'playa-info-fallback',
     name: 'Playa Info',
     kind: 'playa-info',
+    layer: 'base',
     address: '5:45 & Esplanade',
     description:
       'Lost & found, camp lookup, message board. Open 9am–6pm daily + some evenings mid-week.',
   },
   {
-    name: '3:00 & B Plaza', kind: 'plaza', address: '3:00 & B',
+    id: 'plaza-3-b', name: '3:00 & B Plaza', kind: 'plaza', layer: 'base', address: '3:00 & B',
     description: 'Inner-city plaza near 3:00 keyhole.',
   },
   {
-    name: '9:00 & B Plaza', kind: 'plaza', address: '9:00 & B',
+    id: 'plaza-9-b', name: '9:00 & B Plaza', kind: 'plaza', layer: 'base', address: '9:00 & B',
     description: 'Inner-city plaza near 9:00 keyhole.',
   },
   {
-    name: '3:00 & G Plaza', kind: 'plaza', address: '3:00 & G',
+    id: 'plaza-3-g', name: '3:00 & G Plaza', kind: 'plaza', layer: 'base', address: '3:00 & G',
     description: 'Mid-city plaza on the 3:00 axis.',
   },
   {
-    name: '9:00 & G Plaza', kind: 'plaza', address: '9:00 & G',
+    id: 'plaza-9-g', name: '9:00 & G Plaza', kind: 'plaza', layer: 'base', address: '9:00 & G',
     description: 'Mid-city plaza on the 9:00 axis.',
   },
   {
-    name: '6:00 & G Plaza', kind: 'plaza', address: '6:00 & G',
+    id: 'plaza-6-g', name: '6:00 & G Plaza', kind: 'plaza', layer: 'base', address: '6:00 & G',
     description: 'Mid-city plaza behind Center Camp on the 6:00 axis.',
   },
   {
-    name: '4:30 & G Plaza', kind: 'plaza', address: '4:30 & G',
+    id: 'plaza-430-g', name: '4:30 & G Plaza', kind: 'plaza', layer: 'base', address: '4:30 & G',
     description: 'Mid-city plaza on the 4:30 radial.',
   },
   {
-    name: '7:30 & G Plaza', kind: 'plaza', address: '7:30 & G',
+    id: 'plaza-730-g', name: '7:30 & G Plaza', kind: 'plaza', layer: 'base', address: '7:30 & G',
     description: 'Mid-city plaza on the 7:30 radial.',
   },
 ];
 
 /**
- * 2026 BRC, theme "Axis Mundi". Block depths per the 2023 BRC
- * Measurements PDF (layout pattern is stable year-to-year):
+ * 2026 BRC, theme "Axis Mundi". Official street centerline radii from
+ * `street_lines.geojson`, cross-checked against the 2026 Measurements PDF.
+ * Center-to-center spacing includes the clear block depth plus half the
+ * width of each bordering street:
  *
- *   Esp→A: 400'     (wide entry block)
- *   A→B, B→C, C→D, D→E: 250' each
- *   E→F: 450'       (mid-city double block for Grootslang plazas)
- *   F→G, G→H, H→I: 250' each
- *   I→J, J→K: 150' each (narrower outer blocks)
+ *   Esp→A: 20 + 400 + 15 = 435'
+ *   A→B→C→D: 15 + 250 + 15 = 280' each
+ *   D→E: 15 + 250 + 20 = 285'
+ *   E→F: 20 + 450 + 15 = 485'
+ *   F→G→H→I: 15 + 250 + 15 = 280' each
+ *   I→J: 15 + 150 + 15 = 180'
+ *   J→K: 15 + 150 + 25 = 190'
  */
 const BRC_2026: BrcMapData = {
   year: 2026,
   center: { lat: 40.783242, lng: -119.207871 },
-  twelveBearingDeg: 225,
+  twelveBearingDeg: 45,
   streetRadiiFeet: [
-    2500,                          // Esplanade
-    2900,                          // A  (+400)
-    3150, 3400, 3650, 3900,        // B, C, D, E  (+250 each)
-    4350,                          // F  (+450, mid-city double)
-    4600, 4850, 5100,              // G, H, I  (+250 each)
-    5250, 5400,                    // J, K  (+150 each)
+    2500,                          // Esplanade (40' wide)
+    2935,                          // A  (+435)
+    3215, 3495, 3775,              // B, C, D (+280 each)
+    4060,                          // E  (+285; 40' wide)
+    4545,                          // F  (+485, mid-city double block)
+    4825, 5105, 5385,              // G, H, I (+280 each)
+    5565, 5755,                    // J (+180), K (+190; 50' wide)
   ],
   streetLetters: [
     'Esplanade', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K',
@@ -148,19 +176,12 @@ const BRC_2026: BrcMapData = {
     'Esplanade', 'Ararat', 'Bodhi', 'Chomolungma', 'Delphi', 'Eternal',
     'Fulcrum', 'Great Oak', 'Heiau', 'Iroko', 'Jiba', 'Kundalini',
   ],
-  // Radial streets: every 30 minutes 2:00–10:00, plus the 15-minute
-  // interstitials used in the outer blocks of the 2026 plan (see the PDF).
-  radialClockPositions: [
-    '2:00', '2:15', '2:30', '2:45',
-    '3:00', '3:15', '3:30',
-    '4:00', '4:30',
-    '5:00', '5:30',
-    '6:00', '6:30',
-    '7:00', '7:30',
-    '8:00', '8:30', '8:45',
-    '9:00', '9:15', '9:30', '9:45',
-    '10:00',
-  ],
+  // Official street_lines.geojson: :00/:30 run Esplanade→K;
+  // :15/:45 are outer-city streets from F→K.
+  radialStreets: Array.from({ length: 33 }, (_, index) => ({
+    clock: `${2 + Math.floor(index / 4)}:${String((index % 4) * 15).padStart(2, '0')}`,
+    innerStreet: index % 2 === 0 ? 'Esplanade' : 'F',
+  })),
   // Trash-fence pentagon — official 2026 vertices from the
   // Measurements PDF (https://bm-innovate.s3.amazonaws.com/2026/
   // 2026%20BRC%20Measurements.pdf). The PDF labels the first vertex
@@ -175,15 +196,12 @@ const BRC_2026: BrcMapData = {
 };
 
 /**
- * 2025 BRC, theme "Tomorrow Today" (sci-fi authors A→K). Block depths
- * match the 2026 / 2023-baseline layout. Golden Spike + fence pentagon
+ * 2025 BRC, theme "Tomorrow Today" (sci-fi authors A→K). Official street
+ * centerline radii match the 2026 layout described above. Golden Spike + fence pentagon
  * are 2025-specific (the city moved ~1,400 ft NE between 2025 and 2026).
  *
- *   Esp→A: 400'     (wide entry block)
- *   A→B, B→C, C→D, D→E: 250' each
- *   E→F: 450'       (mid-city double for Ellison↔Farmer plazas)
- *   F→G, G→H, H→I: 250' each
- *   I→J, J→K: 150' each
+ * The centerline values deliberately include street widths. Do not rebuild
+ * this array by adding only the clear block depths from the measurements PDF.
  *
  * Sources:
  *   - Golden Spike + fence: 2025 BRC Measurements (S3 mirror — webassets
@@ -199,14 +217,14 @@ const BRC_2026: BrcMapData = {
 const BRC_2025: BrcMapData = {
   year: 2025,
   center: { lat: 40.786958, lng: -119.202994 },
-  twelveBearingDeg: 225,
+  twelveBearingDeg: 45,
   streetRadiiFeet: [
     2500,                          // Esplanade
-    2900,                          // A  Atwood     (+400)
-    3150, 3400, 3650, 3900,        // B C D E       (+250 each)
-    4350,                          // F  Farmer     (+450, mid-city double)
-    4600, 4850, 5100,              // G H I         (+250 each)
-    5250, 5400,                    // J K           (+150 each)
+    2935,                          // A  Atwood
+    3215, 3495, 3775, 4060,        // B C D E
+    4545,                          // F  Farmer (after mid-city double block)
+    4825, 5105, 5385,              // G H I
+    5565, 5755,                    // J K
   ],
   streetLetters: [
     'Esplanade', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K',
@@ -217,17 +235,10 @@ const BRC_2025: BrcMapData = {
   ],
   // Every 15 minutes 2:00–10:00. :00 / :30 are full radials reaching
   // Esplanade; :15 / :45 are outer-block (Farmer–Kilgore) radials only.
-  radialClockPositions: [
-    '2:00', '2:15', '2:30', '2:45',
-    '3:00', '3:15', '3:30', '3:45',
-    '4:00', '4:15', '4:30', '4:45',
-    '5:00', '5:15', '5:30', '5:45',
-    '6:00', '6:15', '6:30', '6:45',
-    '7:00', '7:15', '7:30', '7:45',
-    '8:00', '8:15', '8:30', '8:45',
-    '9:00', '9:15', '9:30', '9:45',
-    '10:00',
-  ],
+  radialStreets: Array.from({ length: 33 }, (_, index) => ({
+    clock: `${2 + Math.floor(index / 4)}:${String((index % 4) * 15).padStart(2, '0')}`,
+    innerStreet: index % 2 === 0 ? 'Esplanade' : 'F',
+  })),
   // Trash-fence pentagon — official P1–P5 from the 2025 measurements PDF.
   fencePentagon: [
     { lat: 40.783388, lng: -119.232725 }, // P1 (W)
@@ -250,42 +261,26 @@ export const BRC_BY_YEAR: Record<number, BrcMapData> = {
 
 /**
  * Year that the `directory` source represents. Bumped by the
- * `/update-map` skill alongside `BRC_BY_YEAR` whenever a new burn
- * year's plan is published. The directory scrape always reflects the
- * current pre-burn year, so this and the `BRC_BY_YEAR` head should
- * track the same value.
+ * `/update-map` skill when the directory source rolls over. Geometry may be
+ * published later; until the matching `BRC_BY_YEAR` entry lands, source-aware
+ * map consumers deliberately show an unavailable state.
  */
 export const DIRECTORY_YEAR = 2026;
 
-/**
- * Resolve a year to its BRC constants. Falls back to the most recent
- * known year when `year` is missing from `BRC_BY_YEAR` (e.g., the user
- * has an `api-2027` source but `/update-map 2027` hasn't been run yet),
- * with a one-time `console.warn`. Caller should never end up with `null`.
- */
-export function getBrcForYear(year: number): BrcMapData {
-  const direct = BRC_BY_YEAR[year];
-  if (direct) return direct;
-  // Pick the highest known year as the fallback. For older missing
-  // years (e.g., a future api-2024 added before backfill), this still
-  // gives the user *something* to render — better than crashing.
-  const known = Object.keys(BRC_BY_YEAR).map(Number).sort((a, b) => b - a);
-  const fallback = known.length > 0 ? BRC_BY_YEAR[known[0]] : BRC_2026;
-  if (typeof console !== 'undefined') {
-    // One-line dev hint; production users won't hit this unless they're
-    // on a build that's missing geometry for one of its embedded sources.
-    console.warn(
-      `[BRC_BY_YEAR] no entry for year ${year}; falling back to ${fallback.year}.`
-      + ' Run /update-map for the missing year to remove this warning.',
-    );
-  }
-  return fallback;
+/** Resolve a year only when its exact geometry is present.
+ *
+ * Annual camp/API data and city geometry are released in stages. Returning a
+ * different year's constants here would make a healthy source look usable
+ * while placing every address at subtly wrong coordinates. Callers that render
+ * source data must treat null as "map not available for this year yet". */
+export function getBrcForYear(year: number): BrcMapData | null {
+  return BRC_BY_YEAR[year] ?? null;
 }
 
 /**
  * Backward-compat default: code that doesn't yet know about per-year
- * geometry imports `BRC` and gets the directory-year entry. New code
- * that's source-aware should use `getBrcForYear(year)` /
- * `getBrcForSource(source)` (in hooks/useSource).
+ * geometry imports `BRC` and gets a known geometry object. Source-aware code
+ * must use the nullable exact-year resolver instead; this compatibility export
+ * must never be used to place records from an arbitrary source year.
  */
-export const BRC: BrcMapData = getBrcForYear(DIRECTORY_YEAR);
+export const BRC: BrcMapData = BRC_BY_YEAR[DIRECTORY_YEAR] ?? BRC_2026;

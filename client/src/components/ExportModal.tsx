@@ -3,9 +3,9 @@
 // picker lets the user opt items out before download.
 //
 // Snapshot shape: see `client/src/utils/exportImport.ts`. The
-// `friends` map is included unconditionally — it's per-source state
-// that doesn't benefit from per-item picking, and snapshots are the
-// path users take to migrate between devices.
+// `friends` map is included by default — it's per-source state that
+// doesn't benefit from per-item picking. The sender nickname is always
+// included because it is the snapshot's identity and import key.
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { Art, Camp, MeetSpot, Source } from '../types';
 import { LS } from '../types';
@@ -45,7 +45,6 @@ export function ExportModal({
   );
   const [includeMyCamp, setIncludeMyCamp] = useState(true);
   const [includeFriends, setIncludeFriends] = useState(true);
-  const [includeNickname, setIncludeNickname] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -55,7 +54,6 @@ export function ExportModal({
     setPickedMeetIdxs(new Set(meetSpots.map((_, i) => String(i))));
     setIncludeMyCamp(true);
     setIncludeFriends(true);
-    setIncludeNickname(true);
   }, [open, campIds, eventIds, artIds, meetSpots]);
 
   const campById = useMemo(() => {
@@ -122,11 +120,17 @@ export function ExportModal({
 
   function exportNow() {
     // Read the full snapshot, then mask out anything the user
-    // unchecked. Friends + nickname are kept all-or-nothing.
+    // unchecked. Nickname is mandatory and cannot be masked out.
     const full = buildSnapshot(source);
+    const nickname = full.nickname.trim();
+    if (!nickname) {
+      alert('Set your nickname in the header before exporting your data.');
+      onClose();
+      return;
+    }
     const filtered: Snapshot = {
       ...full,
-      nickname: includeNickname ? full.nickname : '',
+      nickname,
       campFavs: full.campFavs.filter((id) => pickedCamps.has(id)),
       eventFavs: full.eventFavs.filter((id) => pickedEvents.has(id)),
       artFavs: full.artFavs?.filter((id) => pickedArt.has(id)),
@@ -214,20 +218,16 @@ export function ExportModal({
                 </span>
               </label>
             )}
-            <label class="include-row">
-              <input
-                type="checkbox"
-                checked={includeNickname}
-                onChange={() => setIncludeNickname((v) => !v)}
-              />
+            <div class="include-row">
               <span class="include-row-body">
-                <span class="include-row-name">Your nickname</span>
+                <span class="include-row-name">
+                  Your nickname: {readString(LS.nickname, '').trim()}
+                </span>
                 <span class="include-row-subtitle">
-                  Used as the export filename + as your sender name
-                  if the imported snapshot is shared.
+                  Always included as the export identity and filename.
                 </span>
               </span>
-            </label>
+            </div>
             {friendCount > 0 && (
               <label class="include-row">
                 <input
@@ -251,7 +251,6 @@ export function ExportModal({
               class="primary-btn"
               type="button"
               onClick={exportNow}
-              disabled={willExport === 0 && !includeFriends && !includeNickname}
             >
               Download snapshot{willExport > 0 ? ` (${willExport} item${willExport === 1 ? '' : 's'})` : ''}
             </button>

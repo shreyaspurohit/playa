@@ -40,6 +40,8 @@ change touches one of these subsystems.
 - [`docs/dev/client-architecture.md`](docs/dev/client-architecture.md) — compact client implementation reference
 - [`docs/dev/html-scraping-patterns.md`](docs/dev/html-scraping-patterns.md) — directory HTML parser patterns
 - [`docs/dev/site-ui.md`](docs/dev/site-ui.md) — compact data-embed and UI reference
+- [`docs/dev/mobile-visual-testing.md`](docs/dev/mobile-visual-testing.md) — mobile visual-review runbook, including safe headless screenshots and encrypted-build restoration
+- [`docs/dev/annual-map-update.md`](docs/dev/annual-map-update.md) — canonical yearly city-geometry/GIS-layer refresh and release checklist
 - [`docs/roadmap.md`](docs/roadmap.md) — future ideas, not implemented architecture
 
 When adding a new subsystem worth of decisions, follow the template in
@@ -154,6 +156,9 @@ python -m playa tag            → data/camps_tagged.csv + data/art_tagged.csv
 python -m playa build          → site/index.html  (injects bundle + camps + art)
 python -m playa all            → nightly pipeline (bundle must already exist)
 python -m playa api-fetch --year YYYY → data/api/YYYY.json (camps + events + art cache)
+python -m playa gis-fetch [--year YYYY] [--force] → strict official map refresh
+python -m playa gis-fetch [--best-effort] → build-facing refresh; warn/continue per year
+python -m playa map-audit --year YYYY … → read-only annual base-grid candidate report
 ```
 
 `make fetch`, `make rebuild`, `make build` all include the bundle step
@@ -191,8 +196,14 @@ for friends-scale traffic today.
   each namespaces its regexes next to the `parse()` classmethod. Also
   exposes `_clean()` helper (HTML entity decode + tag strip + whitespace
   collapse).
-- `fetcher.py` — `Fetcher(config)`. Only class that touches the network.
+- `fetcher.py` — `Fetcher(config)`. Owns directory HTTP access:
   `fetch()` with retries + backoff, `fetch_page()` / `fetch_page_to_file()`.
+- `gis.py` — `GisFetcher(config)` plus pure normalization/validation helpers.
+  Fetches the official annual GeoJSON, applies the reviewed POI allowlist,
+  preserves toilet polygons, and writes a year-keyed atomic cache.
+- `mapaudit.py` — pure annual `street_lines.geojson` validation/extraction.
+  Reports schema/digest/bounds and derives reviewed street-radius/radial-range
+  candidates; never edits `data.ts` or participates in normal builds.
 - `tagger.py` — `TAGS` dict (taxonomy of ~120 tags) + `Tagger(taxonomy)`
   class. `tag(text)`, `tag_camp(camp)`, `haystack(camp)` helpers.
 - `timeparser.py` — normalizes raw event time strings into a structured
@@ -230,6 +241,9 @@ wrapping them in classes would have been pure ceremony.
 | `BM_API_TIMEOUT`     | `120`                         | Timeout in seconds for each bulk API request                                                     |
 | `BM_API_YEARS`       | *(unset)*                     | Comma-separated years (`2024,2025`) — auto-derives `--sources directory,api-2024,api-2025`       |
 | `BM_CACHE_PASSWORD`  | falls back to `SITE_PASSWORD` | Password used to AES-256-CBC encrypt API cache assets uploaded to GitHub Releases                |
+| `BRC_MAP_YEAR`       | `2026`                        | Official GIS/map year paired with the live directory source                                      |
+| `BM_GIS_BASE_URL`    | official GitHub raw URL       | Override the annual GIS repository base for testing                                               |
+| `BM_GIS_TIMEOUT`     | `30`                          | Timeout in seconds for each official GIS request                                                  |
 | `SITE_TIERS`         | *(unset)*                     | Multi-tier access. Format: `name1:pw1=src1+src2,name2:pw2=src3,…`. Each tier (name + password) unlocks its source list via per-source envelope encryption. Tier names required — `spirit-mode` is the reserved name D13 looks up for burn-key.json; `god-mode` is the reserved name D8 looks up to flag wrappers as trusted (location-embargo bypass). Conventional shape: `god-mode:$GOD_PW=directory+api-2025+api-2026,demigod-mode:$DEMIGOD_PW=api-2025+api-2026,spirit-mode:$SPIRIT_PW=api-2026`. Unset → falls through to single-tier `SITE_PASSWORD`. See ADR D10. |
 | `BURN_OPEN`          | `0` / unset                   | `workflow_dispatch` override for D13 burn-window auto-unlock. When `1`, deploys `site/burn-key.json` alongside `index.html` so the client auto-unlocks `spirit-mode` without a password. `god-mode` / `demigod-mode` stay password-gated. |
 | `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` | unset | Repo *variables* (Settings → Secrets and variables → Actions → Variables). ISO dates. When both set, the nightly cron evaluates today-in-window and auto-includes / auto-removes `burn-key.json` — set-once-forget, no manual flip per burn. Manual `BURN_OPEN` input always wins. See ADR D13. |
@@ -328,6 +342,8 @@ release-note, and builder integration coverage). JS tests live at
   - `art.csv`, `art_tagged.csv` — parallel art merge/tag outputs.
   - `api/YYYY.json` — plaintext or openssl-encrypted API year snapshot;
     never committed.
+  - `gis/YYYY/{cpns.geojson,plazas.geojson,toilets.geojson,normalized.json}` — official
+    annual map inputs plus the compact validated payload; never committed.
 - `site/` — published artifacts. **`index.html` is gitignored**; other
   files are Pages config that ride along in the artifact.
   - `index.html` — self-contained site. Historical directory-only builds were
@@ -782,8 +798,9 @@ samples and extend `_BEGINS_RE`/`_FROM_RE` or add a third regex.
   one-line joke camps or blank descriptions — rarely worth chasing.
 - Dependency graph: `config` is a leaf; `models` depends on nothing;
   `parsers` ← `models`; `fetcher` ← `config, models, parsers`;
+  `gis` ← `config`; `mapaudit` is a leaf (pure GeoJSON/math helpers);
   `tagger` ← `models`; `timeparser` is a leaf (pure functions on
-  strings); `builder` ← `config, models, tagger, timeparser`;
+  strings); `builder` ← `config, gis, models, tagger, timeparser`;
   `meta` / `merger` ← `config`; `cli` ← everything. No cycles.
 
 ## Tests
@@ -822,6 +839,23 @@ both suites in the `test` job before the `build` job touches anything.
   occurrence grouping, cache encryption, denylists, and partial shapes.
 - `backend/tests/test_art_model.py` — art-model serialization and normalization.
 - `backend/tests/test_release_notes.py` — `rn:` history parsing and safe embeds.
+- `backend/tests/test_gis.py` — annual CPN aliases/introduction years,
+  allowlist exclusion, coordinate order, polygon centroids/rings, duplicate-ID
+  rejection, atomic cache provenance, cached-fetch reuse, and optional
+  not-yet-published GIS 404 behavior; strict explicit fetch versus per-year
+  failure isolation in automatic/nightly orchestration, including corrupt-cache
+  isolation at final site assembly and non-forced nightly cache reuse.
+- `backend/tests/test_mapaudit.py` — annual street-line schema/coordinate
+  validation, calibrated centerline extraction, connector-road exclusion,
+  radial ring-intersection starts, and copyable TypeScript formatting.
+- `client/tests/gis.test.ts` / `MapView.test.ts` — embedded annual payload
+  ingest, layer defaults, non-color icon distinctions, POI tap labels/details,
+  nearest-marker hit resolution, selected-POI reframing, compact/default-off
+  Boundary behavior, external navigation, persisted layer toggles, exact
+  current/previous geometry, a future-released current-year API camp location,
+  and the non-rendering future-year state.
+- `client/tests/ScheduleView.test.ts` — missing future geometry disables only
+  the coordinate-dependent Near-me filter; historical geometry remains active.
 
 All tests construct a `Config(root=tmp_path)` and operate entirely in
 temp dirs — no module-level `patch.object` hacks. That's the main
@@ -844,7 +878,7 @@ One-time setup in the repo:
    - `SITE_TIERS` — production envelope tier/password/source manifest.
    - `BM_API_KEY` and `BM_CACHE_PASSWORD` — API refresh + encrypted cache.
    - `CONTACT_EMAIL` — where takedown mail should go.
-   Add repository variables `BM_API_YEARS`, `BURN_WINDOW_OPEN_FROM`,
+   Add repository variables `BM_API_YEARS`, `BRC_MAP_YEAR`, `BURN_WINDOW_OPEN_FROM`,
    `BURN_WINDOW_OPEN_TO`, and optionally `PLAYA_GO_LIVE`.
 4. Custom domain: `site/CNAME` is already committed with
    `playa.purohit.dev`. Add a `CNAME` DNS record for `playa` at
@@ -954,6 +988,10 @@ works offline after first load. Fits the privacy stance.
   radii in feet, radial clock positions, fence pentagon. Updated
   annually by the `/update-map` Claude skill; see the file's header
   for the refresh procedure.
+- `backend/src/playa/mapaudit.py` — read-only annual extractor for official
+  `street_lines.geojson`. It fingerprints/schema-checks the input and prints
+  candidate radii/radial ranges, avoiding manual coordinate measurement while
+  keeping source edits and non-street fields behind review.
 - `client/src/map/address.ts` — pure functions:
   `parseAddress("7:30 & F")`, `clockToCompass(hr)`,
   `destinationPoint(lat, lng, bearingDeg, distFt)`, `haversineMeters`,
@@ -962,8 +1000,12 @@ works offline after first load. Fits the privacy stance.
 - `client/src/components/MapView.tsx` — SVG renderer. Draws the
   concentric streets (as big arcs from 2:00 → 10:00 the long way
   around the back of the city, so the 6:00 opening is empty), radial
-  streets, the Man, labels, starred camps as pins, and a "you are
-  here" dot + bearing line when GPS is granted.
+  streets, the Man effigy, labels, starred camps as bookmarks, and a "you are
+  here" bullseye + bearing line when GPS is granted.
+- `getBrcForYear()` / `brcForSource()` are exact-year, nullable resolvers.
+  Staged current-year sources with no geometry show a year-specific unavailable
+  Map state instead of borrowing previous coordinates; other views keep
+  working, and Schedule Near-me disables until exact geometry exists.
 - `client/src/hooks/useGeolocation.ts` — wraps
   `navigator.geolocation.watchPosition`. Opt-in — no permission
   prompt until the user clicks "Use my GPS".
@@ -972,11 +1014,16 @@ works offline after first load. Fits the privacy stance.
 
 ```
 Golden Spike (the Man)   40.783242, -119.207871
-True N aligns with       BRC 4:30 axis
-Therefore BRC 12:00 bears 225° (SW); 6:00 → 45° (NE)
+True N/S follows         BRC 4:30/10:30 axis
+BRC 12:00 bears          45° (NE); 6:00 → 225° (SW), verified against official GIS CPN anchors
 Esplanade radius         2500 ft
-Block depths: Esp→A = 400, A→E = 250, E→F = 450 (mid-city plaza),
-              F→I = 250, I→J = 150, J→K = 150
+Street centerlines: Esp 2500, A 2935, B 3215, C 3495, D 3775,
+                    E 4060, F 4545, G 4825, H 5105, I 5385,
+                    J 5565, K 5755 ft
+Clear block depths: Esp→A = 400, A→E = 250, E→F = 450,
+                    F→I = 250, I→J = 150, J→K = 150
+Centerline spacing includes those clear depths plus half the width of each
+bordering street; do not use the block depths themselves as radial deltas.
 Streets: Esplanade + Ararat(A) Bodhi(B) Chomolungma(C) Delphi(D)
          Eternal(E) Fulcrum(F) Great Oak(G) Heiau(H) Iroko(I)
          Jiba(J) Kundalini(K)
@@ -984,8 +1031,8 @@ Streets: Esplanade + Ararat(A) Bodhi(B) Chomolungma(C) Delphi(D)
 
 The **SVG convention** is 12:00 at positive-y (up) with the viewBox
 centered on the Man. The `addressToSvgFeet` output is in raw feet; the
-component sets a ±6000ft viewBox so K street (5400ft) fits with ~10%
-margin. Clock-hour rotation: `theta = (hour / 12) * 2π` clockwise from
+component sets a ±6000ft viewBox so K street (5755ft) fits with a compact
+245ft margin. Clock-hour rotation: `theta = (hour / 12) * 2π` clockwise from
 "up" — so 3:00 is (+x, 0), 6:00 is (0, +y), 9:00 is (−x, 0).
 
 ### GPS → SVG
@@ -1009,8 +1056,11 @@ map is for *on the playa* where no tile server is reachable.
 says "new year's plan is out"). It walks through pulling the Golden
 Spike coords from `innovate.burningman.org`, the block depths from the
 measurements PDF, and the themed street names from the city-plan page;
-then does targeted edits to `client/src/map/data.ts` + bumps the
-"Last refreshed" comment. Only rendering code stays hands-off.
+uses `playa map-audit` to derive candidate street radii/radial ranges; then
+audits the official GIS aliases/layers and performs targeted year-keyed edits.
+`docs/dev/annual-map-update.md` is the canonical full checklist. Only
+rendering code stays hands-off unless the published city model fundamentally
+changes.
 
 ## Official BM APIs + datasets
 

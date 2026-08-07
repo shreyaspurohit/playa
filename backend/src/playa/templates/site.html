@@ -951,7 +951,8 @@ __TIER_WRAPPERS_META__
     -webkit-tap-highlight-color: transparent;
     transition: color 0.12s, background 0.12s, border-color 0.12s;
   }
-  .sched-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .sched-filter-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .sched-filter-btn:disabled { opacity: 0.48; cursor: not-allowed; }
   .sched-filter-btn.active {
     background: var(--accent); color: #fff; border-color: var(--accent);
   }
@@ -1064,11 +1065,61 @@ __TIER_WRAPPERS_META__
 
   /* === Map view ======================================================= */
   .map-wrap { padding: 16px 24px 64px; }
-  .map-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .map-control-panel {
+    position: sticky;
+    top: calc(var(--site-chrome-height, 0px) - 1px);
+    z-index: 9;
+    margin: -8px 0 12px;
+    padding: 8px 0 10px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 5px 10px rgba(0, 0, 0, 0.08);
+  }
+  .map-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
   .map-title { margin: 0; font-size: 18px; font-weight: 600; }
   .map-sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
   .map-sub code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--chip-bg); padding: 1px 4px; border-radius: 3px; }
+  .map-geometry-unavailable {
+    max-width: 620px; margin: 28px auto; padding: 24px;
+    border: 1px dashed var(--border); border-radius: 12px;
+    background: var(--card); text-align: center; color: var(--text);
+  }
+  .map-geometry-unavailable strong { font-size: 16px; }
+  .map-geometry-unavailable p {
+    margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55;
+  }
   .map-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .map-layer-bar {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0;
+  }
+  .map-layer-label {
+    flex: 0 0 auto; color: var(--muted); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .map-layer-scroll {
+    display: flex; gap: 7px; min-width: 0;
+    overflow-x: auto; overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .map-layer-scroll::-webkit-scrollbar { display: none; }
+  .map-layer-toggle {
+    display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px;
+    min-height: 36px; padding: 7px 11px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--card); color: var(--muted);
+    font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .map-layer-toggle > span {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; border-radius: 5px;
+    background: var(--chip-bg); color: var(--text);
+    font-size: 10px; font-weight: 800;
+  }
+  .map-layer-toggle.active {
+    border-color: var(--accent); background: var(--accent-soft);
+    color: var(--text);
+  }
   .map-zoom-ctl {
     display: inline-flex; align-items: center; gap: 0;
     border: 1px solid var(--border); border-radius: 999px;
@@ -1108,10 +1159,8 @@ __TIER_WRAPPERS_META__
   .map-gps { font-size: 12px; color: var(--muted); }
   .map-gps-err { font-size: 12px; color: #c2410c; }
   .brc-svg {
-    /* Aspect ratio mirrors the SVG viewBox (12000 × 9300). The SVG is
-       cropped vertically because the city only occupies the lower
-       half of the clock face — no point reserving a square box for
-       empty deep-playa above. */
+    /* MapView supplies the current viewBox ratio inline. The fallback is the
+       compact city extent used before official POIs could make the view taller. */
     width: 100%; max-width: 900px; aspect-ratio: 12 / 9.3; display: block;
     margin: 0 auto; background: var(--bg);
     border: 1px solid var(--border); border-radius: 12px;
@@ -1122,12 +1171,30 @@ __TIER_WRAPPERS_META__
   .brc-svg.pannable { cursor: grab; touch-action: none; }
   .brc-svg.pannable:active { cursor: grabbing; }
   .brc-playa { fill: var(--chip-bg); opacity: 0.4; }
+  .brc-trash-fence {
+    fill: none; stroke: #e11d48; stroke-width: 20;
+    stroke-dasharray: 70 44; opacity: 0.78;
+    pointer-events: none;
+  }
   /* Base grid — thicker + more opaque than before so the clock ×
      letter mesh reads as a coordinate grid instead of decoration. */
   .brc-street { stroke: var(--muted); stroke-width: 22; opacity: 0.75; fill: none; }
   .brc-street.esplanade { stroke-width: 32; opacity: 0.95; }
   .brc-street.radial { stroke-width: 16; opacity: 0.55; }
   .brc-street.axis { stroke: var(--accent); stroke-width: 10; opacity: 0.35; stroke-dasharray: 40 40; }
+  .brc-map-area {
+    fill: var(--bg); fill-opacity: 0.92;
+    stroke: var(--area-color, var(--muted)); stroke-width: 18;
+    cursor: pointer;
+  }
+  .brc-map-area-center-camp { --area-color: #c026d3; }
+  .brc-map-area.active {
+    fill: var(--accent-soft); fill-opacity: 0.95;
+    stroke-width: 30;
+  }
+  .brc-map-area:focus-visible {
+    outline: none; stroke: var(--accent); stroke-width: 34;
+  }
   /* Intersection highlight — fires when a camp is selected so the
      user can trace the address back to the grid. Purely decorative:
      pointer-events off so the halo doesn't steal clicks meant for
@@ -1212,7 +1279,21 @@ __TIER_WRAPPERS_META__
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     font-variant-numeric: tabular-nums;
   }
-  .brc-man { fill: var(--accent); stroke: var(--text); stroke-width: 8; }
+  .brc-man { pointer-events: none; }
+  .brc-man-halo { fill: var(--accent); opacity: 0.13; }
+  .brc-man-limbs-outline {
+    fill: none; stroke: var(--text); stroke-width: 46;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .brc-man-limbs {
+    fill: none; stroke: var(--accent); stroke-width: 28;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .brc-man-body,
+  .brc-man-head {
+    fill: var(--accent); stroke: var(--text); stroke-width: 8;
+    stroke-linejoin: round;
+  }
   .brc-label { font-size: 180px; fill: var(--muted); font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
   .brc-label.man-label { fill: var(--accent); font-weight: 600; font-size: 230px; }
   /* Selected-camp address readout — prominent, above the Man label.
@@ -1241,19 +1322,35 @@ __TIER_WRAPPERS_META__
      count clicks/taps inside; `transparent` keeps it invisible while
      still opaque to hit-testing. Fixes tiny-target tap failures on
      mobile (Firefox especially). */
-  .brc-pin-hit { fill: transparent; }
+  .brc-pin-hit {
+    fill: transparent; stroke: transparent; stroke-width: 44px;
+    vector-effect: non-scaling-stroke; pointer-events: all;
+  }
   .brc-pin-outer { fill: #f59e0b; opacity: 0.35; }
-  .brc-pin-inner { fill: #f59e0b; stroke: #1a1a1a; stroke-width: 8; }
+  .brc-pin-inner {
+    fill: #f59e0b; stroke: #1a1a1a; stroke-width: 8;
+    stroke-linejoin: round;
+  }
+  .brc-pin-glyph {
+    fill: #fff; font-size: 48px; font-weight: 900;
+    pointer-events: none;
+    paint-order: stroke; stroke: rgba(0, 0, 0, 0.25); stroke-width: 2px;
+  }
   .brc-pin.friend .brc-pin-outer { fill: var(--accent); opacity: 0.25; }
   .brc-pin.friend .brc-pin-inner { fill: var(--accent); }
-  .brc-pin.active .brc-pin-outer { opacity: 0.7; r: 130; }
+  .brc-pin.active .brc-pin-outer { opacity: 0.7; }
   .brc-pin.active .brc-pin-inner { stroke-width: 14; }
-  /* Nav-target pin — rendered when the user navigates to a camp/art
-     they haven't starred. Same shape and size as a regular pin so it
-     reads consistently; uses the accent color (orange) so it doesn't
-     impersonate a "you starred this" gold pin. */
-  .brc-pin.nav-target .brc-pin-outer { fill: var(--accent); opacity: 0.4; }
-  .brc-pin.nav-target .brc-pin-inner { fill: var(--accent); }
+  /* Unsaved navigation target: orange crosshair. It must not resemble
+     the bookmark silhouette used for a starred camp. */
+  .brc-nav-target-halo { fill: var(--accent); opacity: 0.18; }
+  .brc-nav-target-ring {
+    fill: var(--bg); stroke: var(--accent); stroke-width: 13;
+    stroke-dasharray: 20 12;
+  }
+  .brc-nav-target-cross {
+    fill: none; stroke: var(--accent); stroke-width: 12;
+    stroke-linecap: round;
+  }
   /* Art pins — star shape; distinct hue from camps + meet spots so
      the "this is art" affordance reads at a glance. Two color slots
      mirror the camp pattern (mine = the warm accent of the entity
@@ -1276,11 +1373,14 @@ __TIER_WRAPPERS_META__
   .brc-art-pin.active .brc-art-pin-body {
     stroke-width: 12;
   }
-  /* Nav-target art pin — same role as `.brc-pin.nav-target` but for
-     the star shape. Solid magenta, same as a regular art pin. */
+  /* Unsaved art navigation target: hollow/dashed star. It preserves the
+     art silhouette but cannot be mistaken for a filled favorite. */
   .brc-art-pin.nav-target .brc-art-pin-body {
-    fill: #c026d3;
-    opacity: 0.95;
+    fill: var(--bg);
+    stroke: #c026d3;
+    stroke-width: 14;
+    stroke-dasharray: 22 12;
+    opacity: 1;
   }
   /* Sidebar list-row marker for an art pin — 5-point star clipped
      out of a colored square. Mine = magenta, friend-only = teal.
@@ -1320,8 +1420,15 @@ __TIER_WRAPPERS_META__
     stroke: var(--highlight-color, var(--accent));
     stroke-width: 14; stroke-dasharray: 60 40; opacity: 0.9;
   }
-  .brc-user-halo { fill: #3b82f6; opacity: 0.25; }
-  .brc-user-dot { fill: #3b82f6; stroke: #fff; stroke-width: 10; }
+  .brc-user-halo { fill: #3b82f6; opacity: 0.22; }
+  .brc-user-ring {
+    fill: var(--bg); stroke: #2563eb; stroke-width: 12;
+  }
+  .brc-user-cross {
+    fill: none; stroke: #2563eb; stroke-width: 10;
+    stroke-linecap: round;
+  }
+  .brc-user-dot { fill: #2563eb; stroke: #fff; stroke-width: 7; }
 
   .map-list { margin-top: 14px; }
   .map-list h4 { margin: 0 0 8px; font-size: 14px; }
@@ -1334,18 +1441,17 @@ __TIER_WRAPPERS_META__
   }
   .map-pin-row:hover { border-color: var(--accent); }
   .map-pin-row.active { background: var(--accent-soft); border-color: var(--accent); }
-  /* Camp marker — small circle that mirrors the SVG `.brc-pin-inner`
-     so the list and the map use the same shape and same fill. Mine =
-     gold (matches the map's `.brc-pin-inner` for own stars), friend-
-     only = accent orange (matches the friend variant). */
+  /* Camp favorite — bookmark silhouette, matching the SVG. */
   .map-pin-dot {
     flex: 0 0 auto;
-    display: inline-block;
-    width: 12px; height: 12px; margin-top: 4px;
-    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 20px; margin-top: 1px;
+    border-radius: 2px 2px 0 0;
     background: var(--accent);
     border: 1.5px solid #1a1a1a;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%);
+    color: #fff; font-size: 9px; font-weight: 900; line-height: 1;
   }
   .map-pin-dot.mine { background: #f59e0b; }
   .map-pin-mid {
@@ -1533,17 +1639,15 @@ __TIER_WRAPPERS_META__
     color: hsl(var(--friend-hue, 20), 65%, 45%);
     line-height: 1;
   }
-  /* Meet-spot list marker — mirrors the map's `.brc-meet-dot` so the
-     list and map use the same shape AND the same color. Friend
-     variant pulls its hue from --friend-hue (set inline via
-     friendHueStyle). White-ish ring matches the SVG dot's outline. */
+  /* Meet-spot list marker — a four-point rendezvous spark, matching SVG. */
   .map-meet-dot {
     flex: 0 0 auto;
-    display: inline-block;
-    width: 12px; height: 12px; margin-top: 4px;
-    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; margin: 3px 1px 0;
+    clip-path: polygon(50% 0, 65% 35%, 100% 50%, 65% 65%, 50% 100%, 35% 65%, 0 50%, 35% 35%);
     border: 1.5px solid var(--bg);
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+    color: #fff; font-size: 13px; line-height: 1;
   }
   .map-meet-dot.mine { background: var(--meet); }
   .map-meet-dot.friend {
@@ -1598,6 +1702,11 @@ __TIER_WRAPPERS_META__
     fill: var(--my-camp); stroke: #fff; stroke-width: 8;
     stroke-linejoin: round;
   }
+  .brc-tent-detail {
+    fill: none; stroke: #fff; stroke-width: 8;
+    stroke-linecap: round; stroke-linejoin: round; pointer-events: none;
+  }
+  .brc-tent-detail.friend { stroke-width: 5; }
   .brc-my-camp.active .brc-my-camp-body { stroke-width: 12; }
   .brc-friend-camp { cursor: pointer; }
   .brc-friend-camp-halo {
@@ -1623,13 +1732,12 @@ __TIER_WRAPPERS_META__
     pointer-events: none;
   }
   .brc-meet { cursor: pointer; }
-  /* Bright filled dot — same shape language as camp pins / POIs, so
-     the whole map reads as a uniform graph of dots. Friend tint via
-     --friend-hue (set inline by the .friend variant); your own
-     spots use the violet --meet accent. */
+  /* Four-point rendezvous marker. Shape remains legible without a glyph;
+     a white center dot reinforces the meeting-point cue. */
   .brc-meet .brc-meet-dot {
     fill: var(--meet);
     stroke: #fff; stroke-width: 6;
+    stroke-linejoin: round;
   }
   .brc-meet.friend .brc-meet-dot {
     fill: hsl(var(--friend-hue, 20), 65%, 50%);
@@ -1639,6 +1747,7 @@ __TIER_WRAPPERS_META__
     stroke-width: 10;
     filter: brightness(1.1);
   }
+  .brc-meet-center { fill: #fff; pointer-events: none; }
   /* Points of interest — year-stable landmarks (Center Camp, Playa
      Info). Intentionally BIG: these are the two most-pointed-at
      places in BRC, so their pins should be unmissable orientation
@@ -1647,30 +1756,67 @@ __TIER_WRAPPERS_META__
   .brc-poi { cursor: pointer; }
   .brc-poi.active .brc-poi-halo { opacity: 0.5; }
   .brc-poi.active .brc-poi-dot { stroke: var(--bg); stroke-width: 8; }
-  .brc-poi-halo { fill: var(--muted); opacity: 0.22; }
-  .brc-poi-dot {
-    fill: var(--muted); stroke: #fff; stroke-width: 10;
+  .brc-poi:focus-visible { outline: none; }
+  .brc-poi:focus-visible .brc-poi-halo {
+    opacity: 0.65; stroke: var(--text); stroke-width: 18;
   }
-  .brc-poi-center-camp .brc-poi-halo { fill: #dc2626; opacity: 0.28; }
-  .brc-poi-center-camp .brc-poi-dot  { fill: #dc2626; }
-  .brc-poi-playa-info  .brc-poi-halo { fill: #0369a1; opacity: 0.28; }
-  .brc-poi-playa-info  .brc-poi-dot  { fill: #0369a1; }
+  .brc-poi-halo { fill: var(--poi-color, var(--muted)); opacity: 0.22; }
+  .brc-poi-dot {
+    fill: var(--poi-color, var(--muted)); stroke: #fff; stroke-width: 10;
+    stroke-linejoin: round;
+  }
+  .brc-poi-glyph {
+    fill: #fff; font-size: 48px; font-weight: 900;
+    pointer-events: none; paint-order: stroke;
+    stroke: rgba(0, 0, 0, 0.22); stroke-width: 2px;
+  }
+  .brc-poi-toilet .brc-poi-glyph { font-size: 30px; letter-spacing: -4px; }
+  .brc-toilet-footprint {
+    fill: #1d4ed8; fill-opacity: 0.13;
+    stroke: #1d4ed8; stroke-width: 12; stroke-opacity: 0.65;
+    cursor: pointer;
+  }
+  .brc-toilet-footprint.active {
+    fill-opacity: 0.3; stroke-width: 24; stroke-opacity: 0.95;
+  }
+  .brc-poi-center-camp .brc-poi-halo,
+  .brc-poi-playa-info .brc-poi-halo { opacity: 0.28; }
   /* Plazas — small social hubs at ring intersections. Muted teal so
      they don't compete with Center Camp / Playa Info, but still read
      as "civic landmark" (vs. user-authored stars + meet spots). */
-  .brc-poi-plaza .brc-poi-halo { fill: #0d9488; opacity: 0.20; }
-  .brc-poi-plaza .brc-poi-dot  { fill: #0d9488; }
-  /* Sidebar equivalent — small circle marker in the list row. */
-  .map-poi-dot {
-    display: inline-block;
-    width: 12px; height: 12px;
-    border-radius: 999px;
-    background: var(--muted);
-    margin-top: 4px;
+  .brc-poi-plaza .brc-poi-halo { opacity: 0.20; }
+  /* Sidebar equivalent — color + glyph match the map marker. */
+  .map-poi-icon {
+    display: inline-flex; flex: 0 0 27px; align-items: center;
+    justify-content: center; width: 27px; height: 27px;
+    border-radius: 0; margin-top: 1px;
+    background: var(--poi-color, var(--muted)); color: #fff;
+    font-size: 11px; font-weight: 900; line-height: 1;
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,0.55);
   }
-  .map-poi-center-camp { background: #dc2626; }
-  .map-poi-playa-info  { background: #0369a1; }
-  .map-poi-plaza       { background: #0d9488; }
+  .map-poi-icon-circle { border-radius: 50%; }
+  .map-poi-icon-square { border-radius: 4px; }
+  .map-poi-icon-diamond {
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  }
+  .map-poi-icon-triangle {
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  }
+  .map-poi-icon-hexagon {
+    clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%);
+  }
+  .map-poi-icon-pentagon {
+    clip-path: polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%);
+  }
+  .map-poi-icon-octagon {
+    clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+  }
+  .map-poi-icon-shield {
+    clip-path: polygon(50% 0, 100% 18%, 90% 67%, 50% 100%, 10% 67%, 0 18%);
+  }
+  .map-poi-icon-capsule {
+    flex-basis: 33px; width: 33px; border-radius: 999px;
+  }
   /* `.brc-highlight.spot` previously hard-coded violet here; the
      per-item `--highlight-color` (set inline) now drives the color so
      friend meet-spots show in their friend-hue and own meet-spots
@@ -1901,6 +2047,11 @@ __TIER_WRAPPERS_META__
     footer.site-footer { padding: 20px 14px 32px; }
     .schedule-wrap { padding: 12px 14px 48px; }
     .map-wrap { padding: 12px 14px 48px; }
+    .map-control-panel {
+      margin-left: -14px; margin-right: -14px;
+      padding: 8px 14px 10px;
+    }
+    .map-layer-toggle { min-height: 44px; padding: 9px 13px; }
     .tabs { gap: 2px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     /* Bumped from padding:8px to hit Apple's 44px minimum tap target. */
     .tab { padding: 12px 14px; font-size: 14px; }

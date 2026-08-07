@@ -47,7 +47,7 @@ export function ActionBar({
         <button
           class="share-btn"
           type="button"
-          title="Download a JSON snapshot — restore on another device with Import"
+          title="Download a JSON snapshot — requires your nickname; restore on another device with Import"
           onClick={onExport}
         >
           <span aria-hidden="true">⬇</span>{' '}Export
@@ -56,7 +56,7 @@ export function ActionBar({
       <button
         class="share-btn"
         type="button"
-        title="Restore a JSON snapshot — pick a file you exported, or one a friend sent over"
+        title="Restore a JSON snapshot — requires your nickname, then pick a file you exported or one a friend sent over"
         onClick={onImport}
       >
         <span aria-hidden="true">⬆</span>{' '}Import

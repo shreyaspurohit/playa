@@ -72,7 +72,7 @@ export function InfoModal({
       'This removes:',
       "  • starred camps, events, and art (across all data sources)",
       "  • your home camp + meet spots + imported friends' lists",
-      "  • theme preference, distance unit, last-viewed tab",
+      "  • theme, map-layer, distance-unit, and last-viewed-tab preferences",
       "  • the password cached for this device",
       '',
       "You'll need to re-enter the password.",
@@ -119,6 +119,7 @@ export function InfoModal({
     removeKey(LS.eventCampReconciled);
     removeKey(LS.releaseNotesSeen);
     removeKey(LS.distanceUnit);
+    removeKey(LS.mapLayers);
     // Wipes both the encrypted-blob in LS and the AES wrapping key
     // in IndexedDB so nothing identifying the unlock state survives.
     clearCachedPassword();
@@ -489,8 +490,8 @@ function AboutTab({
         >
           <span class="action-label">Export to file</span>
           <span class="action-desc">
-            Save your nickname, camps, events, meet spots, hidden
-            days, and imported friends to a JSON file.
+            Requires a nickname. Save it with your camps, events,
+            meet spots, hidden days, and imported friends.
           </span>
         </button>
         <button
@@ -501,8 +502,8 @@ function AboutTab({
         >
           <span class="action-label">Import from file</span>
           <span class="action-desc">
-            Restore a snapshot. Use this to move state between
-            devices — your phone, laptop, etc.
+            Requires your nickname. Restore a snapshot to move state
+            between devices — your phone, laptop, etc.
           </span>
         </button>
         <button
@@ -513,7 +514,7 @@ function AboutTab({
         >
           <span class="action-label">Clear all local data</span>
           <span class="action-desc">
-            Remove favorites, hidden days, friends, theme, password.
+            Remove favorites, hidden days, friends, preferences, password.
             Can't be undone.
           </span>
         </button>

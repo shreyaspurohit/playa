@@ -17,17 +17,27 @@ Subcommands:
     api-fetch --year YYYY Hit api.burningman.org and cache the response
                           (camps + events + art) at data/api/<year>.json.
                           Requires BM_API_KEY in env.
+    gis-fetch [--year YYYY] Fetch + normalize official annual map layers.
+                          Strict unless --best-effort is supplied by build
+                          orchestration.
+    map-audit --year YYYY --street-lines PATH --center LAT,LNG
+                          Derive reviewed base-grid candidates from official
+                          street_lines.geojson. Never edits source files.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from .builder import SiteBuilder
 from .config import Config
 from .fetcher import Fetcher
+from .gis import GisFetcher
+from .mapaudit import audit_street_lines_file, format_typescript_candidate
 from .merger import merge_csv, write_tagged_csv
 from .meta import write_meta
 from .sources.api import APISource
@@ -79,6 +89,50 @@ def _parser() -> argparse.ArgumentParser:
     sp_api.add_argument(
         "--year", type=int, required=True,
         help="event year (e.g., 2024). Must be ≥ 2015 per the API spec.",
+    )
+    sp_gis = sub.add_parser(
+        "gis-fetch",
+        help="fetch and normalize official annual BRC GIS map layers",
+    )
+    sp_gis.add_argument(
+        "--year", type=int, action="append", default=None,
+        help=("year to fetch; repeat for multiple years. Defaults to the "
+              "directory map year plus BM_API_YEARS."),
+    )
+    sp_gis.add_argument(
+        "--force", action="store_true",
+        help="refresh even when a validated normalized cache exists",
+    )
+    sp_gis.add_argument(
+        "--best-effort", action="store_true",
+        help=("isolate failures per year and continue; intended for normal "
+              "build orchestration. Without this flag, GIS validation and "
+              "network failures remain strict."),
+    )
+    sp_map_audit = sub.add_parser(
+        "map-audit",
+        help="audit official street lines and print candidate base-map constants",
+    )
+    sp_map_audit.add_argument("--year", type=int, required=True)
+    sp_map_audit.add_argument(
+        "--street-lines", type=Path, required=True,
+        help="local official street_lines.geojson path",
+    )
+    sp_map_audit.add_argument(
+        "--center", required=True, metavar="LAT,LNG",
+        help="reviewed Golden Spike decimal coordinate",
+    )
+    sp_map_audit.add_argument(
+        "--esplanade-radius-feet", type=float, required=True,
+        help="official Measurements-PDF Esplanade centerline radius",
+    )
+    sp_map_audit.add_argument(
+        "--output", type=Path,
+        help="optional path for the full JSON audit report",
+    )
+    sp_map_audit.add_argument(
+        "--json", action="store_true",
+        help="print the full JSON report instead of the TypeScript candidate",
     )
     return p
 
@@ -244,6 +298,123 @@ def cmd_build(config: Config, sources: list[str] | None = None) -> None:
     SiteBuilder(config, sources=sources).build()
 
 
+def _gis_years(config: Config, sources: list[str] | None = None) -> list[int]:
+    resolved = sources
+    if resolved is None:
+        resolved = ["directory"] + [
+            f"api-{year}" for year in config.parsed_api_years()
+        ]
+    years: set[int] = set()
+    for source in resolved:
+        if source == "directory":
+            years.add(config.directory_map_year)
+        if source.startswith("api-"):
+            try:
+                years.add(int(source[4:]))
+            except ValueError:
+                continue
+    return sorted(years)
+
+
+def cmd_gis_fetch(
+    config: Config,
+    years: list[int] | None = None,
+    *,
+    force: bool = False,
+    best_effort: bool = False,
+) -> None:
+    """Refresh annual GIS caches.
+
+    The explicit operator command is strict by default so schema/name drift is
+    impossible to miss during the annual review. Normal build orchestration
+    opts into ``best_effort``: each year is isolated, a valid existing cache is
+    left for the builder to use, and a missing cache simply means the base map
+    renders without that year's official overlays.
+    """
+    fetcher = GisFetcher(config)
+    for year in sorted(set(years or _gis_years(config))):
+        try:
+            fetcher.fetch_year(year, force=force)
+        except Exception as exc:
+            if not best_effort:
+                raise
+            detail = f"{type(exc).__name__}: {exc}"
+            message = (
+                f"GIS {year} refresh failed ({detail}); continuing with the "
+                "last validated same-year cache, or the base map if absent."
+            )
+            if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+                # Make an optional-subsystem failure visible on the workflow
+                # summary without turning the build/deploy job red. Escape
+                # workflow-command metacharacters in upstream error text.
+                annotation = (message.replace("%", "%25")
+                               .replace("\r", "%0D")
+                               .replace("\n", "%0A"))
+                print(f"::warning title=GIS {year} refresh skipped::{annotation}",
+                      file=sys.stderr)
+            else:
+                print(f"  WARNING: {message}", file=sys.stderr)
+
+
+def cmd_map_audit(
+    *,
+    year: int,
+    street_lines: Path,
+    center: str,
+    esplanade_radius_feet: float,
+    output: Path | None = None,
+    as_json: bool = False,
+) -> None:
+    """Audit official street geometry without mutating runtime map data."""
+    try:
+        lat_text, lng_text = (piece.strip() for piece in center.split(",", 1))
+        center_lat, center_lng = float(lat_text), float(lng_text)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("--center must be LAT,LNG in decimal degrees") from exc
+    report = audit_street_lines_file(
+        year=year,
+        path=street_lines,
+        center_lat=center_lat,
+        center_lng=center_lng,
+        esplanade_radius_feet=esplanade_radius_feet,
+    )
+    encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(encoded, encoding="utf-8")
+        print(f"Map audit JSON: {output}", file=sys.stderr)
+    if as_json:
+        print(encoded, end="")
+        return
+    schema = report["schema"]
+    calibration = report["calibration"]
+    print(
+        f"Map audit {year}: {schema['feature_count']} LineStrings · "
+        f"{len(report['core_annular_streets'])} core rings · "
+        f"{len(report['radial_streets'])} radials"
+    )
+    print(
+        "Schema: " + ", ".join(schema["property_keys"])
+        + f" · SHA-256 {report['source']['sha256']}"
+    )
+    print(
+        f"Calibration: {calibration['esplanade_source_name']} "
+        f"{calibration['observed_radius_feet']}' observed → "
+        f"{calibration['official_radius_feet']}' official "
+        f"(offset {calibration['offset_feet']:+.1f}')"
+    )
+    print(
+        "Source annular order: "
+        + " → ".join(
+            entry["source_name"] for entry in report["core_annular_streets"]
+        )
+    )
+    for warning in report["warnings"]:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    print("\nCandidate fields for BrcMapData (review before applying):")
+    print(format_typescript_candidate(report))
+
+
 def cmd_all(config: Config, sources: list[str] | None = None) -> None:
     cmd_fetch_all(config)
     print("==> Fetching art")
@@ -254,6 +425,10 @@ def cmd_all(config: Config, sources: list[str] | None = None) -> None:
     cmd_merge(config)
     print("==> Tagging")
     cmd_tag(config)
+    print("==> Fetching official GIS map layers")
+    cmd_gis_fetch(
+        config, _gis_years(config, sources), force=False, best_effort=True,
+    )
     print("==> Building site")
     cmd_build(config, sources=sources)
     print("==> Done")
@@ -300,4 +475,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "build":           cmd_build(config, _resolve_sources(args.sources, config))
     elif args.cmd == "all":             cmd_all(config, _resolve_sources(args.sources, config))
     elif args.cmd == "api-fetch":       cmd_api_fetch(config, args.year)
+    elif args.cmd == "gis-fetch":       cmd_gis_fetch(
+        config, args.year, force=args.force, best_effort=args.best_effort,
+    )
+    elif args.cmd == "map-audit":       cmd_map_audit(
+        year=args.year,
+        street_lines=args.street_lines,
+        center=args.center,
+        esplanade_radius_feet=args.esplanade_radius_feet,
+        output=args.output,
+        as_json=args.json,
+    )
     return 0

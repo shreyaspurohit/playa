@@ -77,6 +77,15 @@ class Config:
     # gets fast-pathed.
     bm_api_user_agent: str = "playa-camps/1.0 (+https://playa.purohit.dev)"
 
+    # Official annual GIS repository. The map renderer is year-stable; adding
+    # a year means fetching this directory and reviewing the CPN allowlist.
+    gis_base_url: str = (
+        "https://raw.githubusercontent.com/burningmantech/"
+        "innovate-GIS-data/master"
+    )
+    gis_timeout: int = 30
+    directory_map_year: int = 2026
+
     # Comma-separated years to auto-fetch + auto-include in the build
     # when --sources isn't passed explicitly. Empty → CLI default of
     # `directory` only.
@@ -146,6 +155,12 @@ class Config:
     def api_payload_file(self, year: int) -> Path:
         return self.api_dir / f"{year}.json"
     @property
+    def gis_dir(self) -> Path:        return self.data_dir / "gis"
+    def gis_year_dir(self, year: int) -> Path:
+        return self.gis_dir / str(year)
+    def gis_payload_file(self, year: int) -> Path:
+        return self.gis_year_dir(year) / "normalized.json"
+    @property
     def site_dir(self) -> Path:       return self.root / "site"
     @property
     def site_html(self) -> Path:      return self.site_dir / "index.html"
@@ -194,6 +209,13 @@ class Config:
             bm_api_years=os.environ.get("BM_API_YEARS", "").strip(),
             bm_cache_password=os.environ.get("BM_CACHE_PASSWORD", "").strip(),
             bm_api_timeout=int(os.environ.get("BM_API_TIMEOUT", "120")),
+            gis_base_url=os.environ.get(
+                "BM_GIS_BASE_URL",
+                "https://raw.githubusercontent.com/burningmantech/"
+                "innovate-GIS-data/master",
+            ).strip(),
+            gis_timeout=int(os.environ.get("BM_GIS_TIMEOUT", "30")),
+            directory_map_year=int(os.environ.get("BRC_MAP_YEAR", "2026")),
             site_tiers=os.environ.get("SITE_TIERS", "").strip(),
         )
 

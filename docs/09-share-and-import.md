@@ -20,6 +20,9 @@ Two transports move user state between devices and between friends:
 
 Both paths use the same banner UX, the same self-vs-friend
 recognition, and the same "latest snapshot replaces" semantics.
+The sender and receiver must each set a nickname before exporting or
+accepting an import. This gives every transferred state an explicit
+identity instead of creating anonymous friend records.
 
 ## Decisions
 
@@ -42,6 +45,13 @@ recognition, and the same "latest snapshot replaces" semantics.
   snapshot has the same nickname as the importer's, offer a "Restore
   my own state" branch. Lets the user move their own setup between
   devices via either transport.
+- **Nickname required at both ends.** New snapshots always include the
+  exporter's nickname, and the nickname cannot be unchecked in the
+  export picker. Import actions read the receiver's nickname at click
+  time, so setting it in the header takes effect immediately without a
+  reload. Legacy anonymous JSON snapshots remain self-restorable after
+  the receiver sets a nickname; restore preserves that current nickname.
+  Anonymous snapshots cannot be imported as friends.
 - **Adversarial input validation.** Both decoders reject:
   - Oversized payloads (size cap before decode).
   - Top-level arrays/primitives (only object envelopes).
@@ -73,7 +83,9 @@ flowchart TD
   Read --> HasShare{found '#share=…'?}
   HasShare -->|no| Done[no banner]
   HasShare -->|yes| Decode[decodeShare → SharePayload]
-  Decode --> Self{name === ownNickname?}
+  Decode --> Nick{receiver nickname set?}
+  Nick -->|no| Nudge[ask user to set header nickname]
+  Nick -->|yes| Self{name === ownNickname?}
   Self -->|yes| SelfBanner[ImportBanner: 'this looks like<br>your own share']
   Self -->|no| Existing{friend exists?}
   Existing -->|no| NewBanner[ImportBanner: 'Import as X']
@@ -89,7 +101,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  Click[Toolbar 'Import' button] --> Picker[pickSnapshotFile]
+  Click[Toolbar 'Import' button] --> Nick{receiver nickname set?}
+  Nick -->|no| Nudge[ask user to set header nickname]
+  Nick -->|yes| Picker
   Picker -->|user picks file| Parse[parseSnapshot]
   Parse -->|invalid| AlertX[alert and bail]
   Parse -->|valid| State[setIncomingSnapshot]
@@ -103,7 +117,7 @@ flowchart TD
 
 | Field | Share link | Snapshot file |
 |---|---|---|
-| Nickname | ✓ | ✓ |
+| Nickname | ✓, required | ✓, required for new exports |
 | Camp favorites | ✓ | ✓ |
 | Event favorites | ✓ | ✓ |
 | My camp | ✓ | ✓ |

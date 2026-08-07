@@ -8,7 +8,7 @@
 //
 // "Favorited" = either you or any imported friend has starred the
 // event. Starring a whole camp does NOT auto-add its events here.
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { Camp, Event } from '../types';
 import { friendChipStyle } from '../utils/friendColor';
 import { EyeIcon } from './EyeIcon';
@@ -342,6 +342,14 @@ export function ScheduleView({
   // filters. Both default off so the full schedule shows on open.
   const [nowOnly, setNowOnly] = useState(false);
   const [nearMeOnly, setNearMeOnly] = useState(false);
+  // Geometry can disappear while this component remains mounted when the
+  // user switches sources. Disable the filter immediately for rendering, then
+  // clear its stored state so switching back does not unexpectedly reactivate
+  // it for a different year.
+  const nearMeActive = nearMeOnly && brc !== null;
+  useEffect(() => {
+    if (!brc && nearMeOnly) setNearMeOnly(false);
+  }, [brc, nearMeOnly]);
 
   // Own geolocation watcher — the Map tab has its own; only one
   // view is mounted at a time so we don't fight over permissions
@@ -353,6 +361,7 @@ export function ScheduleView({
       setNearMeOnly(false);
       return;
     }
+    if (!brc) return;
     // Flip on first, then kick off the permission flow. If the user
     // denies we leave the toggle on and surface an inline hint so
     // they know why no results appeared.
@@ -384,7 +393,7 @@ export function ScheduleView({
   // Null = no fix / filter off. Events with an unparseable camp
   // address are treated as "too far" and drop.
   const nearMeFit = useMemo(() => {
-    if (!nearMeOnly || geo.status !== 'ready') return null;
+    if (!brc || !nearMeActive || geo.status !== 'ready') return null;
     const user = { lat: geo.lat, lng: geo.lng };
     const byEvent = new Map<string, boolean>();
     for (const camp of camps) {
@@ -393,7 +402,7 @@ export function ScheduleView({
       for (const ev of camp.events ?? []) byEvent.set(ev.id, fits);
     }
     return byEvent;
-  }, [nearMeOnly, geo, camps, brc]);
+  }, [nearMeActive, geo, camps, brc]);
 
   function passesFilters(entry: ScheduleEntry, cellIso: string): boolean {
     if (nowOnly) {
@@ -409,7 +418,7 @@ export function ScheduleView({
         return false;
       }
     }
-    if (nearMeOnly) {
+    if (nearMeActive) {
       if (!nearMeFit) return false;
       if (!nearMeFit.get(entry.event.id)) return false;
     }
@@ -426,17 +435,17 @@ export function ScheduleView({
   // Apply Now + Near-me filters. We filter by-cell so the empty-
   // days render case (grid with empty columns) still works.
   const byCell = useMemo(() => {
-    if (!nowOnly && !nearMeOnly) return rawByCell;
+    if (!nowOnly && !nearMeActive) return rawByCell;
     const out = new Map<string, ScheduleEntry[]>();
     for (const [iso, entries] of rawByCell) {
       const kept = entries.filter((e) => passesFilters(e, iso));
       if (kept.length > 0) out.set(iso, kept);
     }
     return out;
-    // passesFilters closes over nowOnly/nearMeOnly/todayCell/etc; we
+    // passesFilters closes over nowOnly/nearMeActive/todayCell/etc; we
     // depend on the raw map + all filter inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawByCell, nowOnly, nearMeOnly, todayCell, nowBounds, nearMeFit]);
+  }, [rawByCell, nowOnly, nearMeActive, todayCell, nowBounds, nearMeFit]);
 
   const totalScheduled = cells.reduce(
     (n, c) => n + (byCell.get(c.iso)?.length ?? 0), 0,
@@ -445,7 +454,7 @@ export function ScheduleView({
     (n, c) => n + (hiddenByCell.get(c.iso)?.length ?? 0), 0,
   );
   const nothing = totalScheduled === 0 && totalHiddenInWindow === 0 && unscheduled.length === 0;
-  const filtersOn = nowOnly || nearMeOnly;
+  const filtersOn = nowOnly || nearMeActive;
 
   return (
     <div class="schedule-wrap">
@@ -465,10 +474,13 @@ export function ScheduleView({
         </button>
         <button
           type="button"
-          class={'sched-filter-btn near' + (nearMeOnly ? ' active' : '')}
-          aria-pressed={nearMeOnly ? 'true' : 'false'}
-          title="Show only events at camps within ~15 min walk"
+          class={'sched-filter-btn near' + (nearMeActive ? ' active' : '')}
+          aria-pressed={nearMeActive ? 'true' : 'false'}
+          title={brc
+            ? 'Show only events at camps within ~15 min walk'
+            : 'Near-me filtering will be available when this year’s map geometry is published'}
           onClick={toggleNearMe}
+          disabled={!brc}
         >
           📍 Near me
         </button>
@@ -486,15 +498,15 @@ export function ScheduleView({
             it is.
           </span>
         )}
-        {nearMeOnly && (geo.status === 'idle' || geo.status === 'requesting') && (
+        {nearMeActive && (geo.status === 'idle' || geo.status === 'requesting') && (
           <span class="sched-filter-hint">Waiting for GPS…</span>
         )}
-        {nearMeOnly && geo.status === 'denied' && (
+        {nearMeActive && geo.status === 'denied' && (
           <span class="sched-filter-hint err">
             Location denied — enable it in browser settings to use Near me.
           </span>
         )}
-        {nearMeOnly && geo.status === 'error' && (
+        {nearMeActive && geo.status === 'error' && (
           <span class="sched-filter-hint err">
             Location error: {geo.message}
           </span>

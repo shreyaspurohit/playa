@@ -401,17 +401,19 @@ type BrcConstants = {
 
 - Themed street names — never displayed (CampCard shows `location`
   raw, MapView labels with the letter only).
-- Clock-hour bearings — derived from "4:30 ≡ true N" (12:00 = 225°
-  compass), structurally stable.
+- Clock-hour bearings — stored per year and verified against official GIS CPN
+  anchors. The measurements' “4:30 true N/S axis” describes an undirected
+  line; it does not by itself distinguish 4:30 from the opposing 10:30
+  direction. For 2025 and 2026, 12:00 is 45° NE and 6:00 is 225° SW.
 - Letter-street naming convention (Esplanade → A → B …) — stable.
 
 **Source → year resolver** (next to `useSource`):
 
 | Source        | Year used                                          |
 |---------------|----------------------------------------------------|
-| `directory`   | `Config.burn_year` (current year being built)      |
+| `directory`   | Embedded `bm-directory-map-year` from `BRC_MAP_YEAR` |
 | `api-YYYY`    | `YYYY`                                             |
-| Unknown       | Most recent year in `BRC_BY_YEAR` + `console.warn` |
+| Year without exact geometry | No map; source data remains usable       |
 
 Wiring: `parseAddress(raw, year)`, `addressToSvgFeet(raw, year)`,
 `addressToLatLng(raw, year)`, `latLngToSvgFeet(ll, year)` all become
@@ -430,12 +432,13 @@ truth per year:
 
 The skill runs once per year and commits a new entry to `BRC_BY_YEAR`.
 2025 was backfilled in 2026-05 (real Golden Spike + fence + sci-fi
-author themed names "Tomorrow Today"). 2024 remains a deferred
-backfill — out of the current rolling year window so map pins for
-api-2024 would fall back to the latest known year's geometry with a
-console warning.
+author themed names "Tomorrow Today"). A source can be enabled before its
+geometry is published: the Map tab then reports that the specific year's map is
+not available and renders no coordinates. It never substitutes another year's
+Golden Spike, streets, or fence. Schedule data remains usable, with only the
+coordinate-dependent “Near me” filter disabled.
 
-**Failure mode**: addresses that don't parse against any year's letter
+**Failure mode**: addresses that don't parse against their exact year's letter
 set (e.g., "Rod's Ring Road") still fall through to "list-only, no
 map pin" — same as today. No crash.
 

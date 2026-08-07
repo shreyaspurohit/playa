@@ -11,21 +11,41 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { JSX } from 'preact';
 import type { Art, Camp, MeetSpot, Source } from '../types';
 import { LS } from '../types';
-import { readString, writeString } from '../utils/storage';
-import type { BrcMapData, BrcPOI } from '../map/data';
-import { POIS } from '../map/data';
+import { readString, writeString, writeStringSet } from '../utils/storage';
+import type { BrcMapData, BrcPOI, MapLayer } from '../map/data';
+import { BRC, POIS } from '../map/data';
+import {
+  DEFAULT_MAP_LAYERS, EMPTY_GIS, OPTIONAL_MAP_LAYERS,
+  isPoiVisible, poiColor, poiGlyph, poiShape, readEmbeddedGis,
+  type GisArea, type GisYearData, type PoiMarkerShape,
+} from '../map/gis';
 import {
   addressToSvgFeet, addressToLatLng, bearingDeg, haversineMeters,
   latLngToSvgFeet, latLngToAddress, parseAddress,
 } from '../map/address';
 import { useGeolocation } from '../hooks/useGeolocation';
-import { brcForSource } from '../hooks/useSource';
+import { brcForSource, yearForSource } from '../hooks/useSource';
 import { friendChipStyle, friendHue } from '../utils/friendColor';
 import { FriendChip } from './FriendChip';
 import { MapInfoModal } from './MapInfoModal';
 import { MeetSpotEditor } from './MeetSpotEditor';
 import { TrashIcon } from './TrashIcon';
 import { TentIcon } from './TentIcon';
+
+const POI_MARKER_PATHS: Record<PoiMarkerShape, string> = {
+  circle: 'M 0 -66 A 66 66 0 1 1 0 66 A 66 66 0 1 1 0 -66 Z',
+  square: 'M -60 -60 H 60 V 60 H -60 Z',
+  diamond: 'M 0 -76 L 76 0 L 0 76 L -76 0 Z',
+  triangle: 'M 0 -76 L 72 62 L -72 62 Z',
+  hexagon: 'M 0 -72 L 62 -36 L 62 36 L 0 72 L -62 36 L -62 -36 Z',
+  pentagon: 'M 0 -74 L 70 -23 L 43 62 L -43 62 L -70 -23 Z',
+  octagon: 'M -29 -70 H 29 L 70 -29 V 29 L 29 70 H -29 L -70 29 V -29 Z',
+  shield: 'M 0 -76 L 66 -50 L 56 26 Q 45 58 0 78 Q -45 58 -56 26 L -66 -50 Z',
+  capsule: 'M -78 -52 H 78 Q 104 -52 104 0 Q 104 52 78 52 H -78 Q -104 52 -104 0 Q -104 -52 -78 -52 Z',
+};
+
+const CAMP_FAVORITE_PATH = 'M -52 -70 H 52 V 72 L 0 42 L -52 72 Z';
+const MEET_SPOT_PATH = 'M 0 -74 L 22 -22 L 74 0 L 22 22 L 0 74 L -22 22 L -74 0 L -22 -22 Z';
 
 /** Friend-side data imported from share links. Each entry is one
  *  friend's full "rendezvous layer" — their home camp (if set) plus
@@ -84,7 +104,7 @@ interface Props {
   source: Source;
 }
 
-/** Base radius — sized for the city itself: K street (5400') + ~600
+/** Base radius — sized for the city itself: K street (5755') + 245
  *  ft buffer. Pins that extend BEYOND K (deep-playa art at 6000-
  *  10000') trigger a dynamic expansion in `Svg` (effectiveVbRadius).
  *  Without that, art pins past 6000 fall outside the viewbox. */
@@ -99,6 +119,11 @@ const VIEWBOX_PIN_BUFFER = 700;
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 1.5;
+/** Layers with destinations outside the compact city frame. They affect the
+ * extent only while explicitly enabled, preserving a large default map. */
+const FIT_EXTENT_MAP_LAYERS: ReadonlySet<MapLayer> = new Set([
+  'boundary', 'transport', 'arrival',
+]);
 
 // === Selection-key encoding ============================================
 // Each map item that can be selected gets a stable string key so a
@@ -111,7 +136,20 @@ const artKey = (id: string) => 'art:' + id;
 const mineSpotKey = (idx: number) => 'mine:' + idx;
 const friendSpotKey = (name: string, idx: number) =>
   'friend:' + name + ':' + idx;
-const poiKey = (kind: string, name: string) => 'poi:' + kind + ':' + name;
+const poiKey = (poi: BrcPOI) => 'poi:' + poi.id;
+
+interface PoiPin {
+  poi: BrcPOI;
+  x: number;
+  y: number;
+  /** SVG-feet rings for toilet footprints; absent for normal points. */
+  rings?: Array<Array<{ x: number; y: number }>>;
+}
+
+interface MapAreaShape {
+  area: GisArea;
+  polygons: Array<Array<Array<{ x: number; y: number }>>>;
+}
 
 export function MapView({
   camps, favCampIds, friendFavCampIds,
@@ -130,7 +168,66 @@ export function MapView({
   // flips, which is rare). Threaded into every address-math call so
   // past-year API camps render against their own year's Golden Spike +
   // street radii (ADR D11).
-  const brc = useMemo(() => brcForSource(source), [source]);
+  const requestedYear = useMemo(() => yearForSource(source), [source]);
+  const exactBrc = useMemo(() => brcForSource(source), [source]);
+  // Keep hook order stable while switching between available/unavailable
+  // source years. Coordinate memos below may use this inert compatibility
+  // geometry, but their output is never rendered unless exactBrc exists.
+  const brc = exactBrc ?? BRC;
+  const [gis, setGis] = useState<GisYearData>({ ...EMPTY_GIS, year: requestedYear });
+  useEffect(() => {
+    let cancelled = false;
+    setGis({ ...EMPTY_GIS, year: requestedYear });
+    if (!exactBrc) return () => { cancelled = true; };
+    readEmbeddedGis(requestedYear).then((next) => {
+      if (!cancelled) setGis(next);
+    });
+    return () => { cancelled = true; };
+  }, [requestedYear, exactBrc]);
+
+  // The app's global chrome is itself sticky and changes height by viewport,
+  // active tab, and transient banners. Publish its live height as a CSS custom
+  // property so the map control panel can stick immediately below it instead
+  // of disappearing underneath it or relying on a brittle hard-coded offset.
+  useEffect(() => {
+    const siteChrome = document.querySelector<HTMLElement>('.site-chrome');
+    if (!siteChrome) return;
+    const updateOffset = () => {
+      document.documentElement.style.setProperty(
+        '--site-chrome-height',
+        `${siteChrome.getBoundingClientRect().height}px`,
+      );
+    };
+    updateOffset();
+    const observer = typeof window.ResizeObserver === 'function'
+      ? new window.ResizeObserver(updateOffset)
+      : null;
+    observer?.observe(siteChrome);
+    window.addEventListener('resize', updateOffset);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateOffset);
+      document.documentElement.style.removeProperty('--site-chrome-height');
+    };
+  }, []);
+
+  // Optional official layers are global map preferences, not source data.
+  // A versioned LS key lets a future layer reorganization reset defaults.
+  const [enabledMapLayers, setEnabledMapLayers] = useState<Set<MapLayer>>(() => {
+    const raw = readString(LS.mapLayers, '');
+    if (!raw) return new Set(DEFAULT_MAP_LAYERS);
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((x): x is MapLayer =>
+          x === 'boundary' || x === 'essentials' || x === 'toilets'
+          || x === 'services' || x === 'transport' || x === 'arrival',
+        ));
+      }
+    } catch { /* use first-visit defaults */ }
+    return new Set(DEFAULT_MAP_LAYERS);
+  });
+  const showBoundary = enabledMapLayers.has('boundary');
   // Unified multi-selection. Each entry is a typed key so a single Set
   // can hold camps, POIs, meet spots, friend camps, friend meet spots
   // concurrently. Tap-to-toggle: every tap on a pin or sidebar row
@@ -139,7 +236,7 @@ export function MapView({
   //   camp:<id>          — any camp pin (starred, my-camp, friend's)
   //   mine:<idx>         — your meet spot at that index
   //   friend:<name>:<idx>— friend's meet spot at that index
-  //   poi:<kind>:<name>  — point of interest
+  //   poi:<stable-id>     — point of interest
   const [selection, setSelection] = useState<Set<string>>(() => {
     // Initial selection from whichever external target is set on
     // mount. App.tsx ensures the two are mutually exclusive (setting
@@ -198,6 +295,20 @@ export function MapView({
   const [center, setCenter] = useState(
     { x: 0, y: VIEWBOX_RADIUS_BASE / 2 - VIEWBOX_TOP_MARGIN / 2 },
   );
+  const toggleMapLayer = useCallback((layer: Exclude<MapLayer, 'base'>) => {
+    const enabling = !enabledMapLayers.has(layer);
+    setEnabledMapLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(layer)) next.delete(layer);
+      else next.add(layer);
+      writeStringSet(LS.mapLayers, next);
+      return next;
+    });
+    // A fitted layer must become visible even if the user was previously
+    // zoomed into the city. The new extent's default-center effect reanchors
+    // the 1x frame after this state update.
+    if (enabling && FIT_EXTENT_MAP_LAYERS.has(layer)) setZoom(1);
+  }, [enabledMapLayers]);
   const zoomIn = useCallback(
     () => setZoom((z) => Math.min(ZOOM_MAX, z * ZOOM_STEP)),
     [],
@@ -297,17 +408,61 @@ export function MapView({
     return out;
   }, [friendsRendezvous, brc]);
 
-  // Static POI pins (Center Camp, Playa Info, etc. from map/data.ts).
-  // Resolved once per BRC refresh — addresses don't change within a
-  // build, so this memo is effectively constant.
+  // Static base POIs + official year-specific GIS points. When the official
+  // Playa Info point exists it replaces the approximate fallback, avoiding a
+  // duplicate marker while still preserving a useful map without GIS cache.
   const poiPins = useMemo(() => {
-    return POIS
+    const official: BrcPOI[] = [
+      ...gis.points,
+      ...gis.toilets,
+    ].filter((poi) => isPoiVisible(poi, enabledMapLayers));
+    const officialIds = new Set(official.map((poi) => poi.id));
+    const fallback = POIS.filter((poi) =>
+      !officialIds.has(poi.id)
+      && !(poi.id === 'playa-info-fallback' && officialIds.has('playa-info')),
+    );
+    return [...fallback, ...official]
       .map((poi) => {
-        const pt = addressToSvgFeet(poi.address, brc);
-        return pt ? { poi, x: pt.x, y: pt.y } : null;
+        const pt = typeof poi.lat === 'number' && typeof poi.lng === 'number'
+          ? latLngToSvgFeet({ lat: poi.lat, lng: poi.lng }, brc)
+          : addressToSvgFeet(poi.address ?? '', brc);
+        if (!pt) return null;
+        const gridAddress = typeof poi.lat === 'number' && typeof poi.lng === 'number'
+          ? latLngToAddress({ lat: poi.lat, lng: poi.lng }, brc)
+          : null;
+        const displayPoi = gridAddress && (!poi.address || poi.kind === 'toilet')
+          ? { ...poi, address: `${gridAddress.clock} & ${gridAddress.street}` }
+          : poi;
+        const rawRings = 'rings' in poi
+          ? (poi as { rings?: number[][][] }).rings
+          : undefined;
+        const rings = rawRings?.map((ring) => ring.map(([lng, lat]) =>
+          latLngToSvgFeet({ lat, lng }, brc),
+        ));
+        return { poi: displayPoi, x: pt.x, y: pt.y, rings };
       })
-      .filter(Boolean) as Array<{ poi: BrcPOI; x: number; y: number }>;
-  }, [brc]);
+      .filter(Boolean) as PoiPin[];
+  }, [brc, gis, enabledMapLayers]);
+
+  const mapAreas = useMemo(() => gis.areas
+    .filter((area) => area.layer === 'base' || enabledMapLayers.has(area.layer))
+    .map((area) => ({
+      area,
+      polygons: area.polygons.map((polygon) => polygon.map((ring) =>
+        ring.map(([lng, lat]) => latLngToSvgFeet({ lat, lng }, brc)),
+      )),
+    })), [brc, gis.areas, enabledMapLayers]);
+
+  // Turning a layer off must not leave an invisible POI selected.
+  useEffect(() => {
+    const visibleIds = new Set(poiPins.map(({ poi }) => poiKey(poi)));
+    setSelection((prev) => {
+      const next = new Set([...prev].filter((key) =>
+        !key.startsWith('poi:') || visibleIds.has(key),
+      ));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [poiPins]);
 
   // Your own camp, if set — rendered as a dedicated accent pin.
   const myCampPin = useMemo(() => {
@@ -351,23 +506,15 @@ export function MapView({
       };
     }
     if (key.startsWith('poi:')) {
-      const rest = key.slice('poi:'.length);
-      const sep = rest.indexOf(':');
-      const kind = rest.slice(0, sep);
-      const name = rest.slice(sep + 1);
-      const hit = poiPins.find(
-        ({ poi }) => poi.kind === kind && poi.name === name,
-      );
+      const id = key.slice('poi:'.length);
+      const hit = poiPins.find(({ poi }) => poi.id === id);
       if (!hit) return null;
-      let color = 'var(--muted)';
-      if (kind === 'center-camp') color = '#dc2626';
-      else if (kind === 'playa-info') color = '#0369a1';
-      else if (kind === 'plaza') color = '#0d9488';
       return {
-        label: hit.poi.name, address: hit.poi.address, when: undefined,
+        label: hit.poi.name, address: hit.poi.address ?? '', when: undefined,
         description: hit.poi.description,
         x: hit.x, y: hit.y, author: null as string | null, isPoi: true,
-        color,
+        color: poiColor(hit.poi.kind),
+        lat: hit.poi.lat, lng: hit.poi.lng,
       };
     }
     return null;
@@ -455,11 +602,25 @@ export function MapView({
     for (const p of myMeetPins) consider(p.x, p.y);
     for (const p of friendMeetPins) consider(p.x, p.y);
     for (const p of friendCampPins) consider(p.x, p.y);
+    // Optional POIs do not expand the ambient overview. Distant arrival and
+    // transport points affect it only when the user explicitly enables their
+    // layer; otherwise they would make the useful city grid tiny by default.
+    for (const p of poiPins) {
+      if (FIT_EXTENT_MAP_LAYERS.has(p.poi.layer)) consider(p.x, p.y);
+    }
+    // The boundary follows the same explicit-fit rule because displaying a
+    // clipped fence is not useful.
+    if (showBoundary) {
+      for (const vertex of brc.fencePentagon) {
+        const p = latLngToSvgFeet(vertex, brc);
+        consider(p.x, p.y);
+      }
+    }
     if (myCampPin) consider(myCampPin.x, myCampPin.y);
     // Nav-only target — when the user routed in to an unfavorited
-    // camp/art, expand the viewBox to fit it. Without this, deep-playa
-    // art the user hasn't starred lands outside the city bounds and
-    // the user has to manually pan/zoom to find it.
+    // camp/art/POI, expand the viewBox to fit it. POIs stay out of the ambient
+    // extent above, but selecting one from the landmarks list must bring that
+    // destination into view just like another navigation target.
     if (selection.size === 1) {
       const key = [...selection][0];
       let raw: string | null = null;
@@ -471,6 +632,9 @@ export function MapView({
         const id = key.slice('art:'.length);
         const a = art.find((x) => x.id === id);
         if (a) raw = a.location;
+      } else if (key.startsWith('poi:')) {
+        const hit = poiPins.find(({ poi }) => poiKey(poi) === key);
+        if (hit) consider(hit.x, hit.y);
       }
       if (raw) {
         const pt = addressToSvgFeet(raw, brc);
@@ -483,7 +647,7 @@ export function MapView({
     };
   }, [
     pins, artPins, myMeetPins, friendMeetPins, friendCampPins, myCampPin,
-    selection, camps, art, brc,
+    poiPins, selection, camps, art, showBoundary, brc,
   ]);
 
   const vbWidth = effectiveVbRadius * 2;
@@ -505,7 +669,7 @@ export function MapView({
 
   // Target resolution. Falls through three sources in priority order —
   // starred pins, my home camp, friends' home camps — so selecting any
-  // tent on the map (not just starred dots) shows the camp details.
+  // tent on the map (not just favorite bookmarks) shows the camp details.
   // `author` and `kind` drive the "Your camp — X" / "Alice's camp: X"
   // prefix on the big label near the Man.
   const target = useMemo((): {
@@ -725,23 +889,13 @@ export function MapView({
           color: `hsl(${friendHue(f.name)}, 65%, 50%)`,
         });
       } else if (key.startsWith('poi:')) {
-        const rest = key.slice('poi:'.length);
-        const sep = rest.indexOf(':');
-        const kind = rest.slice(0, sep);
-        const name = rest.slice(sep + 1);
-        const hit = poiPins.find(
-          ({ poi }) => poi.kind === kind && poi.name === name,
-        );
+        const id = key.slice('poi:'.length);
+        const hit = poiPins.find(({ poi }) => poi.id === id);
         if (!hit) continue;
-        // Same hex used by `.map-poi-{kind}` + `.brc-poi-{kind}-dot`.
-        let color = 'var(--muted)';
-        if (kind === 'center-camp') color = '#dc2626';
-        else if (kind === 'playa-info') color = '#0369a1';
-        else if (kind === 'plaza') color = '#0d9488';
         out.push({
           key, x: hit.x, y: hit.y,
-          address: hit.poi.address, label: hit.poi.name, kind: 'poi',
-          color,
+          address: hit.poi.address ?? '', label: hit.poi.name, kind: 'poi',
+          color: poiColor(hit.poi.kind),
         });
       }
     }
@@ -801,12 +955,22 @@ export function MapView({
     return `https://www.google.com/maps?q=${ll.lat},${ll.lng}`;
   }
 
+  function externalMapsUrlForPoi(poi: BrcPOI): string | null {
+    if (typeof poi.lat === 'number' && typeof poi.lng === 'number') {
+      return `https://www.google.com/maps?q=${poi.lat},${poi.lng}`;
+    }
+    return externalMapsUrlForAddress(poi.address ?? '');
+  }
+
   // Per-item bearing + distance — used by expanded list rows where each
   // selected item shows its own nav details (multi-select friendly).
   // Returns null when GPS isn't on or the address doesn't parse to lat/lng.
-  function navFor(address: string): { meters: number; bearing: number } | null {
+  function navFor(
+    address: string,
+    coordinate?: { lat: number; lng: number },
+  ): { meters: number; bearing: number } | null {
     if (geo.status !== 'ready') return null;
-    const ll = addressToLatLng(address, brc);
+    const ll = coordinate ?? addressToLatLng(address, brc);
     if (!ll) return null;
     return {
       meters: haversineMeters({ lat: geo.lat, lng: geo.lng }, ll),
@@ -817,8 +981,14 @@ export function MapView({
   // Reusable nav-block renderer — shared by every row type's
   // expanded form. `address` is what the row points at; `gpsHint`
   // toggles the "tap Use my GPS" footnote when no fix is available.
-  function NavBlock({ address }: { address: string }) {
-    const nav = navFor(address);
+  function NavBlock({
+    address,
+    coordinate,
+  }: {
+    address: string;
+    coordinate?: { lat: number; lng: number };
+  }) {
+    const nav = navFor(address, coordinate);
     if (nav) {
       const e = etaMinutes(nav.meters);
       return (
@@ -835,110 +1005,155 @@ export function MapView({
       );
     }
     if (geo.status === 'ready') {
-      return <div class="row-footnote">Couldn't resolve this address to lat/lng.</div>;
+      return <div class="row-footnote">Couldn't resolve this location to lat/lng.</div>;
     }
     return <div class="row-footnote">Tap "Use my GPS" above for distance + bearing.</div>;
   }
 
-  return (
-    <div class="map-wrap">
-      <div class="map-head">
-        <div>
-          <h3 class="map-title">Black Rock City {brc.year}</h3>
-          <p class="map-sub">
-            The Man at <code>{brc.center.lat.toFixed(6)}, {brc.center.lng.toFixed(6)}</code>
-            {' · '}<span>True North ≈ 4:30 axis</span>
+  if (!exactBrc) {
+    return (
+      <div class="map-wrap">
+        <div class="map-head">
+          <div>
+            <h3 class="map-title">Black Rock City {requestedYear}</h3>
+            <p class="map-sub">Map geometry has not been released or added for this year.</p>
+          </div>
+        </div>
+        <div class="map-geometry-unavailable" role="status">
+          <strong>Map not available for {requestedYear} yet</strong>
+          <p>
+            Camps, events, art, favorites, and schedules still work. This map
+            will appear after the official {requestedYear} city geometry is
+            published and reviewed; another year&rsquo;s coordinates will not be
+            substituted.
           </p>
         </div>
-        <div class="map-actions">
-          <div class="map-zoom-ctl" role="group" aria-label="Map zoom">
-            <button
-              type="button"
-              class="map-zoom-btn"
-              aria-label="Zoom out"
-              title="Zoom out"
-              onClick={zoomOut}
-              disabled={zoom <= ZOOM_MIN}
-            >−</button>
-            <span class="map-zoom-level" aria-live="polite">
-              {Math.round(zoom * 100)}%
-            </span>
-            <button
-              type="button"
-              class="map-zoom-btn"
-              aria-label="Zoom in"
-              title="Zoom in"
-              onClick={zoomIn}
-              disabled={zoom >= ZOOM_MAX}
-            >+</button>
-            {zoom > 1 && (
+      </div>
+    );
+  }
+
+  return (
+    <div class="map-wrap">
+      <div class="map-control-panel" aria-label="Map controls">
+        <div class="map-head">
+          <div>
+            <h3 class="map-title">Black Rock City {brc.year}</h3>
+            <p class="map-sub">
+              The Man at <code>{brc.center.lat.toFixed(6)}, {brc.center.lng.toFixed(6)}</code>
+              {' · '}<span>True North ≈ 4:30 axis</span>
+            </p>
+          </div>
+          <div class="map-actions">
+            <div class="map-zoom-ctl" role="group" aria-label="Map zoom">
               <button
                 type="button"
-                class="map-zoom-reset"
-                aria-label="Reset zoom"
-                title="Reset zoom"
-                onClick={resetZoom}
-              >⤾</button>
-            )}
-          </div>
-          <button
-            type="button"
-            class="map-unit-btn"
-            aria-label={`Distance unit: ${unit === 'imperial' ? 'imperial (mi/ft)' : 'metric (km/m)'}. Click to switch.`}
-            title="Toggle imperial / metric"
-            onClick={toggleUnit}
-          >
-            {unit === 'imperial' ? 'mi' : 'km'}
-          </button>
-          {selection.size > 0 && (
+                class="map-zoom-btn"
+                aria-label="Zoom out"
+                title="Zoom out"
+                onClick={zoomOut}
+                disabled={zoom <= ZOOM_MIN}
+              >−</button>
+              <span class="map-zoom-level" aria-live="polite">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                class="map-zoom-btn"
+                aria-label="Zoom in"
+                title="Zoom in"
+                onClick={zoomIn}
+                disabled={zoom >= ZOOM_MAX}
+              >+</button>
+              {zoom > 1 && (
+                <button
+                  type="button"
+                  class="map-zoom-reset"
+                  aria-label="Reset zoom"
+                  title="Reset zoom"
+                  onClick={resetZoom}
+                >⤾</button>
+              )}
+            </div>
             <button
               type="button"
-              class="map-clear-btn"
-              aria-label="Clear all selections"
-              title="Clear all selections from the map"
-              onClick={() => clearSelection()}
+              class="map-unit-btn"
+              aria-label={`Distance unit: ${unit === 'imperial' ? 'imperial (mi/ft)' : 'metric (km/m)'}. Click to switch.`}
+              title="Toggle imperial / metric"
+              onClick={toggleUnit}
             >
-              Clear ({selection.size})
+              {unit === 'imperial' ? 'mi' : 'km'}
             </button>
-          )}
-          <button
-            type="button"
-            class="map-legend-btn"
-            aria-label="How to read the BRC map"
-            title="How to read the BRC map"
-            onClick={() => setInfoOpen(true)}
-          >
-            <span class="map-legend-q">?</span> Legend
-          </button>
-          {geo.status === 'idle' && (
-            <button type="button" class="primary-btn" onClick={requestGps}>
-              Use my GPS
+            {selection.size > 0 && (
+              <button
+                type="button"
+                class="map-clear-btn"
+                aria-label="Clear all selections"
+                title="Clear all selections from the map"
+                onClick={() => clearSelection()}
+              >
+                Clear ({selection.size})
+              </button>
+            )}
+            <button
+              type="button"
+              class="map-legend-btn"
+              aria-label="How to read the BRC map"
+              title="How to read the BRC map"
+              onClick={() => setInfoOpen(true)}
+            >
+              <span class="map-legend-q">?</span> Legend
             </button>
-          )}
-          {geo.status === 'requesting' && (
-            <span class="map-gps">Requesting location…</span>
-          )}
-          {geo.status === 'denied' && (
-            <span class="map-gps-err">Location denied. Fix in browser settings to enable navigation.</span>
-          )}
-          {geo.status === 'error' && (
-            <span class="map-gps-err">Location error: {geo.message}</span>
-          )}
-          {geo.status === 'ready' && (
-            <span class="map-gps">
-              {userAddress ? (
-                <>
-                  <strong>You're at {userAddress.clock} &amp; {userAddress.street}</strong>
-                  {' '}· ±{Math.round(geo.accuracyM)}m{' '}
-                </>
-              ) : (
-                <>
-                  GPS ok · off-grid · ±{Math.round(geo.accuracyM)}m{' '}
-                </>
-              )}
-              <button type="button" class="subtle-btn" onClick={stopGps}>stop</button>
-            </span>
-          )}
+            {geo.status === 'idle' && (
+              <button type="button" class="primary-btn" onClick={requestGps}>
+                Use my GPS
+              </button>
+            )}
+            {geo.status === 'requesting' && (
+              <span class="map-gps">Requesting location…</span>
+            )}
+            {geo.status === 'denied' && (
+              <span class="map-gps-err">Location denied. Fix in browser settings to enable navigation.</span>
+            )}
+            {geo.status === 'error' && (
+              <span class="map-gps-err">Location error: {geo.message}</span>
+            )}
+            {geo.status === 'ready' && (
+              <span class="map-gps">
+                {userAddress ? (
+                  <>
+                    <strong>You're at {userAddress.clock} &amp; {userAddress.street}</strong>
+                    {' '}· ±{Math.round(geo.accuracyM)}m{' '}
+                  </>
+                ) : (
+                  <>
+                    GPS ok · off-grid · ±{Math.round(geo.accuracyM)}m{' '}
+                  </>
+                )}
+                <button type="button" class="subtle-btn" onClick={stopGps}>stop</button>
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div class="map-layer-bar" aria-label="Map layers">
+          <span class="map-layer-label">Layers</span>
+          <div class="map-layer-scroll" role="group" aria-label="Optional map layers">
+            {OPTIONAL_MAP_LAYERS.map((layer) => {
+              const enabled = enabledMapLayers.has(layer.id);
+              return (
+                <button
+                  key={layer.id}
+                  type="button"
+                  class={'map-layer-toggle' + (enabled ? ' active' : '')}
+                  aria-pressed={enabled}
+                  onClick={() => toggleMapLayer(layer.id)}
+                >
+                  <span aria-hidden="true">{layer.glyph}</span>
+                  {layer.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -1127,7 +1342,7 @@ export function MapView({
                       class={'map-meet-row clickable' + (active ? ' active' : '')}
                       onClick={() => toggleKey(mineSpotKey(idx))}
                     >
-                      <span class="map-meet-dot mine" aria-hidden="true" />
+                      <span class="map-meet-dot mine" aria-hidden="true">•</span>
                       <div class="map-meet-body">
                         <div class="map-meet-label">{spot.label}</div>
                         <div class="map-pin-addr">
@@ -1159,13 +1374,20 @@ export function MapView({
             {poiPins.length > 0 && (() => {
               const sectionExpanded = isSectionExpanded('landmarks');
               const selectedCount = poiPins.reduce(
-                (n, { poi }) => n + (selection.has(poiKey(poi.kind, poi.name)) ? 1 : 0),
+                (n, { poi }) => n + (selection.has(poiKey(poi)) ? 1 : 0),
                 0,
               );
+              // Toilet footprints remain individually tappable on the map,
+              // but listing all 45 banks would bury every other landmark on
+              // a phone. A selected toilet is surfaced here like any other
+              // POI so its label and navigation details remain accessible.
+              const listablePois = poiPins.filter(({ poi }) =>
+                poi.kind !== 'toilet' || selection.has(poiKey(poi)),
+              );
               const visiblePois = sectionExpanded
-                ? poiPins
-                : poiPins.filter(
-                  ({ poi }) => selection.has(poiKey(poi.kind, poi.name)),
+                ? listablePois
+                : listablePois.filter(
+                  ({ poi }) => selection.has(poiKey(poi)),
                 );
               return (
                 <>
@@ -1176,7 +1398,7 @@ export function MapView({
                       onClick={() => toggleSection('landmarks')}
                     >
                       {sectionExpanded ? '▾' : '▸'}{' '}
-                      Landmarks ({poiPins.length})
+                      Landmarks &amp; services ({listablePois.length})
                       {!sectionExpanded && selectedCount > 0 && (
                         <span class="count"> · {selectedCount} selected</span>
                       )}
@@ -1185,25 +1407,45 @@ export function MapView({
                   {visiblePois.length > 0 && (
                     <ul class="map-meet-list">
                       {visiblePois.map(({ poi }) => {
-                    const active = selection.has(poiKey(poi.kind, poi.name));
+                    const active = selection.has(poiKey(poi));
                     return (
                       <li
-                        key={`poi-${poi.kind}-${poi.name}`}
+                        key={poiKey(poi)}
                         class={'map-meet-row clickable' + (active ? ' active' : '')}
                         onClick={() => {
-                          toggleKey(poiKey(poi.kind, poi.name));
+                          toggleKey(poiKey(poi));
                         }}
                       >
-                        <span class={`map-poi-dot map-poi-${poi.kind}`} aria-hidden="true" />
+                        <span
+                          class={`map-poi-icon map-poi-icon-${poiShape(poi.kind)}`}
+                          style={{ '--poi-color': poiColor(poi.kind) } as JSX.CSSProperties}
+                          aria-hidden="true"
+                        >{poiGlyph(poi.kind)}</span>
                         <div class="map-meet-body">
                           <div class="map-meet-label">{poi.name}</div>
-                          <div class="map-pin-addr">{poi.address}</div>
+                          {poi.address && <div class="map-pin-addr">{poi.address}</div>}
                           {poi.description && (
                             <div class="row-poi-desc">{poi.description}</div>
                           )}
                           {active && (
                             <div class="row-details">
-                              <NavBlock address={poi.address} />
+                              <NavBlock
+                                address={poi.address ?? ''}
+                                coordinate={typeof poi.lat === 'number' && typeof poi.lng === 'number'
+                                  ? { lat: poi.lat, lng: poi.lng }
+                                  : undefined}
+                              />
+                              {externalMapsUrlForPoi(poi) && (
+                                <div class="row-actions">
+                                  <a
+                                    class="map-ext-link"
+                                    href={externalMapsUrlForPoi(poi)!}
+                                    target="_blank"
+                                    rel="noopener"
+                                    onClick={(event) => event.stopPropagation()}
+                                  >Open in Google Maps ↗</a>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1294,7 +1536,7 @@ export function MapView({
                           toggleKey(friendSpotKey(fm.name, fm.idx));
                         }}
                       >
-                        <span class="map-meet-dot friend" aria-hidden="true" style={friendHueStyle(fm.name)} />
+                        <span class="map-meet-dot friend" aria-hidden="true" style={friendHueStyle(fm.name)}>•</span>
                         <div class="map-meet-body">
                           <div class="map-meet-label">
                             {fm.spot.label}
@@ -1369,7 +1611,9 @@ export function MapView({
                     class={'map-pin-row' + (active ? ' active' : '')}
                     onClick={() => toggleKey(campKey(p.camp.id))}
                   >
-                    <span class={'map-pin-dot' + (p.mine ? ' mine' : '')} aria-hidden="true" />
+                    <span class={'map-pin-dot' + (p.mine ? ' mine' : '')} aria-hidden="true">
+                      {p.mine ? '★' : 'F'}
+                    </span>
                     <span class="map-pin-mid">
                       <span class="map-pin-name">{p.camp.name}</span>
                       {(p.mine || p.friends.length > 0) && hasAnyFriends && (
@@ -1654,6 +1898,8 @@ export function MapView({
             activeSpotAddress={activeSpot ? parseAddress(activeSpot.address, brc) : null}
             selectedItems={selectedItems}
             poiPins={poiPins}
+            mapAreas={mapAreas}
+            showBoundary={showBoundary}
             zoom={zoom}
             center={center}
             setCenter={setCenter}
@@ -1713,7 +1959,7 @@ function Svg({
   userSvg, onClearSelection,
   myCampPin, myMeetPins, friendCampPins, friendMeetPins,
   selection, toggleKey, activeSpot, activeSpotAddress,
-  selectedItems, poiPins, zoom, center, setCenter, unit, brc,
+  selectedItems, poiPins, mapAreas, showBoundary, zoom, center, setCenter, unit, brc,
 }: {
   pins: Array<{ camp: Camp; x: number; y: number; mine: boolean; friends: string[] }>;
   /** Starred art pins. Star shape + distinct color from camp pins.
@@ -1780,6 +2026,8 @@ function Svg({
     x: number; y: number; author: string | null;
     isPoi: boolean;
     color: string;
+    lat?: number;
+    lng?: number;
   } | null;
   /** parseAddress() output for activeSpot — null in multi mode. */
   activeSpotAddress: {
@@ -1795,7 +2043,11 @@ function Svg({
     kind: 'camp' | 'art' | 'mine' | 'friend' | 'poi';
     color: string;
   }>;
-  poiPins: Array<{ poi: BrcPOI; x: number; y: number }>;
+  poiPins: PoiPin[];
+  mapAreas: MapAreaShape[];
+  /** Exact trash-fence overlay. Default off so it does not shrink the compact
+   * city overview; enabling it expands the viewBox to all five vertices. */
+  showBoundary: boolean;
   zoom: number;
   center: { x: number; y: number };
   setCenter: (c: { x: number; y: number }) => void;
@@ -1806,9 +2058,19 @@ function Svg({
    *  Svg uses the right year's Golden Spike + radii. */
   brc: BrcMapData;
 }) {
-  // Radial streets we draw: 2:00 through 10:00. The arc is NOT a full
-  // circle — the 6:00 side is open to the playa.
-  const radialHours = [2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+  // Radial streets come from the annual city plan. In the current plans,
+  // :00/:30 streets span Esplanade→K while :15/:45 exist only from F→K.
+  // Keeping that range in BrcMapData prevents a future plan change from
+  // being silently rendered with a prior year's street grid.
+  const radialStreets = brc.radialStreets.map(({ clock, innerStreet }) => {
+    const [hour, minute] = clock.split(':').map(Number);
+    const innerIndex = brc.streetLetters.indexOf(innerStreet);
+    return {
+      clock,
+      hour: hour + minute / 60,
+      innerRadius: brc.streetRadiiFeet[innerIndex],
+    };
+  });
   // viewBox derived from zoom + center. At zoom=1 this reproduces the
   // original `-6000 -3300 12000 9300` frame exactly (DEFAULT_CENTER is
   // the midpoint of that frame).
@@ -1816,6 +2078,39 @@ function Svg({
   const vbH = vbHeight / zoom;
   const vbX = center.x - vbW / 2;
   const vbY = center.y - vbH / 2;
+
+  // POI hit circles use a non-scaling screen-pixel stroke so they remain
+  // tappable on a phone. Around Gate/Box Office/Will Call those enlarged
+  // targets overlap; normal SVG event ordering would select whichever group
+  // was rendered last, not the visible marker under the finger. Resolve a POI
+  // tap to the nearest visible centroid in the active viewBox instead.
+  const poiKeyAtPointer = (
+    event: { clientX: number; clientY: number },
+    fallback: BrcPOI,
+  ): string => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return poiKey(fallback);
+    const scale = Math.min(rect.width / vbW, rect.height / vbH);
+    if (!Number.isFinite(scale) || scale <= 0) return poiKey(fallback);
+    const contentWidth = vbW * scale;
+    const contentHeight = vbH * scale;
+    const offsetX = rect.left + (rect.width - contentWidth) / 2;
+    const offsetY = rect.top + (rect.height - contentHeight) / 2;
+    const x = vbX + (event.clientX - offsetX) / scale;
+    const y = vbY + (event.clientY - offsetY) / scale;
+    let nearest = poiPins.find(({ poi }) => poi.id === fallback.id) ?? null;
+    let bestDistance = nearest
+      ? Math.hypot(nearest.x - x, nearest.y - y)
+      : Number.POSITIVE_INFINITY;
+    for (const pin of poiPins) {
+      const distance = Math.hypot(pin.x - x, pin.y - y);
+      if (distance < bestDistance) {
+        nearest = pin;
+        bestDistance = distance;
+      }
+    }
+    return nearest ? poiKey(nearest.poi) : poiKey(fallback);
+  };
 
   // Pan via pointer events. Single path handles mouse + touch + pen via
   // the Pointer Events API. `drag` holds the drag-start anchor (pointer
@@ -1888,6 +2183,7 @@ function Svg({
     <svg
       ref={svgRef}
       class={'brc-svg' + (zoom > 1 ? ' pannable' : '')}
+      style={{ aspectRatio: `${vbWidth} / ${vbHeight}` }}
       viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
       preserveAspectRatio="xMidYMid meet"
       aria-label="Black Rock City map"
@@ -1901,6 +2197,17 @@ function Svg({
           to viewBox automatically; the top half gets cropped away
           along with the unused empty space. */}
       <circle cx={0} cy={0} r={vbRadius * 0.98} class="brc-playa" />
+      {showBoundary && (
+        <polygon
+          points={brc.fencePentagon.map((vertex) => {
+            const point = latLngToSvgFeet(vertex, brc);
+            return `${point.x},${point.y}`;
+          }).join(' ')}
+          class="brc-trash-fence"
+        >
+          <title>Black Rock City trash fence</title>
+        </polygon>
+      )}
       {/* Concentric letter streets, 2:00 → 10:00 through 6:00 (the
           city side). Polyline approximation — SVG's A-command flags
           for large-arc/sweep disambiguation render counter-intuitively
@@ -1915,16 +2222,21 @@ function Svg({
           fill="none"
         />
       ))}
-      {/* radial streets: line from Esplanade (inner) out to K (outer) */}
-      {radialHours.map((h) => {
-        const inner = hourToSvgPoint(h, brc.streetRadiiFeet[0]);
-        const outer = hourToSvgPoint(h, brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1]);
+      {/* Annual radial street ranges. */}
+      {radialStreets.map(({ clock, hour, innerRadius }) => {
+        const inner = hourToSvgPoint(hour, innerRadius);
+        const outer = hourToSvgPoint(
+          hour,
+          brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1],
+        );
         return (
           <line
-            key={h}
+            key={clock}
             x1={inner.x} y1={inner.y}
             x2={outer.x} y2={outer.y}
             class="brc-street radial"
+            data-clock={clock}
+            data-inner-radius={innerRadius}
           />
         );
       })}
@@ -1933,9 +2245,54 @@ function Svg({
           opposing 12:00 axis (deep playa) used to be drawn here too,
           but we cropped the top of the viewBox, so it's gone. */}
       <line x1={0} y1={0} x2={hourToSvgPoint(6, brc.streetRadiiFeet[0]).x} y2={hourToSvgPoint(6, brc.streetRadiiFeet[0]).y} class="brc-street axis" />
-      {/* The Man */}
-      <circle cx={0} cy={0} r={90} class="brc-man" />
-      <text x={0} y={-150} class="brc-label man-label" text-anchor="middle">The Man</text>
+      {/* Annual official civic-area footprints. Drawn after the street grid so
+          Center Camp reads as the real plaza cutout rather than a point laid
+          over uninterrupted streets. A tap delegates to its associated POI,
+          preserving the existing details row, map label, and navigation. */}
+      {mapAreas.map(({ area, polygons }) => {
+        const selectionKey = `poi:${area.poi_id}`;
+        const path = polygons.map((polygon) => polygon.map((ring) =>
+          ring.map((point, index) =>
+            `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`,
+          ).join(' ') + ' Z',
+        ).join(' ')).join(' ');
+        return (
+          <path
+            key={area.id}
+            d={path}
+            class={`brc-map-area brc-map-area-${area.kind}`
+              + (selection.has(selectionKey) ? ' active' : '')}
+            fill-rule="evenodd"
+            role="button"
+            tabIndex={0}
+            aria-label={`${area.name} footprint`}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleKey(selectionKey);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              event.stopPropagation();
+              toggleKey(selectionKey);
+            }}
+          >
+            <title>{area.name} — official annual footprint</title>
+          </path>
+        );
+      })}
+      {/* The Man — a compact SVG effigy centered exactly on the Golden
+          Spike. Separate outlined/colored limb strokes keep the silhouette
+          readable against streets in light and dark themes. */}
+      <g class="brc-man" data-map-anchor="golden-spike" aria-label="The Man at the Golden Spike">
+        <circle cx={0} cy={0} r={145} class="brc-man-halo" />
+        <path d="M -94 -24 L 0 -58 L 94 -24 M 0 24 L -68 112 M 0 24 L 68 112" class="brc-man-limbs-outline" />
+        <path d="M -94 -24 L 0 -58 L 94 -24 M 0 24 L -68 112 M 0 24 L 68 112" class="brc-man-limbs" />
+        <path d="M -34 -68 H 34 L 42 26 L 0 48 L -42 26 Z" class="brc-man-body" />
+        <circle cx={0} cy={-105} r={30} class="brc-man-head" />
+        <title>The Man — Golden Spike map origin</title>
+      </g>
+      <text x={0} y={-170} class="brc-label man-label" text-anchor="middle">The Man</text>
       {/* Prominent address readout near the Man when a pin is selected
           — gives an unmissable "this is what 7:30 & E looks like"
           signal so the user can correlate the highlight to the address.
@@ -1997,7 +2354,7 @@ function Svg({
           </text>
         </>
       )}
-      {!target && !artTarget && activeSpot && activeSpotAddress && (
+      {!target && !artTarget && activeSpot && (
         <>
           {/* Title sits well above the address so the big 340px address
               letters + smaller 200px title don't collide. The previous
@@ -2010,13 +2367,21 @@ function Svg({
           >
             {activeSpot.author ? `${activeSpot.author}: ${activeSpot.label}` : activeSpot.label}
           </text>
-          <text
-            x={0} y={-460}
-            class="brc-label brc-address-label"
-            text-anchor="middle"
-          >
-            {activeSpotAddress.clock} &amp; {activeSpotAddress.street}
-          </text>
+          {activeSpotAddress ? (
+            <text
+              x={0} y={-460}
+              class="brc-label brc-address-label"
+              text-anchor="middle"
+            >
+              {activeSpotAddress.clock} &amp; {activeSpotAddress.street}
+            </text>
+          ) : activeSpot.address ? (
+            <text
+              x={0} y={-460}
+              class="brc-label brc-address-label"
+              text-anchor="middle"
+            >{activeSpot.address}</text>
+          ) : null}
         </>
       )}
       {/* Street letter labels — clock-hour 10:00, nudged just past each
@@ -2039,9 +2404,23 @@ function Svg({
       })}
       {/* Clock hour labels at the outer ring */}
       {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((h) => {
-        const p = hourToSvgPoint(h, brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + 350);
+        // Cardinal labels would cross the compact ±6000' edge if they used
+        // the diagonal labels' full offset now that official K is at 5755'.
+        // Pull just 3/6/9 inward; this preserves the phone-scale city extent
+        // and leaves the 10:00 label clear of the K street-letter label.
+        const offset = h === 3 || h === 6 || h === 9 ? 100 : 300;
+        const p = hourToSvgPoint(
+          h,
+          brc.streetRadiiFeet[brc.streetRadiiFeet.length - 1] + offset,
+        );
         return (
-          <text key={h} x={p.x} y={p.y} class="brc-label hour-label" text-anchor="middle">
+          <text
+            key={h}
+            x={p.x} y={p.y}
+            class="brc-label hour-label"
+            text-anchor="middle"
+            data-hour-label={h}
+          >
             {h}:00
           </text>
         );
@@ -2149,10 +2528,10 @@ function Svg({
               labels on the same radial line — distribute them across
               [0.3, 0.7] of each item's distance instead of a fixed
               0.5 so the labels separate radially.
-            - Items with dots close to each other in screen space
-              would collide their NAME labels above the dot — stack
-              the names vertically (the lower-screen dot keeps its
-              label close, the upper-screen dot's label is pushed
+            - Items with markers close to each other in screen space
+              would collide their NAME labels above the marker — stack
+              the names vertically (the lower-screen marker keeps its
+              label close, the upper-screen marker's label is pushed
               further up). */}
       {(() => {
         if (selectedItems.length < 2) return null;
@@ -2389,36 +2768,76 @@ function Svg({
         );
       })()}
 
-      {/* Static POIs — landmarks like Center Camp + Playa Info. Sized
-          larger than the starred-camp pins so these "everyone's
-          reference points" read as anchors of the map. Drawn before
+      {/* Official toilet-bank footprints. Each polygon and its centroid
+          marker share the same click target and selected label behavior as
+          every existing POI. The centroid marker ensures narrow polygons
+          remain easy to tap on a phone. */}
+      {poiPins.flatMap(({ poi, rings = [] }) => rings.map((ring, index) => (
+        <polygon
+          key={`${poiKey(poi)}-ring-${index}`}
+          points={ring.map((point) => `${point.x},${point.y}`).join(' ')}
+          class={'brc-toilet-footprint' + (selection.has(poiKey(poi)) ? ' active' : '')}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleKey(poiKey(poi));
+          }}
+        >
+          <title>{poi.name}</title>
+        </polygon>
+      )))}
+
+      {/* Official/static POIs. Sized larger than starred-camp pins so
+          these "everyone's reference points" read as anchors of the map.
+          Drawn before
           the user-authored pins so a starred camp at the same spot
           wouldn't be covered over. */}
       {poiPins.map(({ poi, x, y }) => {
-        const active = selection.has(poiKey(poi.kind, poi.name));
+        const active = selection.has(poiKey(poi));
+        const shape = poiShape(poi.kind);
+        const markerPath = POI_MARKER_PATHS[shape];
         return (
           <g
-            key={`poi-${poi.kind}-${poi.name}`}
+            key={poiKey(poi)}
             class={`brc-poi brc-poi-${poi.kind}` + (active ? ' active' : '')}
+            data-marker-kind={poi.kind}
+            data-marker-shape={shape}
+            style={{ '--poi-color': poiColor(poi.kind) } as JSX.CSSProperties}
             transform={`translate(${x} ${y})`}
+            role="button"
+            tabIndex={0}
+            aria-label={`${poi.name}${poi.address ? `, ${poi.address}` : ''}`}
             onClick={(e) => {
               e.stopPropagation();
-              toggleKey(poiKey(poi.kind, poi.name));
+              toggleKey(poiKeyAtPointer(e, poi));
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              event.stopPropagation();
+              toggleKey(poiKey(poi));
             }}
           >
             {/* Transparent hit-catcher (same r=150 pattern as camp pins).
                 The visible halo is r=120 which is borderline tappable on
                 a phone; 150 keeps us safely above finger-target minima. */}
             <circle r={150} class="brc-pin-hit" />
-            <circle r={120} class="brc-poi-halo" />
-            <circle r={60} class="brc-poi-dot" />
+            <path d={markerPath} transform="scale(1.75)" class="brc-poi-halo" />
+            <path d={markerPath} class="brc-poi-dot" />
+            <text class="brc-poi-glyph" text-anchor="middle" dominant-baseline="central">
+              {poiGlyph(poi.kind)}
+            </text>
             <title>{poi.name}{poi.description ? ` — ${poi.description}` : ''}</title>
           </g>
         );
       })}
 
-      {/* Pins */}
-      {pins.map((p) => (
+      {/* Favorite bookmarks. Home-camp tents supersede bookmarks at the
+          same coordinate so two silhouettes never obscure one another;
+          the camp remains present in the Starred camps list. */}
+      {pins.filter((p) => (
+        p.camp.id !== myCampPin?.camp.id
+        && !friendCampPins.some((home) => home.camp.id === p.camp.id)
+      )).map((p) => (
         <g
           key={p.camp.id}
           class={'brc-pin' + (selection.has(campKey(p.camp.id)) ? ' active' : '') + (p.mine ? ' mine' : ' friend')}
@@ -2430,17 +2849,18 @@ function Svg({
         >
           {/* Invisible hit-catcher — see comment on `brc-pin-hit`. */}
           <circle r={150} class="brc-pin-hit" />
-          <circle r={70} class="brc-pin-outer" />
-          <circle r={35} class="brc-pin-inner" />
+          <path d={CAMP_FAVORITE_PATH} transform="scale(1.45)" class="brc-pin-outer" />
+          <path d={CAMP_FAVORITE_PATH} class="brc-pin-inner" />
+          <text class="brc-pin-glyph" text-anchor="middle" dominant-baseline="central">
+            {p.mine ? '★' : 'F'}
+          </text>
           <title>{p.camp.name}{p.camp.location ? ` — ${p.camp.location}` : ''}</title>
         </g>
       ))}
 
-      {/* Nav-target pin for an unstarred camp the user routed in to.
-          Same circle shape as a regular pin so the size/position read
-          consistently, but the `nav-target` modifier styles it as a
-          dashed outline (CSS) — communicates "you're navigating here,
-          you haven't starred this yet". */}
+      {/* Nav-target for an unstarred camp: a crosshair, not the bookmark
+          used by favorites. It communicates "current destination" without
+          making the camp look saved. */}
       {navCampPin && (
         <g
           class={'brc-pin nav-target active'}
@@ -2451,8 +2871,9 @@ function Svg({
           }}
         >
           <circle r={150} class="brc-pin-hit" />
-          <circle r={70} class="brc-pin-outer" />
-          <circle r={35} class="brc-pin-inner" />
+          <circle r={74} class="brc-nav-target-halo" />
+          <circle r={46} class="brc-nav-target-ring" />
+          <path d="M -78 0 H 78 M 0 -78 V 78" class="brc-nav-target-cross" />
           <title>{navCampPin.camp.name}{navCampPin.camp.location ? ` — ${navCampPin.camp.location}` : ''}</title>
         </g>
       )}
@@ -2477,8 +2898,8 @@ function Svg({
           }}
         >
           <circle r={150} class="brc-pin-hit" />
-          {/* 5-point star — visually distinct from camp circles,
-              meet-spot circles, and the my-camp triangle. Outer
+          {/* 5-point star — visually distinct from camp bookmarks,
+              meet-spot diamonds, and the my-camp tent. Outer
               radius 70, inner ~27 (golden-ratio inset). */}
           <path
             d="M 0 -70 L 16 -22 L 67 -22 L 26 8 L 41 57 L 0 27 L -41 57 L -26 8 L -67 -22 L -16 -22 Z"
@@ -2533,6 +2954,7 @@ function Svg({
           {/* Tent triangle ~150 viewBox units wide, 125 tall.
               Roughly 2x the camp-pin circle footprint. */}
           <path d="M -75 55 L 0 -70 L 75 55 Z" class="brc-my-camp-body" />
+          <path d="M 0 -45 V 55 M -25 55 L 0 10 L 25 55" class="brc-tent-detail" />
           <title>Your home camp — {myCampPin.camp.name}</title>
         </g>
       )}
@@ -2550,15 +2972,13 @@ function Svg({
           <circle r={150} class="brc-pin-hit" />
           <circle r={80} class="brc-friend-camp-halo" />
           <path d="M -45 32 L 0 -40 L 45 32 Z" class="brc-friend-camp-body" />
+          <path d="M 0 -24 V 32" class="brc-tent-detail friend" />
           <text x={0} y={130} class="brc-friend-label" text-anchor="middle">{fp.name}</text>
           <title>{fp.name}'s camp — {fp.camp.name}</title>
         </g>
       ))}
-      {/* Your meet spots — bright violet dots. The whole map reads as
-          a graph of dots; meet spots used to be diamonds with text
-          labels under them, which stood out oddly on a phone. Now
-          they're just bright dots with a generous hit-catcher. The
-          sidebar surfaces label + nickname for any selection. */}
+      {/* Four-point rendezvous markers are deliberately unlike favorite bookmarks,
+          art stars, home tents, official POIs, and the GPS bullseye. */}
       {myMeetPins.map((mp) => {
         const active = selection.has(mineSpotKey(mp.idx));
         return (
@@ -2572,12 +2992,14 @@ function Svg({
             }}
           >
             <circle r={150} class="brc-pin-hit" />
-            <circle r={60} class="brc-meet-dot" />
+            <path d={MEET_SPOT_PATH} class="brc-meet-dot" />
+            <circle r={13} class="brc-meet-center" />
             <title>{mp.spot.label} — {mp.spot.address}{mp.spot.when ? ` · ${mp.spot.when}` : ''}</title>
           </g>
         );
       })}
-      {/* Friends' meet spots — bright dots tinted with friend hue. */}
+      {/* Friends' meet spots use the same rendezvous silhouette, tinted
+          with the friend's stable color. */}
       {friendMeetPins.map((fm) => {
         const active = selection.has(friendSpotKey(fm.name, fm.idx));
         return (
@@ -2592,7 +3014,8 @@ function Svg({
             }}
           >
             <circle r={150} class="brc-pin-hit" />
-            <circle r={60} class="brc-meet-dot" />
+            <path d={MEET_SPOT_PATH} class="brc-meet-dot" />
+            <circle r={13} class="brc-meet-center" />
             <title>{fm.name}: {fm.spot.label} — {fm.spot.address}{fm.spot.when ? ` · ${fm.spot.when}` : ''}</title>
           </g>
         );
@@ -2601,8 +3024,10 @@ function Svg({
       {/* You are here */}
       {userSvg && (
         <g transform={`translate(${userSvg.x} ${userSvg.y})`} class="brc-user">
-          <circle r={100} class="brc-user-halo" />
-          <circle r={40} class="brc-user-dot" />
+          <circle r={108} class="brc-user-halo" />
+          <circle r={58} class="brc-user-ring" />
+          <path d="M -90 0 H 90 M 0 -90 V 90" class="brc-user-cross" />
+          <circle r={22} class="brc-user-dot" />
           <title>You are here</title>
         </g>
       )}

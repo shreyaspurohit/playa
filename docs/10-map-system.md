@@ -1,7 +1,7 @@
 ---
 title: Map System
 date: 2026-04-27
-updated: 2026-08-06
+updated: 2026-08-07
 status: current
 ---
 
@@ -16,7 +16,7 @@ constants in `client/src/map/data.ts` — no third-party map library,
 no tile server. That's a hard requirement: on-playa the only working
 "map" is the one that shipped in the bundle.
 
-GPS is supported when granted, with a "you are here" dot, a current
+GPS is supported when granted, with a "you are here" bullseye, a current
 clock-and-letter address readout, and a bearing line to whatever the
 user has selected.
 
@@ -25,7 +25,8 @@ user has selected.
 - **Pure SVG, zero tile fetches.** Every line, label, and pin is
   drawn from constants. Works on airplane mode after first load.
 - **Year-isolated constants in `data.ts`.** The golden-spike lat/lng,
-  block depths, themed street names, 12-bearing, and POI list all
+  street centerline radii, themed street names, radial ranges, 12-bearing,
+  and POI list all
   live in one file with the year stamped at the top. The
   `/update-map` Claude skill walks the annual refresh.
 - **Polar-coord math, not real projections.** BRC fits in a
@@ -38,16 +39,36 @@ user has selected.
   intuitively. Iterating clock hours from 2 → 10 with line segments
   draws the city-occupied arc the long way around without any flag
   guesswork.
+- **Official street centerlines, not accumulated block depths.** The 2025 and
+  2026 GIS `street_lines.geojson` files put Esplanade through K at
+  `[2500, 2935, 3215, 3495, 3775, 4060, 4545, 4825, 5105, 5385, 5565, 5755]`
+  feet from the Golden Spike. A measurements-PDF block depth is the clear
+  space between street edges, so center-to-center spacing must add half the
+  width of both bordering streets. Omitting those half-widths compounds the
+  error and pulls K 355 feet inward.
+- **Annual radial ranges.** The same 2025/2026 street exports contain every
+  quarter hour from 2:00 through 10:00. `:00` and `:30` streets span
+  Esplanade–K; `:15` and `:45` streets exist only in the outer city from F–K.
+  The renderer reads these ranges from `BrcMapData` rather than drawing a
+  hard-coded set of half-hour lines.
 - **viewBox-based zoom + pan**. Real SVG re-rendering at every zoom
   level (no rasterized loss) plus a transparent hit-catcher per pin
   for fat-finger touch.
+- **Sticky map controls below dynamic site chrome.** The map title, zoom/unit/GPS
+  actions, legend, and horizontally scrollable layer toggles stay visible while
+  the user scrolls the landmark lists and SVG. `MapView` observes the existing
+  `.site-chrome` height and publishes `--site-chrome-height`; the control panel
+  uses that live value as its sticky offset. Do not replace it with a fixed
+  pixel value: the header height varies by phone width, active source, and
+  transient import/update/release-note banners.
 
 ## Accepted extension: official GIS landmarks and services
 
 **Decision date:** 2026-08-06<br>
-**Implementation status:** accepted and specified; not yet implemented
+**Implementation status:** core scope implemented and verified 2026-08-07;
+accepted Gate Road and DMZ overlays remain optional backlog
 
-The map will add a curated set of official, year-specific Black Rock City
+The map adds a curated set of official, year-specific Black Rock City
 landmarks, participant services, safety resources, transport points, portable
 toilet banks, and selected boundary overlays. The source is Burning Man
 Project's official annual GIS export, not addresses inferred from camp data and
@@ -62,6 +83,8 @@ additional SVG layers and use the existing GPS-to-SVG conversion.
 
 Primary sources for the 2026 decision:
 
+- Innovate datasets/release index:
+  <https://innovate.burningman.org/datasets-page/>
 - 2026 GIS dataset description:
   <https://innovate.burningman.org/dataset/2026-gis-map-data/>
 - Official repository:
@@ -100,18 +123,20 @@ updates a file in place.
 |---|---:|---|---|
 | `cpns.geojson` | 11,045 B | Named city-plan nodes / points of interest | In scope, curated allowlist only |
 | `toilets.geojson` | 22,036 B | Portable-toilet bank footprints | In scope |
-| `trash_fence.geojson` | 626 B | Actual city/perimeter boundary | In scope |
-| `plazas.geojson` | 31,029 B | Authoritative plaza shapes/centers | In scope after core POIs |
-| `dmz.geojson` | 1,351 B | Deep-Playa Music Zone boundary | Optional layer |
-| `gate_road.geojson` | 18,439 B | Arrival/exodus orientation | Optional transport layer |
-| `street_lines.geojson` | 236,258 B | Exact street centerlines | Deferred; current SVG is clearer/smaller |
+| `trash_fence.geojson` | 626 B | Actual city/perimeter boundary | Annual base-geometry review input; compiled vertices live in `data.ts`, not the GIS payload |
+| `plazas.geojson` | 31,029 B | Authoritative plaza shapes/centers | In scope; Center Camp footprint normalized annually |
+| `dmz.geojson` | 1,351 B | Deep-Playa Music Zone boundary | Accepted optional backlog; not fetched/rendered |
+| `gate_road.geojson` | 18,439 B | Arrival/exodus orientation | Accepted optional backlog; not fetched/rendered |
+| `street_lines.geojson` | 236,258 B | Exact street centerlines/radial ranges | Annual `map-audit` input; derive reviewed constants, do not embed raw |
 | `city_blocks.geojson` | 1,520,547 B | Block polygons | Out of scope |
 | `street_outlines.geojson` | 1,629,109 B | Detailed street polygons | Out of scope |
 
-The selected small files total about 85 KB before normalization or gzip. Do not
-pull in the two 1.5+ MB polygon layers merely because they exist. They add
-visual density and bundle weight while duplicating a base grid that the app
-already renders well.
+The three currently fetched runtime-overlay inputs (`cpns`, `plazas`, and
+`toilets`) total about 64 KB before normalization or gzip. Adding every accepted
+optional/review input brings the small-file inventory to about 85 KB, but those
+files are not silently fetched or rendered. Do not pull in the two 1.5+ MB
+polygon layers merely because they exist. They add visual density and bundle
+weight while duplicating a base grid that the app already renders well.
 
 Verified details that the importer must preserve:
 
@@ -126,6 +151,11 @@ Verified details that the importer must preserve:
 - Toilet `class` values observed in 2026 include `in city`, `2/10`, `man`,
   `playa`, `temple`, and null. Treat them as source metadata, not prose labels
   suitable for the UI.
+- `plazas.geojson` contains authoritative `Polygon` plaza footprints. The
+  participant-facing name property drifted from `Name` in 2025 to `name` in
+  2026; both spellings are part of the importer contract. Center Camp Plaza is
+  normalized as an area linked to the existing `center-camp` POI, not as a
+  second list item.
 - Upstream identifiers are year-local. A stable client key must include the
   year and feature kind; an `OBJECTID` or `FID` by itself is insufficient.
 
@@ -160,20 +190,41 @@ debugging and provenance.
 - The Temple
 - Center Camp / Center Camp Plaza
 - Official plazas
-- Trash-fence boundary
+- Medical / Emergency Services Department stations at the 3:00, 6:00, and
+  9:00 sides of the city
+- Ranger Headquarters and the 3:00 / 9:00 Ranger outposts
 
 These are orientation anchors rather than optional services. Avoid duplicate
 pins: once an official point replaces a hard-coded `POIS` entry, remove the
 hard-coded counterpart in the same change.
 
+Center Camp is both a navigable point and an annual footprint. Render the
+official plaza polygon over the generic street grid so the map shows the real
+cutout, while polygon taps delegate to the point's existing details and
+navigation. Do not infer the footprint from a street address or reuse another
+year's polygon.
+
 #### Essentials — visible by default
 
-- Portable-toilet banks
-- Medical / Emergency Services Department stations at the 3:00, 6:00, and
-  9:00 sides of the city
-- Ranger Headquarters and the 3:00 / 9:00 Ranger outposts
 - Arctica ice locations, including the large-order outpost when present
-- Playa Info
+
+#### Boundary — optional, default off
+
+- Exact trash-fence pentagon for the selected map year
+
+The fence is useful for orientation but far wider than the compact city grid.
+Keeping it off initially preserves a readable city scale on phones. Enabling
+Boundary expands the viewBox to all five vertices; disabling it returns to the
+compact ambient extent.
+
+#### Toilets — optional, default off
+
+- Portable-toilet banks
+
+Toilets are separate from Essentials because the 2026 dataset contains 45
+banks. Showing every footprint and centroid on first load obscures more useful
+orientation and safety markers, especially on a phone. The dedicated toggle
+keeps them one tap away without making the default map crowded.
 
 Safety-resource labels should use the participant-facing terminology in the
 current Survival Guide. For example, the raw CPN names `Ranger Station Berlin`
@@ -189,25 +240,37 @@ use the explicit ESD records plus the current official guide.
 - Yellow Bike Shop / Project
 - Placement and Lost & Found, represented as services at Playa Info rather
   than duplicate colocated pins
-- Department of Mutant Vehicles
-- Media Mecca
 
-Co-located services belong in one point's detail panel. Stacking several icons
+Co-located services belong in one point's detail panel. Playa Info, Placement,
+and Lost & Found therefore share one marker. Stacking several icons
 at Playa Info or Center Camp makes the map less usable and suggests false
 physical separation.
 
-#### Transport / arrival — optional, default off
+#### Transport — optional, default off
 
 - Burner Express Bus Depot
 - Airport
+
+#### Arrival — optional, default off
+
+- Department of Mutant Vehicles
+- Media Mecca
 - Gate and Greeters
-- Box Office, Will Call, D-Lot, and Gate Road
+- Box Office and Will Call
+
+D-Lot remains a review item rather than an implemented destination: the current
+allowlist has no verified participant-facing CPN mapping for it. Gate Road is
+also not a point marker; its official line geometry belongs to the accepted
+optional overlay backlog. Do not imply either is present until its annual
+source and participant guidance have been reviewed.
 
 These features sit well outside the compact city grid. Hidden transport points
 must not expand the default SVG `viewBox`; otherwise the city becomes tiny to
-make room for locations most users do not need during the event. Turning on the
-transport layer may intentionally expand/recenter the view, and resetting the
-layer returns to the normal city extent.
+make room for locations most users do not need during the event. Explicitly
+turning on Transport or Arrival fits that layer's available markers into the
+overview and resets an existing close zoom to 1×; turning it off returns to the
+compact extent. Selecting one POI as the sole target still expands/recenters as
+needed, matching existing camp/art navigation behavior.
 
 #### Excluded unless clarified
 
@@ -226,11 +289,14 @@ The intended controls are:
 
 | Layer | First-visit default | Contents |
 |---|---|---|
-| Base landmarks | On, not hideable | Man, Temple, Center Camp, plazas, fence |
-| Essentials | On | Toilets, medical/ESD, Rangers, ice, Playa Info |
-| Services | Off | ARTery, recycling, bikes, DMV, Media Mecca |
-| Transport | Off | Airport, bus depot, Gate/Greeters, Box Office/Will Call |
-| Sound zones | Off | DMZ boundary/label |
+| Base landmarks | On, not hideable | Man, Temple, Center Camp, plazas, medical/ESD, Rangers |
+| Boundary | Off | Exact trash-fence pentagon |
+| Essentials | On | Arctica ice |
+| Toilets | Off | Portable-toilet bank footprints and centroids |
+| Services | Off | Playa Info/Placement/Lost & Found, ARTery, recycling, bikes |
+| Transport | Off | Airport and bus depot |
+| Arrival | Off | Gate/Greeters, Box Office/Will Call, DMV, Media Mecca |
+| Sound zones *(accepted backlog)* | Off | DMZ boundary/label; control not implemented yet |
 
 Layer preferences should persist locally under a versioned key such as
 `bm-map-layers/v1`. The version suffix gives us a clean default reset if layers
@@ -239,16 +305,29 @@ existing "Clear all local data" behavior.
 
 Rendering rules:
 
-- At overview zoom, toilet polygons render as compact toilet-bank symbols at a
-  computed polygon centroid. At closer zoom, their footprint may render beneath
-  the symbol. Do not show 45 permanent text labels.
+- Toilet polygons render beneath compact toilet-bank symbols at computed
+  polygon centroids. Do not show 45 permanent text labels, but each footprint
+  and centroid must be tappable; selection surfaces the same label, details,
+  distance/bearing, ETA, and external-map link as another POI.
+- The Center Camp Plaza polygon renders above the generic street lines with
+  even-odd ring filling. It has a keyboard/tap target and delegates selection
+  to the `center-camp` point, so it does not duplicate the landmarks row.
+- The exact trash fence renders and participates in the overview bounds only
+  while Boundary is enabled. The SVG element's CSS aspect ratio follows the
+  computed `viewBox`, avoiding extra letterboxing in either state.
+- Unselected POIs do not determine the compact default extent. While Transport
+  or Arrival is enabled, its distant POIs determine that explicit layer view;
+  a sole selected POI also reframes the map to guarantee the focused
+  destination is visible.
 - Other POIs use distinct shape **and** color categories. Safety information
   must not rely on color alone.
 - Labels appear on selection/focus and in the detail panel, not permanently at
   overview zoom.
 - Every interactive marker needs a large transparent hit target, keyboard
   focus, an `aria-label`, and the same tap-to-toggle semantics as existing map
-  items.
+  items. Because screen-sized POI hit targets can overlap at arrival clusters,
+  pointer taps resolve to the nearest visible centroid rather than whichever
+  SVG group happens to render last.
 - A selected official point participates in the existing GPS distance/bearing
   experience. Its panel should include name, category, short official-purpose
   summary, coordinates/address when meaningful, and the existing external-map
@@ -259,8 +338,45 @@ Rendering rules:
 - The legend must explain icons, layer controls, source year, and that the map
   is a planned snapshot rather than a live operational feed.
 
+#### Marker shape vocabulary
+
+Color is never the only category cue. The map, selected-item rows, and legend
+must keep the same compound vocabulary of **silhouette + glyph + color**:
+
+| Meaning | Silhouette | Glyph/color |
+|---|---|---|
+| The Man / Golden Spike | Head, body, arms, and legs | Orange effigy centered at `(0, 0)` |
+| Medical/ESD | Octagon | White `✚` on red |
+| Black Rock Rangers | Shield | White `R` on indigo |
+| Temple | Diamond | White `T` on ochre/gold |
+| Arctica | Hexagon | White `❄` on blue |
+| Playa Info | Square | White `i` on dark blue |
+| Toilet bank | Wide capsule | White `WC` on blue |
+| Airport | Triangle | White airplane on slate |
+| Other official services | Category shape | Stable glyph and color from `gis.ts` |
+| Your home camp | Large tent with doorway | Teal |
+| Friend home camp | Smaller tent | Friend's stable hue |
+| Starred camp | Bookmark | White `★` on gold; `F` on friend-only orange |
+| Starred art | Five-point star | Magenta for yours, teal for friend-only |
+| Meet spot | Four-point rendezvous marker with center dot | Violet for yours, friend's stable hue otherwise |
+| GPS position | Crosshair/bullseye | Blue |
+| Unsaved camp navigation target | Dashed crosshair | Orange |
+| Unsaved art navigation target | Hollow five-point star | Magenta |
+
+Every official POI kind has a unique exact color in `POI_COLORS`; colors must
+not be reused even when two categories live on different optional layers. The
+exhaustive `Record<PoiKind, string>` forces newly added kinds to choose a color,
+and the GIS metadata test rejects duplicate palette values. Shape and glyph
+remain mandatory because color alone is not an accessible identifier.
+
+When a starred camp is also a home camp, render only the tent at that
+coordinate. The camp remains in the Starred camps list, but drawing a bookmark
+under the tent makes both silhouettes less legible without adding information.
+The invisible hit-catcher stays circular and generously sized regardless of
+the visible silhouette.
+
 Do not add marker clustering initially. The allowlist plus layer defaults keeps
-the visible point count manageable, and toilets do not need individual labels.
+the visible point count manageable, and toilet labels appear only on selection.
 Revisit clustering only if real-device testing shows unusable density.
 
 ### Data acquisition, normalization, and offline behavior
@@ -314,11 +430,79 @@ Implementation requirements:
    the GIS snapshot is part of the offline shell. Never fetch updated GIS data
    opportunistically in the browser.
 
+#### Implemented file contract (2026)
+
+- `backend/src/playa/gis.py` owns `POI_RULES`, `AREA_RULES`, upstream-name aliases,
+  introduction-year requirements, GeoJSON validation, polygon centroids,
+  atomic cache replacement, SHA-256 provenance, a curation/cache version, and
+  normalization. A version mismatch regenerates `normalized.json` from the
+  cached raw GeoJSON before attempting any network download.
+- `python -m playa gis-fetch [--year YYYY] [--force]` writes raw inputs plus
+  `data/gis/YYYY/normalized.json`. With no `--year`, it resolves the directory
+  map year and configured API years; `make build`, `make rebuild`, and
+  `make dev` ensure those caches exist.
+- `SiteBuilder._gis_data_scripts()` validates and embeds each active map year
+  once as `gis-data-YYYY`, gzip/base64. A directory and API source from the
+  same year therefore do not duplicate geometry. The builder also emits
+  `bm-directory-map-year`; the client uses that value for `directory` while
+  `api-YYYY` remains self-describing.
+- `client/src/map/gis.ts` validates/decompresses that script and owns layer
+  defaults plus icon/color mappings. `MapView.tsx` converts official WGS84
+  coordinates and polygon rings through the active `BrcMapData`. The normalized
+  area schema is `[polygon][ring][point][lng,lat]`, preserving holes and future
+  `MultiPolygon` inputs.
+- 2025 is the regression case for annual name drift: its medical nodes are
+  `Station 3`, `Station 6`, and `Station 9`, while 2026 uses the `ESD Station`
+  names. The stable IDs do not change. `Arctica Outpost` is required from 2026
+  onward but is validly absent in 2025.
+- The official `Center Camp Plaza` CPN replaces the static fallback when GIS is
+  present. For 2026 both it and the distinct `Arctica Center Camp` point are
+  inside the A–B block, at roughly 3,026 and 3,052 feet from the Man. A
+  nearest-centerline reverse lookup therefore reports A even though the
+  curated participant address refers to the adjacent B-side location. The
+  official annual plaza polygon supplies the full Center Camp footprint
+  independently of both points.
+
+#### Staged-release behavior
+
+Camp/event/art sources may become available before that year's complete city
+geometry or GIS export. This is an expected partial state, not a build failure:
+
+- `getBrcForYear(year)` resolves only an exact `BRC_BY_YEAR` entry. It never
+  borrows the newest known year.
+- When exact geometry is missing, the Map tab shows a year-specific “Map not
+  available yet” state. Camps, events, art, favorites, and schedules continue
+  to work.
+- Schedule “Near me” is disabled for that source because its distance math also
+  requires exact geometry. If it was active before a source switch, it is
+  cleared rather than hiding events. Non-coordinate schedule filters remain
+  available.
+- A GIS HTTP 404 with no same-year cache logs a warning and omits official
+  overlays for that year. A forced refresh that receives 404 retains a valid
+  same-year cache.
+- Other HTTP failures and released-but-invalid GIS data fail the explicit,
+  strict `gis-fetch` operator command. Automatic build/nightly refresh catches
+  them per year, emits a loud warning/Actions annotation, and continues with a
+  valid same-year cache or no overlay. Invalid data never replaces a known good
+  map, and one failed year does not prevent later years from refreshing.
+- The builder validates caches again as a defense against truncation/manual
+  damage. An unusable cache is warned and skipped for that year while other
+  valid annual overlays and the rest of the site continue building.
+- As soon as reviewed geometry/GIS is added and the normal build runs again,
+  the map appears without changing the already-enabled source or user state.
+
 ### Refresh and release behavior
 
 Annual data changes are expected. Extend the existing `/update-map` workflow so
 one annual operation updates the Golden Spike/street constants and GIS overlay
 configuration together.
+
+The canonical operator procedure is
+[`dev/annual-map-update.md`](./dev/annual-map-update.md). It covers staged
+upstream releases, historical geometry preservation, forced cache regeneration,
+POI/layer review, year configuration, encrypted rebuilding, mobile screenshots,
+and post-deploy checks. The checklist below is the architectural summary, not a
+replacement for that runbook.
 
 For each new year:
 
@@ -335,18 +519,28 @@ For each new year:
 6. Run coordinate-transform, normalization, UI, accessibility, offline-build,
    and source-switching tests.
 7. Preview overview and close zoom on a phone-sized viewport with every layer
-   combination, especially Essentials + many user pins.
+   combination, especially Toilets + Essentials + many user pins.
 8. Record the refresh date, upstream source revision, and meaningful changes in
    this ADR or the annual data manifest.
 
 The nightly production build may refresh an already-released current-year GIS
-cache. If upstream is unavailable or validation fails, the build must not
-deploy a silently empty or partial Essentials layer. Prefer the last validated
-cache when available; otherwise fail the production build so GitHub Pages keeps
-the last-good deployment. Local builds may warn and fall back to the existing
-hard-coded base map, but must clearly report that official overlays are absent.
+cache. Actions caches `data/gis` under an exact key containing the upstream
+`innovate-GIS-data` commit and configured directory/API year set. With an exact
+hit, nightly `cmd_all` reuses validated files and does not redownload the three
+GeoJSON files. A new upstream commit or year set yields a miss and downloads
+once; there is deliberately no stale-prefix restore. HTTP 404 is the
+staged-release signal described above. Timeouts, non-404 HTTP failures,
+malformed JSON, and schema/name drift use the same build-isolation boundary:
+warn, retain a valid same-year normalized cache when present, otherwise omit
+that overlay, and finish the non-map deployment. The strict operator command
+remains the annual-review gate. Published invalid data must never deploy a
+silently partial Essentials layer or replace the last validated cache. Other
+GIS years continue refreshing independently.
 
 ### Testing contract
+
+Use the [mobile visual testing runbook](./dev/mobile-visual-testing.md) for the
+phone-sized manual/headless pass and encrypted-build restoration procedure.
 
 Add focused coverage for:
 
@@ -358,13 +552,29 @@ Add focused coverage for:
 - duplicate detection between official and hard-coded POIs
 - required current-year essentials and deliberate failure when absent
 - source-to-map-year selection (`directory`, `api-YYYY`, unknown future year)
+- exact-year geometry for current/historical sources and a non-rendering,
+  non-failing state for a future source whose geometry is not yet available
+- staged GIS 404 with and without a validated same-year cache
+- transient network and required-name/schema failures remaining strict for an
+  explicit fetch but isolated per year during build/nightly orchestration
+- a corrupt cached year being omitted without suppressing another valid year
+- nightly orchestration using `force=False`, with the workflow cache key
+  changing for an upstream revision, configured-year change, or normalizer
+  code change; a stale derived cache is regenerated from cached raw GeoJSON
 - layer defaults, local persistence/versioning, and clear-local-data behavior
 - hidden-layer removal from selection and viewBox calculations
-- transport-layer viewBox expansion only while visible
+- compact default extent; fitted Boundary, Transport, and Arrival views while
+  enabled; and sole-selected-POI reframing
+- annual Center Camp polygon rendering, ring preservation, and tap delegation
+  to the existing Center Camp details row
+- overlapping Gate/Box Office/Will Call hit targets selecting the nearest icon
 - keyboard focus, accessible names, and non-color-only category distinction
 - offline build output containing no runtime GIS URL fetch
 - The Man/Golden Spike projecting near `(0, 0)` and representative official
   points/polygons landing in plausible positions
+- official directional anchors: Temple on 12:00/NE, 3:00 medical on the right,
+  9:00 medical on the left, and Center Camp/Arctica on 6:00/SW; these
+  disambiguate the two directions of the published 4:30/10:30 N/S axis
 
 Do not hardcode exact total feature counts as a permanent cross-year assertion.
 Use the verified 2026 counts in 2026 fixtures and review them when the fixture
@@ -374,18 +584,20 @@ year changes.
 
 Implement in small, independently reviewable stages:
 
-1. **Fetcher + normalizer:** build-time acquisition, cache, source metadata,
-   schema validation, fixtures, and tests. No UI change.
-2. **Base official geometry:** year-keyed embed, Temple, authoritative plazas,
-   and trash fence. Remove duplicate hard-coded POIs only after visual parity.
-3. **Essentials:** medical/ESD, Rangers, ice, Playa Info, toilet-bank centroids
-   and close-zoom footprints; update legend and details.
-4. **Controls:** persisted Essentials/Services/Transport/Sound toggles,
-   selection behavior, accessible interactions, and mobile-density review.
-5. **Optional layers:** services, transport, Gate Road, and DMZ after the core
-   map is stable.
-6. **Annual workflow:** update `/update-map`, operational docs, CI validation,
-   and release metadata.
+1. **Completed — fetcher + normalizer:** build-time acquisition, cache, source
+   metadata, schema validation, fixtures, and tests.
+2. **Completed — base official geometry:** year-keyed embed, Temple,
+   authoritative plazas, and the default-off Boundary overlay.
+3. **Completed — essentials:** always-on medical/ESD and Rangers; default-on
+   ice; default-off toilet-bank centroids/footprints; legend and details.
+4. **Completed for shipped layers — controls:** persisted Boundary, Toilets,
+   Essentials, Services, Transport, and Arrival controls plus selection,
+   accessibility, and mobile-density review. Sound remains accepted backlog.
+5. **Partially completed — optional layers:** Services and Transport ship.
+   Gate Road and DMZ/Sound remain accepted backlog; D-Lot needs source review.
+6. **Completed — annual workflow foundation:** `/update-map`, the canonical
+   runbook, CI/cache validation, mobile testing, and the read-only `map-audit`
+   geometry extractor/report. Annual human review remains mandatory.
 
 Each stage must keep the old map functional. Do not remove current POI constants
 or change the default viewBox until the corresponding official layer is loaded,
@@ -438,14 +650,14 @@ flowchart TB
     Bg["brc-playa background"]
     Streets["Concentric arcs (Esplanade–K)"]
     Radials["Radial spokes (2:00–10:00)"]
-    Man["The Man dot at (0,0)"]
+    Man["The Man effigy at (0,0)"]
     Labels["Address readouts near Man"]
     POIs["POIs (Center Camp, Playa Info)"]
-    Pins["Starred camp pins<br>(transparent hit-catcher + halo + dot)"]
+    Pins["Starred camp bookmarks<br>(transparent hit-catcher + halo)"]
     MyCamp["My-camp tent (teal)"]
     FriendCamps["Friend tents (per-name hue)"]
-    MeetSpots["Meet-spot diamonds (rotated 45°)"]
-    User["GPS 'you are here' dot"]
+    MeetSpots["Four-point rendezvous markers"]
+    User["GPS crosshair/bullseye"]
     Bearing["Dashed bearing line<br>user → selected"]
   end
   Bg --> Streets --> Radials --> Man --> Labels
@@ -527,4 +739,5 @@ section.
 - `client/src/components/MapView.tsx` — renderer + interactions
 - `client/src/hooks/useGeolocation.ts` — opt-in GPS wrapper
 - `client/src/components/MapInfoModal.tsx` — legend
+- `backend/src/playa/mapaudit.py` — read-only annual street/radial extractor
 - `.claude/skills/update-map/SKILL.md` — annual refresh procedure

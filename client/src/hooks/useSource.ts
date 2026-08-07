@@ -30,14 +30,26 @@ const SCOPED_BASE_KEYS = [
  *
  * Drives the per-year map geometry lookup in MapView (ADR D11). */
 export function yearForSource(source: Source): number {
-  if (source === 'directory') return DIRECTORY_YEAR;
+  if (source === 'directory') {
+    if (typeof document !== 'undefined') {
+      const raw = document.querySelector('meta[name="bm-directory-map-year"]')
+        ?.getAttribute('content');
+      const configured = raw ? parseInt(raw, 10) : Number.NaN;
+      if (Number.isInteger(configured) && configured >= 2000 && configured <= 2200) {
+        return configured;
+      }
+    }
+    return DIRECTORY_YEAR;
+  }
   const m = /^api-(\d{4})$/.exec(source);
   if (m) return parseInt(m[1], 10);
   return DIRECTORY_YEAR;
 }
 
-/** Resolve a source identifier directly to its BRC geometry constants. */
-export function brcForSource(source: Source): BrcMapData {
+/** Resolve a source only to exact-year BRC geometry.
+ * Null is an expected staged-release state, never an invitation to borrow a
+ * different year's coordinates. */
+export function brcForSource(source: Source): BrcMapData | null {
   return getBrcForYear(yearForSource(source));
 }
 

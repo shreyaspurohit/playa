@@ -116,6 +116,9 @@ export const LS = {
   // Drives the between-pins distance label, the per-row nav distance,
   // and any future distance readout. Default 'imperial' (US-centric burn).
   distanceUnit: 'bm-distance-unit',
+  // Enabled optional official-map layers. JSON array of layer ids; base
+  // landmarks and safety points are always visible and are not stored here.
+  mapLayers: 'bm-map-layers/v1',
   // Currently active data source. Matches one of the sources listed in
   // <meta name="bm-sources">. Keys ending in this constant's prefix
   // ('bm-favs', 'bm-fav-events', 'bm-shared', 'bm-my-camp',

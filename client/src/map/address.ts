@@ -136,8 +136,8 @@ export function parseAddress(raw: string, brc: BrcMapData = BRC): PolarAddress |
 /**
  * Compass bearing (degrees clockwise from True North) for a given BRC
  * clock position, looking outward from the Man. 12:00 bearing comes
- * from the year-specific `brc.twelveBearingDeg` (always 225° today,
- * design-stable across years).
+ * from the year-specific `brc.twelveBearingDeg` (45° for the currently
+ * supported 2025 and 2026 plans).
  */
 export function clockToCompass(clockHour: number, brc: BrcMapData = BRC): number {
   // Each hour on the BRC face = 30° clockwise. 12:00 = hour 12 = 0h offset.

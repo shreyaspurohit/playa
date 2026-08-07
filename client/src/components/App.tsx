@@ -565,6 +565,19 @@ export function App() {
 
   const [shareOpen, setShareOpen] = useState(false);
   const [incomingShare, setIncomingShare] = useState<SharePayload | null>(null);
+
+  /**
+   * Sharing/import identity is global rather than source-scoped. Read it
+   * at action time (instead of caching it in App state) so a nickname just
+   * saved through the header pill is immediately accepted.
+   */
+  const requireNickname = useCallback((action: string): string | null => {
+    const nickname = readString(LS.nickname, '').trim();
+    if (nickname) return nickname;
+    alert(`Set your nickname in the header before ${action}.`);
+    return null;
+  }, []);
+
   useEffect(() => {
     const s = readShareFromUrl();
     if (s) setIncomingShare(s);
@@ -572,6 +585,7 @@ export function App() {
   const onImportFriend = useCallback(
     (opts: { targetName: string; mode: 'merge' | 'overwrite' }) => {
       if (!incomingShare) return;
+      if (!requireNickname('importing someone else\'s plans')) return;
       friends.importFriend(
         opts.targetName,
         {
@@ -586,7 +600,7 @@ export function App() {
       setIncomingShare(null);
       clearShareFromUrl();
     },
-    [incomingShare, friends],
+    [incomingShare, friends, requireNickname],
   );
   const onDismissImport = useCallback(() => {
     setIncomingShare(null);
@@ -603,6 +617,7 @@ export function App() {
    */
   const onImportAsSelf = useCallback(() => {
     if (!incomingShare) return;
+    if (!requireNickname('restoring your plans')) return;
     // Self-import targets the CURRENTLY-ACTIVE source. A share carrying
     // its own `source` field (post-multi-source clients) lands in that
     // source's bucket regardless of the importer's current view; the
@@ -620,7 +635,7 @@ export function App() {
     );
     clearShareFromUrl();
     location.reload();
-  }, [incomingShare, source]);
+  }, [incomingShare, source, requireNickname]);
 
   /**
    * Snapshot import flow. Picking the file is browser-native, but
@@ -634,29 +649,41 @@ export function App() {
    */
   const [exportOpen, setExportOpen] = useState(false);
   const onExportSnapshot = useCallback(() => {
+    if (!requireNickname('exporting your data')) return;
     setExportOpen(true);
-  }, []);
+  }, [requireNickname]);
 
   const [incomingSnapshot, setIncomingSnapshot] = useState<Snapshot | null>(null);
 
   const onImportSnapshot = useCallback(async () => {
+    if (!requireNickname('importing a snapshot')) return;
     const snap = await pickSnapshotFile();
     if (!snap) {
       alert("Couldn't read that file. Make sure it's a Playa Camps export.");
       return;
     }
     setIncomingSnapshot(snap);
-  }, []);
+  }, [requireNickname]);
 
   const onApplySnapshotSelf = useCallback(() => {
     if (!incomingSnapshot) return;
-    applySnapshot(incomingSnapshot, source);
+    const ownNickname = requireNickname('restoring your snapshot');
+    if (!ownNickname) return;
+    // Pre-nickname exports remain usable. Preserve the identity the user
+    // just set instead of letting a legacy empty field erase it.
+    applySnapshot(
+      incomingSnapshot.nickname
+        ? incomingSnapshot
+        : { ...incomingSnapshot, nickname: ownNickname },
+      source,
+    );
     setIncomingSnapshot(null);
     location.reload();
-  }, [incomingSnapshot, source]);
+  }, [incomingSnapshot, source, requireNickname]);
 
   const onImportSnapshotAsFriend = useCallback(() => {
     if (!incomingSnapshot) return;
+    if (!requireNickname('importing someone else\'s snapshot')) return;
     if (!incomingSnapshot.nickname) {
       alert("This snapshot has no nickname — can't import as a friend.");
       return;
@@ -676,7 +703,7 @@ export function App() {
       'overwrite',
     );
     setIncomingSnapshot(null);
-  }, [incomingSnapshot, friends]);
+  }, [incomingSnapshot, friends, requireNickname]);
 
   const onDismissSnapshot = useCallback(() => setIncomingSnapshot(null), []);
 

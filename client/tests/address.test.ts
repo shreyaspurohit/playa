@@ -7,9 +7,9 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseAddress, addressToLatLng, addressToSvgFeet,
-  clockToCompass, haversineMeters, bearingDeg, latLngToSvgFeet,
+  clockToCompass, haversineMeters, bearingDeg, latLngToAddress, latLngToSvgFeet,
 } from '../src/map/address';
-import { BRC } from '../src/map/data';
+import { BRC, BRC_BY_YEAR } from '../src/map/data';
 
 describe('parseAddress', () => {
   test('parses the common "clock & letter" form', () => {
@@ -135,9 +135,9 @@ describe('clockToCompass', () => {
     assert.equal(six, (BRC.twelveBearingDeg + 180) % 360);
   });
 
-  test('for 2026 specifically: BRC 6:00 points NE (≈45°)', () => {
-    // Open side of the city faces northeast. 6:00 = 225 + 180 = 405 mod 360 = 45.
-    assert.equal(clockToCompass(6), 45);
+  test('for 2026 specifically: 12:00 is NE and 6:00 is SW', () => {
+    assert.equal(clockToCompass(12), 45);
+    assert.equal(clockToCompass(6), 225);
   });
 });
 
@@ -155,11 +155,11 @@ describe('addressToLatLng', () => {
       `esplanade should be ~762m from Man, got ${meters}`);
   });
 
-  test('lands ~1 mile (5400ft=1645m) from the Man at K street', () => {
+  test('lands at the official 5755ft K-street centerline', () => {
     const out = addressToLatLng('6:00 & K')!;
     const meters = haversineMeters(BRC.center, out);
-    assert.ok(meters > 1600 && meters < 1700,
-      `K street should be ~1645m from Man, got ${meters}`);
+    assert.ok(meters > 1725 && meters < 1785,
+      `K street should be ~1754m from Man, got ${meters}`);
   });
 
   test('round-trip: compute bearing from Man to a camp, then back-reverse it', () => {
@@ -202,4 +202,68 @@ describe('SVG projection', () => {
         `${addr}: direct (${direct.x.toFixed(0)}, ${direct.y.toFixed(0)}) vs indirect (${indirect.x.toFixed(0)}, ${indirect.y.toFixed(0)}) — off by ${dist.toFixed(1)} ft`);
     }
   });
+
+  test('official 2026 GIS anchors land on their named clock sides', () => {
+    const medical3 = latLngToSvgFeet({
+      lat: 40.776197815,
+      lng: -119.198981265,
+    }, BRC_BY_YEAR[2026]);
+    const medical9 = latLngToSvgFeet({
+      lat: 40.790295586,
+      lng: -119.216787942,
+    }, BRC_BY_YEAR[2026]);
+    const centerIce = { lat: 40.778277905, lng: -119.216763038 };
+    const centerAddress = latLngToAddress(centerIce, BRC_BY_YEAR[2026]);
+
+    assert.ok(medical3.x > 0, `3:00 must be on the right: ${JSON.stringify(medical3)}`);
+    assert.ok(medical9.x < 0, `9:00 must be on the left: ${JSON.stringify(medical9)}`);
+    assert.ok(latLngToSvgFeet(centerIce, BRC_BY_YEAR[2026]).y > 0,
+      'Center Camp Arctica must be on the 6:00 side, below the Man');
+    assert.equal(centerAddress?.clock, '6:15');
+    // The point is in the A–B block; with the official centerline radii it is
+    // 117' from A and 163' from B, so nearest-street reverse geocoding is A.
+    assert.equal(centerAddress?.street, 'A');
+  });
+
+  test('official 2025 Temple remains on the 12:00 side', () => {
+    const temple = latLngToSvgFeet({
+      lat: 40.79181515231499,
+      lng: -119.19662192527863,
+    }, BRC_BY_YEAR[2025]);
+    assert.ok(temple.y < 0, `12:00 must be above the Man: ${JSON.stringify(temple)}`);
+  });
+});
+
+describe('annual city street geometry', () => {
+  const officialCenterlineRadii = [
+    2500, 2935, 3215, 3495, 3775, 4060,
+    4545, 4825, 5105, 5385, 5565, 5755,
+  ];
+
+  for (const year of [2025, 2026]) {
+    test(`${year} letter arcs match official street-line centerlines`, () => {
+      const brc = BRC_BY_YEAR[year];
+      assert.deepEqual(brc.streetRadiiFeet, officialCenterlineRadii);
+      assert.equal(brc.streetLetters.length, brc.streetRadiiFeet.length);
+      assert.ok(brc.streetRadiiFeet.every((radius, index, radii) =>
+        index === 0 || radius > radii[index - 1]));
+    });
+
+    test(`${year} radial streets match official full and outer-only ranges`, () => {
+      const brc = BRC_BY_YEAR[year];
+      assert.equal(brc.radialStreets.length, 33);
+      assert.deepEqual(brc.radialStreets[0], {
+        clock: '2:00', innerStreet: 'Esplanade',
+      });
+      assert.deepEqual(brc.radialStreets[1], {
+        clock: '2:15', innerStreet: 'F',
+      });
+      assert.deepEqual(brc.radialStreets.at(-1), {
+        clock: '10:00', innerStreet: 'Esplanade',
+      });
+      for (const radial of brc.radialStreets) {
+        assert.ok(brc.streetLetters.includes(radial.innerStreet));
+      }
+    });
+  }
 });

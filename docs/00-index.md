@@ -49,6 +49,8 @@ sections wherever they apply:
 | (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
 | (ref) | [HTML scraping patterns](./dev/html-scraping-patterns.md) | Directory markup shapes used by the parsers |
 | (ref) | [Site UI](./dev/site-ui.md) | Compact embed-mode and UI reference; CLAUDE.md retains detailed behavior |
+| (runbook) | [Mobile visual testing](./dev/mobile-visual-testing.md) | Phone-sized manual/headless review, screenshots, service-worker isolation, and encrypted-build restoration |
+| (runbook) | [Annual map and GIS update](./dev/annual-map-update.md) | Year rollover for city geometry, official POIs/layers, validation, mobile review, and deployment configuration |
 | (plan) | [Roadmap](./roadmap.md) | Ideas and scaling thresholds, not current commitments |
 
 ## Adding a new doc

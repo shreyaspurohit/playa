@@ -2,7 +2,9 @@
 // styling so the file-import flow doesn't feel like a different app
 // (used to use a `confirm()` dialog, which felt out of place).
 //
-// Three branches based on nickname comparison:
+// Four branches based on nickname comparison:
+//   - legacy snapshot has no nickname → self-restore only, preserving
+//     the receiver's current nickname
 //   - own nickname matches → "Restore your snapshot"
 //   - friend exists with that name → "Replace existing X with latest"
 //   - new nickname → "Import as friend X"
@@ -29,6 +31,7 @@ export function SnapshotImportBanner({
   onApplySelf, onImportAsFriend, onDismiss,
 }: Props) {
   const date = snapshot.exportedAt.slice(0, 10);
+  const isLegacyAnonymous = !snapshot.nickname;
   const isSelf = !!ownNickname && !!snapshot.nickname
     && ownNickname.trim() === snapshot.nickname.trim();
   const senderLabel = snapshot.nickname || 'unknown';
@@ -58,7 +61,28 @@ export function SnapshotImportBanner({
           )}.
         </p>
 
-        {isSelf && (
+        {isLegacyAnonymous && (
+          <>
+            <p class="import-conflict">
+              This is a legacy export with no sender nickname. It can
+              only be restored as your own snapshot; your current
+              nickname will be preserved.
+            </p>
+            <div class="import-banner-actions">
+              <button
+                type="button" class="primary-btn"
+                onClick={onApplySelf}
+              >
+                Restore legacy snapshot
+              </button>
+              <button type="button" class="subtle-btn" onClick={onDismiss}>
+                Dismiss
+              </button>
+            </div>
+          </>
+        )}
+
+        {!isLegacyAnonymous && isSelf && (
           <>
             <p class="import-conflict">
               The nickname matches yours &mdash; this looks like
@@ -86,11 +110,10 @@ export function SnapshotImportBanner({
           </>
         )}
 
-        {!isSelf && !existing && (
+        {!isLegacyAnonymous && !isSelf && !existing && (
           <div class="import-banner-actions">
             <button
               type="button" class="primary-btn"
-              disabled={!snapshot.nickname}
               onClick={onImportAsFriend}
             >
               Import as "{senderLabel}"
@@ -101,7 +124,7 @@ export function SnapshotImportBanner({
           </div>
         )}
 
-        {!isSelf && existing && (
+        {!isLegacyAnonymous && !isSelf && existing && (
           <>
             <p class="import-conflict">
               You already have a friend called <strong>"{senderLabel}"</strong>{' '}

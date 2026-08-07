@@ -75,6 +75,18 @@ flowchart TD
    detail fetch fails.
    `api-fetch --year YYYY` is separate: it pulls bulk camp/event/art JSON once
    and writes the encrypted-or-plaintext `data/api/YYYY.json` year cache.
+   `gis-fetch [--year YYYY]` separately downloads and validates the official
+   annual CPN/toilet GeoJSON, then atomically writes the normalized offline map
+   payload to `data/gis/YYYY/normalized.json`. The explicit `gis-fetch` command
+   is strict so annual review catches network, schema, and required-name drift.
+   Normal `build`/`rebuild`/`dev` and nightly `all` orchestration use
+   `--best-effort`. CI restores an exact cache keyed by the upstream GIS commit
+   and configured year set, so unchanged nightly runs make no GeoJSON request;
+   an upstream/year change causes a cache miss and one refresh. A new-year HTTP
+   404 is an expected staged-release state. Any other GIS-only failure is
+   reported per year (as a GitHub Actions warning in CI), then assembly uses a
+   valid same-year cache or continues without that year's overlays. It does not
+   cancel the camp/event/art build or prevent later GIS years from refreshing.
 2. **`meta`** (`write_meta`) — counts pages/camps/events, stamps an
    ISO timestamp + Pacific date + version (`vYYYY.MM.DD.HHMM`).
 3. **`merge`** (`merge_csv`) — dedupes by id, sorts alphabetically,
@@ -85,7 +97,8 @@ flowchart TD
    `data/camps_tagged.csv` and `data/art_tagged.csv`.
 5. **`build`** (`SiteBuilder.build`) — loads each configured source's camps and
    art, enriches event times, applies tags, gzip-compresses, emits plaintext,
-   legacy encrypted, or tiered envelope payloads, reads the
+   legacy encrypted, or tiered envelope payloads, embeds one gzip-compressed
+   official GIS payload per active map year, reads the
    bundle, collects `rn:` release notes, fills template placeholders,
    writes `site/index.html` + `site/sw.js` + `site/version.txt`.
 
