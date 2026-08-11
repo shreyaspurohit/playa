@@ -31,6 +31,11 @@ function makeParsedTime(overrides: Partial<ParsedTime> = {}): ParsedTime {
   };
 }
 
+/** A fixed August 2026 instant expressed in Black Rock City local time. */
+function playaDate(date: string, time: string): Date {
+  return new Date(`${date}T${time}:00-07:00`);
+}
+
 describe('eventAvailability', () => {
   test('returns "anytime" when parsed_time is null', () => {
     const ev = makeEvent({ parsed_time: null });
@@ -47,9 +52,7 @@ describe('eventAvailability', () => {
   });
 
   test('returns "now" when a recurring event occurs today and clock is inside window', () => {
-    // Use a fixed time: 10:30 on whatever day it is
-    const now = new Date();
-    now.setHours(10, 30, 0, 0);
+    const now = playaDate('2026-08-31', '10:30');
     const ctx = nowContext(now);
     // Event runs 10:00-11:00 on the current day
     const ev = makeEvent({
@@ -65,8 +68,7 @@ describe('eventAvailability', () => {
   });
 
   test('returns "soon" when a recurring event today starts within next 2 hours', () => {
-    const now = new Date();
-    now.setHours(10, 0, 0, 0); // Set to exactly 10:00 AM
+    const now = playaDate('2026-08-31', '10:00');
     const ctx = nowContext(now);
     // Event starts at 11:00, which is 1 hour away (within 2 hour window)
     const ev = makeEvent({
@@ -82,7 +84,7 @@ describe('eventAvailability', () => {
   });
 
   test('returns "later" when event is on a different weekday', () => {
-    const now = new Date();
+    const now = playaDate('2026-08-31', '10:30');
     const ctx = nowContext(now);
     // Find a different weekday
     const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -100,8 +102,7 @@ describe('eventAvailability', () => {
   });
 
   test('returns "later" when event has already passed today', () => {
-    const now = new Date();
-    now.setHours(14, 0, 0, 0); // Set to 14:00 (2 PM)
+    const now = playaDate('2026-08-31', '14:00');
     const ctx = nowContext(now);
     // Event was 10:00-11:00, already passed
     const ev = makeEvent({
@@ -124,7 +125,7 @@ describe('eventAvailability', () => {
       }),
     });
     assert.equal(
-      eventAvailability(ev, new Date(2026, 7, 26, 1, 0)),
+      eventAvailability(ev, playaDate('2026-08-26', '01:00')),
       'now',
     );
   });
@@ -139,7 +140,7 @@ describe('eventAvailability', () => {
     assert.equal(
       eventAvailability(
         ev,
-        new Date(2026, 7, 26, 1, 0),
+        playaDate('2026-08-26', '01:00'),
         { burnStart: '2026-08-25', burnEnd: '2026-09-07' },
       ),
       'now',
@@ -166,9 +167,7 @@ describe('isFoodEvent', () => {
 
 describe('nowContext', () => {
   test('derives correct weekday and time from a Date', () => {
-    const date = new Date();
-    date.setFullYear(2026, 7, 26);
-    date.setHours(14, 35, 0, 0);
+    const date = playaDate('2026-08-26', '14:35');
     const ctx = nowContext(date);
     // Just verify structure; the weekday depends on the actual day
     assert.ok(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(ctx.weekday));
@@ -240,22 +239,22 @@ describe('eventAvailability date gating (burn window + start date)', () => {
 
   test('a daily event before the burn window is "later", not "soon" (the Aug-9 bug)', () => {
     // Aug 9, 10am — well before the window; would have matched weekday+time.
-    const when = new Date(2026, 7, 9, 10, 0);
+    const when = playaDate('2026-08-09', '10:00');
     assert.equal(eventAvailability(daily('8/31'), when, OPTS), 'later');
   });
 
   test('a daily event during the window, mid-service, is "now"', () => {
-    const when = new Date(2026, 7, 31, 13, 0); // Aug 31, 1pm, inside 12–5
+    const when = playaDate('2026-08-31', '13:00'); // Aug 31, 1pm, inside 12–5
     assert.equal(eventAvailability(daily('8/25'), when, OPTS), 'now');
   });
 
   test('a daily event during the window, ~1h before start, is "soon"', () => {
-    const when = new Date(2026, 7, 31, 11, 0); // Aug 31, 11am, starts 12
+    const when = playaDate('2026-08-31', '11:00'); // Aug 31, 11am, starts 12
     assert.equal(eventAvailability(daily('8/25'), when, OPTS), 'soon');
   });
 
   test('in-window but before the event\'s start date is "later"', () => {
-    const when = new Date(2026, 7, 26, 13, 0); // Aug 26, but starts 8/31
+    const when = playaDate('2026-08-26', '13:00'); // Aug 26, but starts 8/31
     assert.equal(eventAvailability(daily('8/31'), when, OPTS), 'later');
   });
 });
@@ -270,7 +269,7 @@ describe('isUpcomingFood', () => {
         start_time: '10:00', end_day: 'Wed', end_date: '8/26', end_time: '11:00',
       }),
     });
-    assert.equal(isUpcomingFood(ev, new Date(2026, 7, 26, 14, 0), OPTS), false);
+    assert.equal(isUpcomingFood(ev, playaDate('2026-08-26', '14:00'), OPTS), false);
   });
 
   test('keeps an overnight single event while it is still serving', () => {
@@ -280,6 +279,6 @@ describe('isUpcomingFood', () => {
         start_time: '22:00', end_day: 'Wed', end_date: '8/26', end_time: '02:00',
       }),
     });
-    assert.equal(isUpcomingFood(ev, new Date(2026, 7, 26, 1, 0), OPTS), true);
+    assert.equal(isUpcomingFood(ev, playaDate('2026-08-26', '01:00'), OPTS), true);
   });
 });
