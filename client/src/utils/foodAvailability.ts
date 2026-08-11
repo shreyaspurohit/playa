@@ -7,13 +7,12 @@
 // Otherwise it's "later". This is why a "Daily 12–5pm (starts 8/31)" event is
 // NOT "starting soon" on Aug 9.
 import type { Event, ParsedTime } from '../types';
+import { playaTimeParts } from './clock';
 
 export type Availability = 'now' | 'soon' | 'later' | 'anytime';
 
 /** Events starting within this many hours (and not yet started) are "soon". */
 export const NOW_WINDOW_HOURS = 2;
-
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 export interface AvailabilityOpts {
   /** Burn window edges as 'YYYY-MM-DD' (from the bm-burn-start/end meta). */
@@ -52,11 +51,12 @@ export interface NowContext {
 }
 
 export function nowContext(when: Date): NowContext {
+  const parts = playaTimeParts(when);
   return {
-    weekday: WEEKDAYS[when.getDay()],
-    md: `${when.getMonth() + 1}/${when.getDate()}`,
-    mdNum: (when.getMonth() + 1) * 100 + when.getDate(),
-    minutes: when.getHours() * 60 + when.getMinutes(),
+    weekday: parts.weekday,
+    md: `${parts.month}/${parts.day}`,
+    mdNum: parts.month * 100 + parts.day,
+    minutes: parts.hours * 60 + parts.minutes,
   };
 }
 

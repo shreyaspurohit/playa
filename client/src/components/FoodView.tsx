@@ -16,7 +16,7 @@ import {
 import { useGeolocation } from '../hooks/useGeolocation';
 import { addressToLatLng, haversineMeters } from '../map/address';
 import { brcForSource } from '../hooks/useSource';
-import { now } from '../utils/clock';
+import { formatPlayaTime, now } from '../utils/clock';
 
 /** ~1 km ≈ 15-min walk — same cutoff ScheduleView's "Near me" uses. */
 const NEAR_ME_METERS = 1000;
@@ -409,7 +409,7 @@ export function FoodView({
           onClick={refreshNow}
         >🔄 Refresh availability</button>
         <span class="food-asof">
-          Updated at {nowSnapshot.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          Updated at {formatPlayaTime(nowSnapshot)}
         </span>
       </div>
 

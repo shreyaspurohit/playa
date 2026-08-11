@@ -13,6 +13,52 @@
 import { LS } from '../types';
 import { readString, writeString, removeKey } from './storage';
 
+/** Directory/API event times are unzoned Black Rock City local times. */
+export const PLAYA_TIME_ZONE = 'America/Los_Angeles';
+
+export interface PlayaTimeParts {
+  weekday: string;
+  month: number;
+  day: number;
+  hours: number;
+  minutes: number;
+}
+
+const PLAYA_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: PLAYA_TIME_ZONE,
+  weekday: 'short',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  hourCycle: 'h23',
+});
+
+/** Resolve an instant into the wall-clock fields used by playa event times. */
+export function playaTimeParts(when: Date): PlayaTimeParts {
+  const parts = Object.fromEntries(
+    PLAYA_PARTS_FORMATTER.formatToParts(when)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  );
+  return {
+    weekday: parts.weekday,
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hours: Number(parts.hour),
+    minutes: Number(parts.minute),
+  };
+}
+
+/** Concise user-facing label for an instant in playa local time. */
+export function formatPlayaTime(when: Date): string {
+  return when.toLocaleTimeString([], {
+    timeZone: PLAYA_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 // Resolved cheaply on every call (a regex + one localStorage read) so clearing
 // the override takes effect immediately and it's trivially testable. A `now=`
 // param anywhere in the URL is persisted to localStorage the first time it's

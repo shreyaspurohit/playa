@@ -381,6 +381,14 @@ under the tent makes both silhouettes less legible without adding information.
 The invisible hit-catcher stays circular and generously sized regardless of
 the visible silhouette.
 
+Center Camp placements use internal sub-addresses that do not follow the
+city-wide `<clock> & <letter street>` grammar. When the selected home camp's
+location mentions Center Camp and normal parsing fails, anchor its tent to the
+authoritative annual `center-camp` POI. The tent paints after official markers,
+so it remains visible and receives taps even though the two coordinates are
+identical. Preserve the original source location in the detail row; the fallback
+only supplies map geometry.
+
 Do not add marker clustering initially. The allowlist plus layer defaults keeps
 the visible point count manageable, and toilet labels appear only on selection.
 Revisit clustering only if real-device testing shows unusable density.

@@ -2,7 +2,10 @@ import { beforeEach, afterEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installDom, teardownDom } from './_dom';
 import { LS } from '../src/types';
-import { now, isMockNow, mockNowLabel, clearMockNow } from '../src/utils/clock';
+import {
+  now, isMockNow, mockNowLabel, clearMockNow,
+  formatPlayaTime, playaTimeParts,
+} from '../src/utils/clock';
 
 describe('clock (simulated now)', () => {
   beforeEach(() => { installDom(); clearMockNow(); });
@@ -67,5 +70,13 @@ describe('clock (simulated now)', () => {
     location.href = 'http://localhost/#food&food?now=2026-08-31T13:00:00-07:00';
     assert.equal(isMockNow(), true);
     assert.equal(now().getUTCHours(), 20);
+  });
+
+  test('playa wall-clock fields do not depend on the runtime timezone', () => {
+    const morning = new Date('2026-08-31T08:00:00-07:00');
+    assert.deepEqual(playaTimeParts(morning), {
+      weekday: 'Mon', month: 8, day: 31, hours: 8, minutes: 0,
+    });
+    assert.match(formatPlayaTime(morning), /8:00\s*AM/i);
   });
 });

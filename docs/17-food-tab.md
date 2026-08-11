@@ -196,8 +196,11 @@ fixed coordinate in Food, Schedule, and Map, persists it in
 location” clears the override and reloads. It can be combined with `?now=`:
 `/?now=2026-08-31T13:00:00-07:00&gps=40.786958,-119.202994#food`.
 
-"Now" assumes the clock ≈ **playa (Pacific)** time — the same assumption the
-Schedule makes (`parsed_time` times are unzoned playa-local).
+Food resolves every instant into **playa (Pacific)** wall-clock fields with
+`Intl.DateTimeFormat(..., {timeZone: 'America/Los_Angeles'})` before comparing
+it with the source's unzoned `parsed_time`. This keeps live availability and
+the “Updated at” label correct when planning from another timezone and makes
+explicit-offset simulations deterministic on UTC CI runners.
 
 ### D5 — Food owns a focused availability utility
 
@@ -314,9 +317,10 @@ flowchart TD
 
 ## Failure modes & trade-offs
 
-- **Clock/timezone.** "Now" trusts the device clock as playa-local (Pacific).
-  Off-playa users see availability relative to their own clock — a known,
-  inherited Schedule imprecision, not new.
+- **Clock/timezone.** Food treats source event times as playa-local and converts
+  the current instant to `America/Los_Angeles` before comparing. Schedule still
+  has its older device-local “Now” behavior; converging that filter onto the
+  same helper is separate work because its window semantics differ (D5).
 - **Source changes.** Food-type selections reset when the active source
   changes, and stale types are pruned after payload refreshes, so an invisible
   filter cannot strand the view in an empty state.

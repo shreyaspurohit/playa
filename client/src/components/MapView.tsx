@@ -443,9 +443,17 @@ export function MapView({
     if (!myCampId) return null;
     const camp = camps.find((c) => c.id === myCampId);
     if (!camp) return null;
-    const pt = addressToSvgFeet(camp.location, brc);
+    // Center Camp uses its own internal clock-style sub-addresses rather than
+    // the city's `<clock> & <letter street>` grammar. Those strings are not
+    // parseable by addressToSvgFeet, so anchor them to the authoritative
+    // annual Center Camp POI. The tent renders after POIs and therefore stays
+    // visible and interactive when both occupy the same coordinate.
+    const centerCamp = /\bcenter\s+camp\b/i.test(camp.location)
+      ? poiPins.find(({ poi }) => poi.kind === 'center-camp')
+      : null;
+    const pt = addressToSvgFeet(camp.location, brc) ?? centerCamp;
     return pt ? { camp, x: pt.x, y: pt.y } : null;
-  }, [myCampId, camps, brc]);
+  }, [myCampId, camps, brc, poiPins]);
 
   // Single-spot view — populated only when exactly one non-camp item
   // is selected. Drives the legacy single-selection sidebar/SVG paths

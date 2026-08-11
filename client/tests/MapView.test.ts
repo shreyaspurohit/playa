@@ -259,6 +259,26 @@ describe('<MapView> official POIs', () => {
     assert.equal(mount.querySelectorAll('.brc-pin').length, 1);
   });
 
+  test('anchors a Center Camp sub-address home tent above the official POI', async () => {
+    const home = {
+      id: 'center-home', name: 'Center Home', location: 'Center Camp @ 3:00',
+      description: '', website: '', url: '', tags: [], events: [],
+    };
+    mountMap('directory', { camps: [home], myCampId: home.id });
+
+    const center = await waitFor<SVGGElement>('.brc-poi-center-camp');
+    const tent = mount.querySelector<SVGGElement>('.brc-my-camp');
+    assert.ok(center);
+    assert.ok(tent, 'Center Camp home address still renders a tent');
+    assert.equal(tent.getAttribute('transform'), center.getAttribute('transform'));
+    assert.match(tent.textContent ?? '', /Your home camp — Center Home/);
+    // SVG paint order: the later tent must stay above the co-located POI.
+    assert.ok(
+      (center.compareDocumentPosition(tent) & 4) !== 0,
+      'home tent renders after Center Camp POI',
+    );
+  });
+
   test('renders the official Center Camp footprint and delegates taps to its POI', async () => {
     mountMap();
     const area = await waitFor<SVGPathElement>('.brc-map-area-center-camp');

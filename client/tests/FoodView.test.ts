@@ -516,6 +516,7 @@ describe('<FoodView>', () => {
     localStorage.setItem('bm-mock-now', '2026-08-31T08:00:00-07:00');
     mountFood({ camps: [camp], burnStart: '2026-08-25', burnEnd: '2026-09-07' });
     assert.doesNotMatch(mount.innerHTML, /Serving now/, 'not serving at 8am');
+    assert.match(mount.textContent ?? '', /Updated at 8:00\s*AM/i);
     // Advance the clock to mid-service and Refresh — availability re-evaluates.
     localStorage.setItem('bm-mock-now', '2026-08-31T13:00:00-07:00');
     (mount.querySelector('.food-refresh') as HTMLButtonElement).click();
