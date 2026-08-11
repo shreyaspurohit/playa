@@ -46,8 +46,16 @@ export function CampsView({
   myCampId, onSetMyCamp,
   scrollToCampId, scrollToCampTick,
 }: Props) {
-  const toRender = camps.slice(0, RESULT_CAP);
+  let toRender = camps.slice(0, RESULT_CAP);
   const overflow = camps.length > RESULT_CAP;
+  // A navigation target beyond the render cap (e.g. a late-alphabet camp
+  // reached from Food/Schedule/Map — "Midnight Ramen from Stoop City") must
+  // still be in the DOM for scrollIntoView to find it; otherwise we land at
+  // the top. Append it when it isn't already in the capped slice.
+  if (scrollToCampId && !toRender.some((c) => c.id === scrollToCampId)) {
+    const target = camps.find((c) => c.id === scrollToCampId);
+    if (target) toRender = [...toRender, target];
+  }
   const mainRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {

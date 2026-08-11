@@ -111,7 +111,16 @@ beforeEach(() => {
   document.body.appendChild(script);
 });
 
-afterEach(() => { teardownDom(); });
+afterEach(() => {
+  // Unmount BEFORE tearing down the DOM so Preact runs the component's effect
+  // cleanups synchronously and trip the readEmbeddedGis `cancelled` guard.
+  // Without this,
+  // that async activity can resolve/fire after the test ends — once
+  // `teardownDom()` has deleted `document` — and throw "document is not
+  // defined" as an unhandledRejection (the CI failure this fixes).
+  try { render(null, mount); } catch { /* ignore */ }
+  teardownDom();
+});
 
 function mountMap(
   source = 'directory',
@@ -130,9 +139,12 @@ function mountMap(
   }), mount);
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+// Generous budget (~3s): MapView's async GIS load (gzip DecompressionStream +
+// render) can run slowly under full-suite CPU contention or on a loaded CI
+// runner. A tight budget here was the source of intermittent failures.
 async function waitFor<T extends Element>(selector: string): Promise<T | null> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 100; attempt++) {
     const found = mount.querySelector<T>(selector);
     if (found) return found;
     await settle();
@@ -278,6 +290,25 @@ describe('<MapView> official POIs', () => {
     );
   });
 
+  test('GPS navigation uses an arrowed guide with an explained endpoint', async () => {
+    location.href = 'http://localhost/?gps=40.794905,-119.210158#map';
+    mountMap();
+    const marker = await waitFor<SVGGElement>('.brc-poi-ranger');
+    assert.ok(marker);
+    marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+
+    const guide = mount.querySelector<SVGGElement>('.brc-bearing-guide');
+    assert.ok(guide);
+    assert.ok(guide.querySelector('.brc-bearing'));
+    assert.ok(guide.querySelector('.brc-bearing-arrow'));
+    assert.match(guide.textContent ?? '', /Your GPS position to Ranger HQ/);
+    assert.match(
+      mount.querySelector('.map-meet-row.active')?.textContent ?? '',
+      /dashed map arrow points from your GPS position to this location/,
+    );
+  });
+
   test('toilets have a dedicated default-off persisted layer', async () => {
     mountMap();
     await waitFor('.map-layer-toggle');
@@ -287,11 +318,12 @@ describe('<MapView> official POIs', () => {
     assert.ok(toilets);
     assert.equal(toilets.getAttribute('aria-pressed'), 'false');
     toilets.click();
-    await settle();
+    // Wait for the toilet markers to actually render (async GIS load) rather
+    // than a fixed settle, which races under load.
+    assert.ok(await waitFor('[aria-label^="Portable toilets"]'), 'toilet markers render');
     const updated = [...mount.querySelectorAll<HTMLButtonElement>('.map-layer-toggle')]
       .find((button) => button.textContent?.includes('Toilets'));
     assert.equal(updated?.getAttribute('aria-pressed'), 'true');
-    assert.ok(mount.querySelector('[aria-label^="Portable toilets"]'));
     assert.equal(localStorage.getItem('bm-map-layers/v1'), '["essentials","toilets"]');
   });
 
@@ -321,15 +353,18 @@ describe('<MapView> official POIs', () => {
     mountMap();
     const svg = await waitFor<SVGSVGElement>('.brc-svg');
     assert.ok(svg);
+    // Wait for the GIS payload to render (a base medical marker) so the
+    // baseline viewBox is stable before toggling — the async load must not
+    // race the assertion under full-suite load.
+    assert.ok(await waitFor('.brc-poi-medical'), 'gis loaded');
     const arrival = [...mount.querySelectorAll<HTMLButtonElement>('.map-layer-toggle')]
       .find((button) => button.textContent?.includes('Arrival'));
     assert.ok(arrival);
     const compact = Number((svg.getAttribute('viewBox') ?? '').split(' ')[2]);
     arrival.click();
-    await settle();
+    assert.ok(await waitFor('.brc-poi-gate'), 'gate marker rendered');
     const fitted = Number((svg.getAttribute('viewBox') ?? '').split(' ')[2]);
     assert.ok(fitted > compact, `arrival layer did not fit: ${compact} → ${fitted}`);
-    assert.ok(mount.querySelector('.brc-poi-gate'));
     assert.ok(mount.querySelector('.brc-poi-box-office'));
 
     arrival.click();
@@ -343,15 +378,15 @@ describe('<MapView> official POIs', () => {
     mountMap();
     const svg = await waitFor<SVGSVGElement>('.brc-svg');
     assert.ok(svg);
+    assert.ok(await waitFor('.brc-poi-medical'), 'gis loaded');
     const transport = [...mount.querySelectorAll<HTMLButtonElement>('.map-layer-toggle')]
       .find((button) => button.textContent?.includes('Transport'));
     assert.ok(transport);
     const compact = Number((svg.getAttribute('viewBox') ?? '').split(' ')[2]);
     transport.click();
-    await settle();
+    assert.ok(await waitFor('.brc-poi-bus'), 'bus marker rendered');
     const fitted = Number((svg.getAttribute('viewBox') ?? '').split(' ')[2]);
     assert.ok(fitted > compact, `transport layer did not fit: ${compact} → ${fitted}`);
-    assert.ok(mount.querySelector('.brc-poi-bus'));
     assert.ok(mount.querySelector('.brc-poi-airport'));
   });
 

@@ -25,9 +25,20 @@ export function Toolbar({
 }: Props) {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const favFilterRef = useRef<HTMLButtonElement | null>(null);
-  // Focus the search box on mount and whenever focusKey bumps (after a
-  // Clear press, so the user can immediately start typing again).
-  useEffect(() => { searchRef.current?.focus(); }, [focusKey]);
+  const mountedRef = useRef(false);
+  const mobileMountRef = useRef(window.innerWidth <= 600);
+  // Desktop keeps the convenient initial focus. On phones, initial focus can
+  // summon the keyboard and make Chromium rescale the layout viewport around
+  // the 15px input. Later focusKey bumps are explicit user actions (Clear or
+  // the `/` shortcut), so they still focus on every viewport.
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      if (!mobileMountRef.current) searchRef.current?.focus();
+      return;
+    }
+    searchRef.current?.focus();
+  }, [focusKey]);
 
   const favFilterLabel = favOnly ? '★' : '☆';
   const favFilterTitle =

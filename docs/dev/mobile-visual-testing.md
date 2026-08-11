@@ -1,6 +1,7 @@
 ---
 title: Mobile Visual Testing Runbook
 date: 2026-08-07
+updated: 2026-08-10
 status: current
 ---
 
@@ -241,6 +242,39 @@ on every network interface.
 Use this when screenshots are useful for comparison or no interactive browser
 is available.
 
+### Automated repo helper
+
+The checked-in helper performs the directory-only plaintext build, drives
+Headless Shell over anonymous CDP pipes, captures expanded/collapsed/revealed
+states for every tab at 390 × 844, exercises Food Near Me with a simulated GPS
+fix, captures an explained arrow from GPS to a selected Map marker, and restores
+and verifies the normal encrypted build even when capture fails:
+
+```bash
+make review-mobile
+```
+
+It auto-detects a Chrome-for-Testing install under the repo's ignored
+`chrome-headless-shell/` directory. For an installation elsewhere, set the
+exact executable path:
+
+```bash
+CHROME_HEADLESS_SHELL=/path/to/chrome-headless-shell make review-mobile
+```
+
+The default simulated fix is the 2026 city center. Override it without editing
+the script when checking another point:
+
+```bash
+MOBILE_REVIEW_GPS=40.786958,-119.202994 make review-mobile
+```
+
+The command prints a unique `/tmp/playa-mobile-review.*` directory containing
+screenshots and aggregate DOM metrics. Those artifacts can contain protected
+directory data. Inspect them locally, then delete only that exact directory.
+The manual sequence below remains useful for custom interactions beyond the
+standard five-tab scroll-chrome pass.
+
 ### 1. Preserve the production-shaped result
 
 Build normally first and note the reported encryption mode and GIS years:
@@ -297,6 +331,36 @@ Keep that process running. On Linux, substitute the installed Chromium/Chrome
 binary. The isolated profile prevents an older service worker or ordinary
 browser state from contaminating the result.
 
+#### Sandboxed macOS runners
+
+Some restricted macOS execution environments cannot start even a headless GUI
+browser. The distinguishing failure happens before any URL is loaded:
+
+- Chrome exits with signal 6 / status 134, and the macOS diagnostic report
+  points at `_RegisterApplication` / `TransformProcessType`.
+- LaunchServices may report `kLSNoExecutableErr` even though the application
+  binary exists and can print its version.
+- Firefox and other full Chromium browsers can fail similarly, and binding the
+  loopback HTTP server may be denied independently.
+
+This is a runner capability problem, not an application crash. Newer
+[unified Chrome headless](https://developer.chrome.com/docs/chromium/headless/)
+uses the full browser's platform integration, including an early macOS
+[process-type transform](https://chromium.googlesource.com/chromium/src/+/3e1d274d0fc77e076a18cf454dec27c963dac7d5%5E%21/).
+Chromium's supported low-dependency alternative is the standalone
+`chrome-headless-shell` binary. Use a matching Chrome-for-Testing shell when it
+is already available, or run this review from a normal local terminal /
+browser-capable CI worker.
+Do not add a fake `--type` switch to bypass Chrome's platform initialization:
+Chrome reserves it for child processes and deliberately terminates invalid
+process types.
+
+If the runner also blocks outbound downloads, stop after collecting the crash
+signature. Do not repeatedly relaunch browsers, because each abort can create a
+visible macOS crash dialog. Complete the screenshot pass in a browser-capable
+environment and keep the automated checks below as the required baseline in
+the restricted runner.
+
 ### 4. Drive the page through CDP
 
 Query `http://127.0.0.1:9223/json/list`, select the entry whose URL starts with
@@ -326,6 +390,10 @@ the viewport and clean-profile setup stable so screenshots are comparable.
   have an equivalent enlarged hit area.
 - Text is not clipped at 200% browser zoom and long labels wrap sensibly.
 - Fixed or sticky chrome does not cover the content being navigated to.
+- Scroll down far enough to collapse the global chrome, then reverse direction:
+  it should reveal quickly. Camps/Art retain search and filters, Food retains
+  search, Schedule retains Now/Near Me, and Map retains its complete control
+  panel. Repeat with reduced motion enabled; only the animation should change.
 - Light and dark themes maintain contrast for borders, labels, icons, selected
   states, and disabled controls.
 - Modals fit the viewport, scroll internally, and close by button, backdrop,
@@ -352,9 +420,11 @@ the viewport and clean-profile setup stable so screenshots are comparable.
   centerline radii; outer arcs do not drift progressively inward. All official
   radial streets appear with the right inner endpoint, and the 3:00, 6:00,
   9:00, and 10:00 labels remain fully inside the compact phone viewBox.
-- While scrolling the map, its control panel sticks directly below the global
-  app chrome. Layer toggles remain operable with part of the SVG visible, and
-  changing a layer visibly updates the map without requiring a scroll back up.
+- While scrolling the map, its control panel sticks directly below the current
+  global app-chrome boundary. When the global chrome collapses, the panel moves
+  to the viewport top; reversing direction restores the global chrome above it.
+  Layer toggles remain operable with part of the SVG visible, and changing a
+  layer visibly updates the map without requiring a scroll back up.
 - Toilets are off on first load, can be enabled independently of Essentials,
   and remain tappable without permanent labels when enabled.
 - A source whose geometry is not published yet shows its year-specific Map
@@ -420,3 +490,45 @@ After any temporary plaintext review:
 - `client/tests/MapView.test.ts`
 - `client/tests/gis.test.ts`
 - `backend/tests/test_gis.py`
+
+## Simulating date/time (mock clock)
+
+Time-based views (Food availability, Schedule "now"/near-me, the location
+embargo) read `client/src/utils/clock.now()` instead of `new Date()`, so you
+can freeze a simulated instant for manual testing:
+
+- Add `?now=<ISO-8601>` to the URL, e.g.
+  `http://127.0.0.1:8765/?now=2026-08-31T13:00:00-07:00#food`. Put it in the
+  query (before `#`) for a clean URL; the param is also read if it ends up
+  inside the hash (the hash router can shuffle it), so both forms work.
+- The embargo is evaluated when a source is decrypted at load, so **set the
+  param before loading** (a fresh navigation) to preview location disclosure —
+  e.g. simulate a date on/after the public release (`?now=2026-08-24…` for camp
+  locations) on the `api-<year>` source to see them un-mask.
+- It persists in `localStorage['bm-mock-now']` and a banner shows the active
+  simulated time; click "Use real time" (or clear the key) to stop.
+- Use a Pacific offset (`-07:00` during the burn) so the instant matches playa
+  time. Example checks: `2026-08-09T10:00-07:00` → Food shows nothing "serving
+  now/soon" (pre-burn); `2026-08-31T13:00-07:00` → mid-service events are
+  "Serving now"; `2026-08-31T11:30-07:00` → noon events are "Starting soon".
+
+## Simulating location (mock GPS)
+
+Location-aware views share `client/src/hooks/useGeolocation.ts`, so one URL
+override can test Food Near Me, Schedule Near Me, and the Map position without
+granting browser location access:
+
+- Add `?gps=<latitude>,<longitude>` before the route hash, for example
+  `http://127.0.0.1:8765/?gps=40.786958,-119.202994#food`.
+- Combine it with the clock override when both position and availability must
+  be deterministic:
+  `http://127.0.0.1:8765/?now=2026-08-31T13:00:00-07:00&gps=40.786958,-119.202994#food`.
+- The parsed fix persists in `localStorage['bm-mock-gps']`, so route changes
+  and reloads retain it. The simulated-location banner remains visible on all
+  tabs; click “Use real location” to clear it and reload into normal opt-in GPS.
+- In Food, Near Me includes Hours not listed when their camp has a published,
+  parseable address within ~1 km. Clicking the active Near Me button again
+  restores the prior search/type-filtered list.
+
+The automated helper reads `MOBILE_REVIEW_GPS`, captures `food-near-me.png`,
+and asserts that a second Near Me click restores the original Food row count.

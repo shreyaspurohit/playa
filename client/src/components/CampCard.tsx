@@ -124,7 +124,7 @@ export function CampCard({
         // the star button already communicates that — skip the chips.
         friendsFavingCamp.length > 0 && (
           <div class="fav-by">
-            faved by:{' '}
+            Starred by{' '}
             {owners.map((o, i) => {
               const mine = o === 'you';
               return (

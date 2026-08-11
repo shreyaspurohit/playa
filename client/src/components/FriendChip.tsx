@@ -1,4 +1,4 @@
-// "faved by" chip with an inline × button to remove this friend's
+// "Starred by" chip with an inline × button to remove this friend's
 // star on this specific item (camp / event / art / meet spot).
 //
 // The "you" chip never gets a delete button — your own star is

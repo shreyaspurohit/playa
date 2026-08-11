@@ -1,6 +1,7 @@
 ---
 title: Client Architecture Reference
 date: 2026-08-06
+updated: 2026-08-10
 status: current
 ---
 
@@ -21,10 +22,16 @@ IIFE. It has no runtime package CDN or source-data API dependency.
 - `src/hooks/useSource.ts` — embedded source list, selected source, map year,
   and legacy storage migration.
 - `src/utils/embargo.ts` — current-year API location masking.
+- `src/utils/clock.ts` — shared real/simulated time for Food, Schedule, and
+  location release checks.
+- `src/utils/mockGps.ts` — persistent developer GPS override consumed by the
+  shared geolocation hook; documented in the subsystem ADRs, not user help.
+- `src/utils/foodAvailability.ts` — Food-specific occurrence and service-window
+  classification; intentionally separate from Schedule's calendar engine.
 
-Components are grouped by visible surface (`CampsView`, `ArtView`, `MapView`,
-`ScheduleView`) and shared controls (`Header`, `Toolbar`, `TabBar`, modals,
-banners, gates). User state lives in focused hooks under `src/hooks/`.
+Components are grouped by visible surface (`CampsView`, `FoodView`, `ArtView`,
+`MapView`, `ScheduleView`) and shared controls (`Header`, `Toolbar`, `TabBar`,
+modals, banners, gates). User state lives in focused hooks under `src/hooks/`.
 
 ## Build boundary
 
@@ -57,8 +64,13 @@ indexed once when data is ingested. Text highlighting returns text/VNode arrays
 and treats queries literally. Maps and schedules consume the same filtered and
 favorite state owned by `App`.
 
-The sticky `.site-chrome` wrapper contains the header, tabs, action bar, and
-status banners. Main views remain below it.
+The sticky `.site-chrome` wrapper separates collapsible global chrome (header,
+tabs, action bar, banners) from retained Camps/Art context controls. On mobile,
+scroll direction collapses the global layer while Food search, Schedule
+filters, and Map controls use the live `--site-chrome-height` offset. See
+[ADR 18](../18-mobile-scroll-chrome.md). Main views remain below it. Tabs do not
+show counts because candidate metrics differ by surface (saved items vs. live
+availability).
 
 ## Testing
 

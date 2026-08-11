@@ -9,6 +9,8 @@ data/meta.json
 data/camps.csv
 data/camps_tagged.csv
 data/logs/
+# Food classification exclusions (`data/food-exclusions-*.txt`) are committed
+# ID-only review decisions; do not add a wildcard that ignores them.
 # Art parallel to camps. `data/art_pages/art_NN.json` are the per-
 # page fetches off `directory.burningman.org/artwork/`; the CSVs are
 # regenerated downstream by `playa merge` / `playa tag`. Same ToS
@@ -54,6 +56,8 @@ site/version.txt
 # on every build. Keep only source + config in git.
 client/node_modules/
 client/dist/
+# Local Chrome-for-Testing install used by `make review-mobile`.
+chrome-headless-shell/
 
 # === Python build artifacts (from `pip install -e ./backend`) ===
 backend/src/*.egg-info/

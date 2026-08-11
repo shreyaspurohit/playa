@@ -290,6 +290,17 @@ class FormatDisplayTests(unittest.TestCase):
         s = format_display(p, self.week_map)
         self.assertEqual(s, "Mon–Fri · 11:00 AM – 3:00 PM (starts 8/26)")
 
+    def test_recurring_start_uses_earliest_date_not_monday_first_order(self):
+        week_map = {
+            "Sun": "8/30", "Mon": "8/31", "Tue": "9/1",
+            "Wed": "9/2", "Thu": "9/3", "Fri": "9/4", "Sat": "9/5",
+        }
+        p = parse_event_time("From 11:00 AM to 3:00 PM on Sun, Mon")
+        self.assertEqual(
+            format_display(p, week_map),
+            "Mon, Sun · 11:00 AM – 3:00 PM (starts 8/30)",
+        )
+
     def test_recurring_without_map_omits_starts(self):
         p = parse_event_time("From 11:00 AM to 3:00 PM on Mon, Tue, Wed, Thu, Fri")
         s = format_display(p, {})

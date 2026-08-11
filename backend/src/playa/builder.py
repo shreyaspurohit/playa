@@ -40,6 +40,7 @@ from .sources import Source, make_source
 from .tagger import Tagger
 from .timeparser import (
     canonical_week_map,
+    earliest_day_in_map,
     effective_burn_start,
     format_display,
     parse_event_time,
@@ -163,6 +164,31 @@ class SiteBuilder:
                 ids.add(line)
         return ids
 
+    def load_food_exclusions(self, source_spec: str) -> set[tuple[str, str]]:
+        """Read source/year-scoped Food-only `kind:id` exclusions.
+
+        Valid kinds are `camp` and `event`. Fail on malformed lines so an
+        operator typo cannot silently leave a known false positive deployed.
+        """
+        path = self.config.food_exclusion_file(source_spec)
+        if not path.exists():
+            return set()
+        exclusions: set[tuple[str, str]] = set()
+        for line_number, raw in enumerate(path.read_text().splitlines(), start=1):
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            kind, separator, item_id = line.partition(":")
+            kind = kind.strip()
+            item_id = item_id.strip()
+            if separator != ":" or kind not in {"camp", "event"} or not item_id:
+                raise ValueError(
+                    f"invalid Food exclusion at {path}:{line_number}; "
+                    "expected `camp:<id>` or `event:<id>`",
+                )
+            exclusions.add((kind, item_id))
+        return exclusions
+
     def load_meta(self) -> dict:
         """Fetch metadata — falls back to page-file mtime when meta.json
         is missing, and to a sensible default when nothing is there yet."""
@@ -205,8 +231,34 @@ class SiteBuilder:
         """
         source: Source = make_source(spec)
         camps = source.load_camps(self.config)
+        food_exclusions = self.load_food_exclusions(spec)
+        applied_food_exclusions: set[tuple[str, str]] = set()
+        suppressed_camps = 0
+        suppressed_events = 0
         for camp in camps:
             camp.tags = self.tagger.tag_camp(camp)
+            camp.food_tags = self.tagger.food_types_for_camp(camp)
+            if camp.food_tags and ("camp", camp.id) in food_exclusions:
+                camp.food_tags = []
+                applied_food_exclusions.add(("camp", camp.id))
+                suppressed_camps += 1
+            for event in camp.events:
+                event.food_tags = self.tagger.tag_event_food(event)
+                if event.food_tags and ("event", event.id) in food_exclusions:
+                    event.food_tags = []
+                    applied_food_exclusions.add(("event", event.id))
+                    suppressed_events += 1
+        if suppressed_camps or suppressed_events:
+            print(
+                f"  [{spec}] suppressed Food classification for "
+                f"{suppressed_camps} camp(s), {suppressed_events} event(s)",
+            )
+        unmatched_food_exclusions = food_exclusions - applied_food_exclusions
+        if unmatched_food_exclusions:
+            print(
+                f"  [{spec}] warning: {len(unmatched_food_exclusions)} Food "
+                "exclusion(s) did not match a classified record",
+            )
         camps.sort(key=lambda c: c.name.lower())
         self._enrich_event_times(camps)
         return camps
@@ -266,10 +318,17 @@ class SiteBuilder:
                 # Override fetched start_date + fill end_date from canonical map.
                 end_day = p["end_day"] or p["start_day"]
                 p["end_day"] = end_day
-                p["start_date"] = (
-                    week_map.get(p["start_day"] or "")
-                    or p.get("start_date")
-                )
+                if p["kind"] == "recurring" and p.get("days"):
+                    # Stamp the earliest occurrence date (the same one the
+                    # display's "(starts M/D)" uses) so the client can date-gate
+                    # recurring availability rather than matching weekday-only.
+                    earliest = earliest_day_in_map(p["days"], week_map)
+                    p["start_date"] = week_map.get(earliest or "") or p.get("start_date")
+                else:
+                    p["start_date"] = (
+                        week_map.get(p["start_day"] or "")
+                        or p.get("start_date")
+                    )
             s = format_display(p, week_map)
             if s:
                 ev.display_time = s
@@ -1135,11 +1194,16 @@ class SiteBuilder:
             total_events = sum(len(c.events) for c in camps)
             with_web = sum(1 for c in camps if c.website)
             tagged = sum(1 for c in camps if c.tags)
+            food_events = sum(1 for c in camps for e in c.events if e.food_tags)
+            food_camps = sum(1 for c in camps if any(e.food_tags for e in c.events))
             art_pieces = art_by_source.get(spec, [])
             art_tagged = sum(1 for a in art_pieces if a.tags)
             with_image = sum(1 for a in art_pieces if a.image_url)
             print(f"  [{spec}] {len(camps)} camps · {with_web} with website "
                   f"· {total_events} events · {tagged} tagged")
+            food_pct = (100 * food_events // total_events) if total_events else 0
+            print(f"  [{spec}] food: {food_events}/{total_events} events "
+                  f"({food_pct}%) · {food_camps} camps offering food")
             print(f"  [{spec}] {len(art_pieces)} art · {with_image} with image "
                   f"· {art_tagged} tagged")
         print(f"  {size_kb:.1f} KB")

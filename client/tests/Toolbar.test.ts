@@ -41,6 +41,13 @@ function mountToolbar(over: Partial<Parameters<typeof Toolbar>[0]> = {}) {
 }
 
 describe('<Toolbar>', () => {
+  test('does not autofocus and rescale the viewport on mobile mount', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    const el = mountToolbar();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.notEqual(document.activeElement, el.querySelector('input[type="search"]'));
+  });
+
   test('shows the empty-star filter and (0) count when nothing favorited', () => {
     const el = mountToolbar();
     const pill = el.querySelector('#fav-filter')!;

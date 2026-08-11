@@ -96,7 +96,7 @@ export function ArtCard({
         // it. Suppressing "you-only" rows would also drop attribution
         // for imported art the user doesn't yet self-star.
         <div class="fav-by">
-          faved by:{' '}
+          Starred by{' '}
           {owners.map((o, i) => {
             const mine = o === 'you';
             return (

@@ -1,6 +1,7 @@
 ---
 title: ToS Compliance
 date: 2026-04-27
+updated: 2026-08-10
 status: current
 ---
 
@@ -55,7 +56,7 @@ old artifact is overwritten.
 | Innovate §4 disclaimer | App carries the verbatim *"This app is not affiliated, endorsed, or verified by Burning Man Project"* in the footer + About modal. |
 | Innovate §6.2 location embargo | Current-year API camp locations are client-masked until `CAMP_LOCATION_RELEASE_AT`; art locations independently remain masked until `ART_LOCATION_RELEASE_AT`. Directory and past years are unaffected. Spirit-mode remains masked; trusted god-mode may bypass for internal testing by explicit operator decision. |
 | Innovate §7.2 trademark | App name "Playa Camps" avoids "Burning Man", "Black Rock City", "Decompression", "Playa Events". |
-| Innovate §5.5 modification | Tags and calendar dates are app-side transformations. About modal labels both: *"tags are keyword-matched by this app — not from Burning Man Project"* + *"calendar dates come from a configured burn-week window."* |
+| Innovate §5.5 modification | Tags and calendar dates are app-side transformations. The About modal states that tags are generated from listing text and event times are formatted against the configured burn-week calendar. |
 | Innovate §2.3 permissions | GPS is opt-in and explained in the About modal. No camera, no notifications, no clipboard read. |
 
 ### Active Innovate compliance checklist

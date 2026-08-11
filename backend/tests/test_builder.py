@@ -589,6 +589,42 @@ class LoadDenylistTests(unittest.TestCase, _TmpConfigMixin):
         self.assertEqual(self.builder.load_denylist(), {"779", "212"})
 
 
+class LoadFoodExclusionsTests(unittest.TestCase, _TmpConfigMixin):
+    def setUp(self):
+        self.config = self._make_config()
+        self.builder = SiteBuilder(self.config)
+
+    def test_files_are_source_and_year_scoped(self):
+        self.assertEqual(
+            self.config.food_exclusion_file("directory").name,
+            "food-exclusions-directory-2026.txt",
+        )
+        self.assertEqual(
+            self.config.food_exclusion_file("api-2025").name,
+            "food-exclusions-api-2025.txt",
+        )
+
+    def test_reads_camp_and_event_ids(self):
+        self.config.food_exclusion_file("directory").write_text(
+            "# Food only\n"
+            "camp:779\n"
+            "event:evt-1 # inline\n",
+        )
+        self.assertEqual(
+            self.builder.load_food_exclusions("directory"),
+            {("camp", "779"), ("event", "evt-1")},
+        )
+
+    def test_rejects_malformed_entries(self):
+        self.config.food_exclusion_file("directory").write_text("779\n")
+        with self.assertRaisesRegex(ValueError, "expected `camp:<id>`"):
+            self.builder.load_food_exclusions("directory")
+
+    def test_rejects_unknown_source(self):
+        with self.assertRaises(ValueError):
+            self.config.food_exclusion_file("future-source")
+
+
 class LoadMetaTests(unittest.TestCase, _TmpConfigMixin):
     def setUp(self):
         self.config = self._make_config()
@@ -641,6 +677,43 @@ class LoadCampsTests(unittest.TestCase, _TmpConfigMixin):
         camps = self._load()
         self.assertEqual(len(camps), 1)
         self.assertIn("yoga", camps[0].tags)
+
+    def test_food_exclusion_clears_only_camp_food_classification(self):
+        self._page(1, [{
+            "id": "1", "name": "Dinner Theme", "location": "6:00 & E",
+            "description": "free dinner", "website": "", "events": [],
+        }])
+        self.config.food_exclusion_file("directory").write_text("camp:1\n")
+        camp = self._load()[0]
+        self.assertEqual([], camp.food_tags)
+        self.assertIn("food", camp.tags)
+        self.assertEqual("6:00 & E", camp.location)
+
+    def test_food_exclusion_clears_only_event_food_classification(self):
+        self._page(1, [{
+            "id": "1", "name": "Music Camp", "location": "",
+            "description": "music", "website": "",
+            "events": [{
+                "id": "evt-1", "name": "Cake Theme", "description": "cake",
+                "time": "Tuesday 8/25 from 2pm-3pm",
+            }],
+        }])
+        self.config.food_exclusion_file("directory").write_text("event:evt-1\n")
+        event = self._load()[0].events[0]
+        self.assertEqual([], event.food_tags)
+        self.assertEqual("Cake Theme", event.name)
+
+    def test_unmatched_food_exclusion_warns_without_printing_id(self):
+        self._page(1, [{
+            "id": "1", "name": "Music Camp", "location": "",
+            "description": "music", "website": "", "events": [],
+        }])
+        self.config.food_exclusion_file("directory").write_text("camp:private-id\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.builder.load_camps()
+        self.assertIn("1 Food exclusion(s) did not match", output.getvalue())
+        self.assertNotIn("private-id", output.getvalue())
 
     def test_canonical_url_generated_when_missing(self):
         self._page(1, [{
@@ -752,6 +825,20 @@ class MultiSourceCalendarWindowTests(unittest.TestCase, _TmpConfigMixin):
         self.assertEqual(builder._effective_start, "2026-08-25")
         builder._enrich_event_times([burn_week])
         self.assertEqual(builder._effective_start, "2026-08-25")
+
+    def test_recurring_start_date_uses_first_actual_window_occurrence(self):
+        builder = SiteBuilder(self._make_config())
+        camp = Camp(
+            id="1", name="Recurring", location="", description="", website="",
+            url="", events=[Event(
+                id="e1", name="Sunday and Monday", description="",
+                time="From 11:00 AM to 3:00 PM on Sun, Mon",
+            )],
+        )
+
+        builder._enrich_event_times([camp])
+
+        self.assertEqual(camp.events[0].parsed_time["start_date"], "8/30")
 
 
 class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):

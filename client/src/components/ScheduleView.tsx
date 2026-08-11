@@ -15,6 +15,7 @@ import { EyeIcon } from './EyeIcon';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { addressToLatLng, haversineMeters } from '../map/address';
 import { brcForSource } from '../hooks/useSource';
+import { now } from '../utils/clock';
 import type { Source } from '../types';
 
 /** "Near me" proximity cutoff: ~1 km ≈ 15 min walk at 4 km/h. Events
@@ -347,18 +348,21 @@ export function ScheduleView({
   // clear its stored state so switching back does not unexpectedly reactivate
   // it for a different year.
   const nearMeActive = nearMeOnly && brc !== null;
+  const { state: geo, request: requestGps, stop: stopGps } = useGeolocation();
   useEffect(() => {
-    if (!brc && nearMeOnly) setNearMeOnly(false);
-  }, [brc, nearMeOnly]);
+    if (!brc && nearMeOnly) {
+      setNearMeOnly(false);
+      stopGps();
+    }
+  }, [brc, nearMeOnly, stopGps]);
 
-  // Own geolocation watcher — the Map tab has its own; only one
-  // view is mounted at a time so we don't fight over permissions
-  // or run two watchers in parallel.
-  const { state: geo, request: requestGps } = useGeolocation();
+  // Own geolocation watcher — the Map tab has its own. Stop this watch when
+  // Near me is turned off; all tab views remain mounted for fast switching.
 
   function toggleNearMe() {
     if (nearMeOnly) {
       setNearMeOnly(false);
+      stopGps();
       return;
     }
     if (!brc) return;
@@ -372,17 +376,17 @@ export function ScheduleView({
   // Today's cell (iso match by M/D so local/UTC mismatches don't
   // swallow a burn-day). Null when today isn't in the burn window.
   const todayCell = useMemo(() => {
-    const now = new Date();
-    const md = `${now.getMonth() + 1}/${now.getDate()}`;
+    const current = now();
+    const md = `${current.getMonth() + 1}/${current.getDate()}`;
     return cells.find((c) => c.dateLabel === md) ?? null;
   }, [cells]);
 
   // Current HH:MM + 2-hour horizon, both as 24-h strings for direct
   // lexicographic comparison with ScheduleEntry.startTime.
   const nowBounds = useMemo(() => {
-    const now = new Date();
-    const cur = pad2(now.getHours()) + ':' + pad2(now.getMinutes());
-    const endMin = now.getHours() * 60 + now.getMinutes() + NOW_WINDOW_HOURS * 60;
+    const current = now();
+    const cur = pad2(current.getHours()) + ':' + pad2(current.getMinutes());
+    const endMin = current.getHours() * 60 + current.getMinutes() + NOW_WINDOW_HOURS * 60;
     const endH = Math.floor((endMin % (24 * 60)) / 60);
     const endM = endMin % 60;
     const end = pad2(endH) + ':' + pad2(endM);
@@ -487,7 +491,7 @@ export function ScheduleView({
         {filtersOn && (
           <button
             type="button" class="subtle-btn sched-filter-clear"
-            onClick={() => { setNowOnly(false); setNearMeOnly(false); }}
+            onClick={() => { setNowOnly(false); setNearMeOnly(false); stopGps(); }}
           >
             Clear filters
           </button>

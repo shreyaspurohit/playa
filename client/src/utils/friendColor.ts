@@ -30,7 +30,7 @@ export function friendHue(name: string): number {
 }
 
 /** Inline style for a friend chip. Keyed on the nickname; stable
- *  across renders. Used by CampCard's "faved by" row, EventItem's
+ *  across renders. Used by CampCard's "Starred by" row, EventItem's
  *  friends row, and ScheduleView's starred-by chip list. */
 export function friendChipStyle(name: string): {
   background: string;

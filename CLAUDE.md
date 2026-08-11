@@ -36,6 +36,9 @@ change touches one of these subsystems.
 - [`docs/13-tos-compliance.md`](docs/13-tos-compliance.md) — directory + Innovate API stance
 - [`docs/14-refresh-cycle.md`](docs/14-refresh-cycle.md) — refresh / force-refresh paths + SW interaction
 - [`docs/15-data-sources.md`](docs/15-data-sources.md) — multi-source architecture (directory + `api.burningman.org`), per-source state, normalization
+- [`docs/17-food-tab.md`](docs/17-food-tab.md) — food classification, live availability, filters, favorites, and Near Me behavior
+- [`docs/18-mobile-scroll-chrome.md`](docs/18-mobile-scroll-chrome.md) — contextual sticky controls + direction-aware mobile header collapse
+- [`docs/19-food-classification-audit.md`](docs/19-food-classification-audit.md) — local Ollama semantic audit + ID-only Food exclusion proposals
 - [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
 - [`docs/dev/client-architecture.md`](docs/dev/client-architecture.md) — compact client implementation reference
 - [`docs/dev/html-scraping-patterns.md`](docs/dev/html-scraping-patterns.md) — directory HTML parser patterns
@@ -63,8 +66,8 @@ site from scratch, uploads it as a Pages artifact, and the runner
 evaporates. Nothing camp-specific ever hits git.
 
 Committed: scripts, tests, workflow, `Makefile`, `CLAUDE.md`, `LICENSE`,
-`data/denylist.txt` (just IDs, no text), `site/CNAME`, `site/robots.txt`,
-`site/.nojekyll`.
+`data/denylist.txt` and `data/food-exclusions-*.txt` (IDs only, no source
+text), `site/CNAME`, `site/robots.txt`, `site/.nojekyll`.
 
 ## ToS risk + mitigations
 
@@ -299,7 +302,10 @@ bm-camps/                       ← repo root (the folder name stays as-is)
 │   ├── package.json, tsconfig.json, esbuild.config.mjs
 ├── data/                       ← fetch artifacts (mostly gitignored)
 ├── site/                       ← published artifacts; index.html gitignored
-├── scripts/fetch_all.sh
+├── scripts/
+│   ├── fetch_all.sh
+│   ├── mobile_visual_review.sh     ← safe temporary-build/restoration wrapper
+│   └── mobile_visual_review.mjs    ← CDP-over-pipes 390×844 capture driver
 ├── .github/workflows/refresh.yml
 ├── .claude/skills/update-tags/
 ├── CLAUDE.md, LICENSE, Makefile, README.md
@@ -331,7 +337,7 @@ Python tests live at `backend/tests/` (module-focused files plus API, art,
 release-note, and builder integration coverage). JS tests live at
 `client/tests/`.
 - `data/` — fetch artifacts. **Gitignored in full except the committed
-  `denylist*.txt` ID files**
+  `denylist*.txt` and `food-exclusions-*.txt` ID files**
   (public-repo / private-data stance, see top of file).
   - `pages/page_NN.json` — raw per-page fetch. Each camp dict maps 1:1
     to `Camp.to_dict()`: `{id, name, location, description, website,
@@ -339,6 +345,10 @@ release-note, and builder integration coverage). JS tests live at
   - `meta.json` — fetch timestamp + counts; drives the "Updated …" badge.
   - `denylist.txt` — one camp id per line (`#` comments allowed).
     Filtered out of the site at build. Takedown requests land here.
+  - `food-exclusions-<source>-<year>.txt` — reviewed `camp:<id>` / `event:<id>`
+    entries that suppress only Food classification for one source/year. Camps
+    and events remain available in every other view. Regenerate through the
+    local audit in ADR 19; never place fetched text in these files.
   - `camps.csv` — merged CSV (tags blank).
   - `camps_tagged.csv` — final CSV.
   - `art.csv`, `art_tagged.csv` — parallel art merge/tag outputs.
@@ -496,6 +506,32 @@ from playa import Tagger
 t = Tagger()
 print(t.tag("your test string here"))
 ```
+
+### Food false positives and annual review
+
+Food uses the separate `FOOD_TYPES` classifier and the local-only workflow in
+`docs/19-food-classification-audit.md`:
+
+```bash
+make food-audit
+make food-review FOOD_REVIEW_ARGS='--output-dir /tmp/playa-food-review-YYYY --adjudicator-model qwen2.5:14b'
+```
+
+Raw camp/event text may go only to loopback Ollama. Normal output and committed
+files remain aggregate- or ID-only. The model output is advisory: show the
+proposal and obtain owner approval before changing either layer.
+
+1. Put reusable non-offering phrases in `FOOD_FALSE_POSITIVE_PHRASES`. These
+   patterns mask only the matched phrase before `FOOD_TYPES` runs, preserving
+   independent food evidence elsewhere in the text. Add focused positive and
+   negative tests.
+2. Rerun the audit. Put remaining record-specific decisions in
+   `data/food-exclusions-<source>-<year>.txt` as `camp:<id>` or `event:<id>`.
+   These clear only Food classification; never use the takedown denylist for a
+   Food false positive.
+3. Run `make food-audit`, `make test`, and `make rebuild`. Confirm applied and
+   unmatched exclusion counts per source. An unmatched entry is aggregate-only
+   evidence that the record or classifier changed and needs another review.
 
 ## Site UI (backend/src/playa/builder.py + templates/site.html)
 
@@ -1011,7 +1047,11 @@ works offline after first load. Fits the privacy stance.
   working, and Schedule Near-me disables until exact geometry exists.
 - `client/src/hooks/useGeolocation.ts` — wraps
   `navigator.geolocation.watchPosition`. Opt-in — no permission
-  prompt until the user clicks "Use my GPS".
+  prompt until the user clicks "Use my GPS". For deterministic local/headless
+  testing, `?gps=<latitude>,<longitude>` is parsed by
+  `client/src/utils/mockGps.ts`, persists in `bm-mock-gps`, and supplies the
+  same fixed position to Map, Schedule, and Food until the visible “Use real
+  location” action clears it.
 
 ### Geometry quick-reference (2026)
 

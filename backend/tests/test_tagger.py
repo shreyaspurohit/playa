@@ -10,7 +10,7 @@ Core invariants:
 import unittest
 
 from playa.models import Camp, Event
-from playa.tagger import TAGS, Tagger
+from playa.tagger import TAGS, FOOD_TYPES, Tagger
 
 
 class TaxonomyTests(unittest.TestCase):
@@ -364,6 +364,114 @@ class ArtTaggerTests(unittest.TestCase):
         ]
         self.tagger.tag_all_art(pieces)
         self.assertGreater(len(pieces[0].tags), 0)
+
+
+class FoodTypeTests(unittest.TestCase):
+    def setUp(self):
+        self.t = Tagger()
+
+    def food(self, name="", desc=""):
+        return self.t.tag_event_food(Event(id="1", name=name, description=desc, time=""))
+
+    def test_pizza(self):
+        self.assertIn("pizza", self.food(name="Wood-fired Pizza Party"))
+
+    def test_hot_dog(self):
+        self.assertIn("hot-dog", self.food(name="Free Hot Dogs at noon"))
+
+    def test_grill_and_bbq(self):
+        self.assertIn("grill", self.food(name="Grilled skewers"))
+        self.assertIn("bbq", self.food(desc="low and slow brisket bbq"))
+
+    def test_grilled_cheese(self):
+        self.assertIn("grilled-cheese", self.food(name="Grilled Cheese o'clock"))
+
+    def test_tacos(self):
+        self.assertIn("tacos", self.food(name="Taco Tuesday burritos"))
+
+    def test_sandwich_avoids_ambiguous_bare_sub(self):
+        self.assertIn("sandwich", self.food(name="Sub sandwich lunch"))
+        self.assertNotIn("sandwich", self.food(desc="join a sub group discussion"))
+
+    def test_pancakes_and_bacon(self):
+        self.assertIn("pancakes", self.food(name="Pancake breakfast"))
+        self.assertIn("bacon", self.food(desc="bacon and eggs"))
+        self.assertIn("eggs", self.food(desc="bacon and eggs"))
+
+    def test_sweets(self):
+        self.assertIn("ice-cream", self.food(desc="free gelato and sundaes"))
+        self.assertIn("cookies", self.food(name="Cookie hour"))
+
+    def test_dietary_flags(self):
+        self.assertIn("vegan", self.food(desc="all plant-based vegan menu"))
+        self.assertIn("vegetarian", self.food(desc="veggie options"))
+
+    def test_meal_general(self):
+        self.assertIn("meal", self.food(name="Free dinner for all"))
+
+    def test_food_false_positive_phrases_are_masked(self):
+        for phrase in (
+            "the cake is a lie",
+            "this should be a piece of cake",
+            "visual eye candy",
+            "food for thought",
+            "feeding your soul",
+            "nourishing the mind",
+            "nourishment for the spirit",
+            "food storage and supplies",
+            "our communal kitchen",
+            "member meal plan",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual([], self.food(desc=phrase))
+
+    def test_masked_phrase_does_not_hide_a_real_offering_elsewhere(self):
+        self.assertIn("cake", self.food(desc="the cake is a lie, but we serve cake nightly"))
+        self.assertIn("tacos", self.food(desc="communal kitchen serving tacos"))
+        self.assertIn("meal", self.food(desc="feed your soul, then enjoy a free dinner"))
+
+    def test_multiple_types(self):
+        tags = self.food(name="Breakfast tacos", desc="with a side of bacon")
+        self.assertIn("tacos", tags)
+        self.assertIn("bacon", tags)
+
+    def test_drinks_are_not_food(self):
+        # The whole point of this revision: beverages produce NO food tags.
+        self.assertEqual([], self.food(name="Sunset Cocktail Bar", desc="craft beer, wine, margaritas"))
+        self.assertEqual([], self.food(name="Espresso & Coffee", desc="lattes, chai, matcha, cold brew"))
+        self.assertEqual([], self.food(name="Juice & Smoothies", desc="fresh lemonade and kombucha"))
+
+    def test_non_food_empty(self):
+        self.assertEqual([], self.food(name="Ecstatic Dance", desc="movement workshop"))
+
+    def test_word_boundaries(self):
+        self.assertEqual([], self.food(name="Team barn", desc="steam room"))
+
+    def test_taxonomy_floor(self):
+        self.assertGreaterEqual(len(FOOD_TYPES), 25)
+
+    def test_expanded_food_terms(self):
+        self.assertIn("bbq", self.food(desc="sausage sizzle and bratwurst"))
+        self.assertIn("breakfast", self.food(name="Breakfast Revival", desc="vegemite toast"))
+        self.assertIn("international", self.food(desc="fresh kimchi, shawarma, and a samosa"))
+        # "breakfast" is now its own bucket, not the generic 'meal'.
+        self.assertNotIn("meal", self.food(name="Breakfast"))
+        # Ambiguous bare "toast" (a drinking toast) must NOT trigger breakfast.
+        self.assertEqual([], self.food(desc="raise a toast to the sunset"))
+
+    def test_camp_food_types_use_name_desc_not_events(self):
+        # A real food camp: the type is in its name.
+        ramen = Camp(id="1", name="42 Ramen", location="", description="claim your yummy prize", website="", url="")
+        self.assertIn("noodles", self.t.food_types_for_camp(ramen))
+        # A non-food camp whose EVENT merely mentions "snacks" must NOT be
+        # classified as a food camp — food_types_for_camp ignores events.
+        acorn = Camp(
+            id="2", name="Acorn Oasis", location="",
+            description="lose your nuts in carnival games and feast your eyes on squirrels",
+            website="", url="",
+            events=[Event(id="e", name="Snack Break", description="free snacks", time="")],
+        )
+        self.assertEqual([], self.t.food_types_for_camp(acorn))
 
 
 if __name__ == "__main__":

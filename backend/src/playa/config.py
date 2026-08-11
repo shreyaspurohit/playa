@@ -160,6 +160,19 @@ class Config:
     def art_denylist_file(self) -> Path: return self.data_dir / "denylist-art.txt"
     @property
     def art_api_denylist_file(self) -> Path: return self.data_dir / "denylist-art-api.txt"
+    def food_exclusion_file(self, source_spec: str) -> Path:
+        """Year/source-scoped Food-only classification exclusions.
+
+        Directory data follows BRC_MAP_YEAR; API specs already carry a year.
+        These lists never remove records from Camps, Schedule, Art, or Map.
+        """
+        if source_spec == "directory":
+            source_key = f"directory-{self.directory_map_year}"
+        elif source_spec.startswith("api-") and source_spec[4:].isdigit():
+            source_key = source_spec
+        else:
+            raise ValueError(f"unknown source for food exclusions: {source_spec!r}")
+        return self.data_dir / f"food-exclusions-{source_key}.txt"
     @property
     def api_dir(self) -> Path:        return self.data_dir / "api"
     def api_payload_file(self, year: int) -> Path:

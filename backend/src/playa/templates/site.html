@@ -130,6 +130,12 @@ __TIER_WRAPPERS_META__
     border-bottom: 1px solid var(--border);
     backdrop-filter: blur(6px);
   }
+  .site-chrome-primary-shell {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .site-chrome-primary { min-height: 0; }
+  .site-chrome-context:empty { display: none; }
   header { padding: 0; border-bottom: 0; background: transparent; }
   header .topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   header .titleblock { display: flex; flex-direction: column; gap: 2px; }
@@ -303,6 +309,7 @@ __TIER_WRAPPERS_META__
   .camp {
     background: var(--card); border: 1px solid var(--border); border-radius: 10px;
     padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+    min-width: 0; overflow-wrap: anywhere;
     transition: box-shadow 0.3s ease, border-color 0.3s ease;
   }
   /* Brief highlight when arriving here via "open camp card" nav */
@@ -655,7 +662,7 @@ __TIER_WRAPPERS_META__
   }
   .modal-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
   /* Tabbed info modal — the About panel is long-form disclaimer +
-     actions, the Guide panel is a 5-section how-to. Tabs live in
+     actions, the Guide panel is a compact task-based how-to. Tabs live in
      the modal chrome (above the body) so scroll state resets when
      the user switches. */
   .info-tabs {
@@ -681,7 +688,7 @@ __TIER_WRAPPERS_META__
     border-color: var(--border);
   }
   /* Guide-tab styling — compact section list with subtle numbered
-     headings so the 5 sections scan quickly. */
+     headings so the tasks scan quickly. */
   .guide-intro { font-size: 13px; color: var(--muted); margin: 4px 0 14px; }
   .guide-section { margin-bottom: 14px; }
   .guide-section h3 {
@@ -805,12 +812,6 @@ __TIER_WRAPPERS_META__
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--text); background: var(--card); border-color: var(--border); }
   .tab-icon { font-size: 16px; line-height: 1; }
-  .tab-badge {
-    background: var(--accent); color: #fff; font-size: 11px; font-weight: 600;
-    padding: 1px 6px; border-radius: 999px; margin-left: 4px;
-    font-variant-numeric: tabular-nums;
-  }
-
   /* === Update banner — "new version available" ======================= */
   .update-banner {
     margin: 10px 0 0; padding: 10px 14px;
@@ -821,6 +822,18 @@ __TIER_WRAPPERS_META__
   }
   .update-banner-msg { font-size: 13px; color: var(--text); }
   .update-banner-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Dev/testing: shown when simulated time/GPS query overrides are active. */
+  .mock-now-banner, .mock-gps-banner {
+    margin: 10px 0 0; padding: 8px 12px; border-radius: 8px;
+    background: #78350f; color: #fff; font-size: 12px; line-height: 1.5;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .mock-gps-banner { background: #1e3a5f; }
+  .mock-now-clear, .mock-gps-clear {
+    margin-left: auto; padding: 3px 9px; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.6); background: transparent;
+    color: #fff; font: inherit; font-size: 12px; cursor: pointer;
+  }
 
   /* === Import banner ================================================== */
   .import-banner {
@@ -1068,6 +1081,140 @@ __TIER_WRAPPERS_META__
     margin-top: 20px; padding: 12px; background: var(--card);
     border: 1px dashed var(--border); border-radius: 10px;
   }
+
+  /* === Food tab ======================================================== */
+  .food-wrap { padding: 16px 24px 64px; }
+  .food-intro { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .food-search {
+    width: 100%; box-sizing: border-box; margin: 0;
+    padding: 9px 12px; min-height: 40px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--card); color: var(--text); font: inherit; font-size: 14px;
+  }
+  .food-search:focus { outline: none; border-color: var(--accent); }
+  .food-search-sticky { margin-bottom: 12px; }
+  .food-picks {
+    border: 1px solid var(--accent); border-radius: 12px;
+    background: var(--accent-soft); padding: 10px 12px;
+  }
+  .food-picks .food-row { background: var(--bg); }
+  .food-controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+  }
+  .food-refresh {
+    display: inline-flex; align-items: center; gap: 4px; min-height: 34px;
+    padding: 6px 11px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--card); color: var(--text); font: inherit; font-size: 13px;
+    cursor: pointer;
+  }
+  .food-refresh:hover { border-color: var(--accent); color: var(--accent); }
+  .food-asof { font-size: 12px; color: var(--muted); }
+  .food-filterbar {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  }
+  .food-typechip {
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 12px;
+    min-height: 32px; display: flex; align-items: center;
+    -webkit-tap-highlight-color: transparent; transition: all 0.12s;
+  }
+  .food-typechip:hover { border-color: var(--accent); color: var(--accent); }
+  .food-typechip.active {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .food-filter-clear {
+    font-size: 11px; color: var(--muted); background: transparent; border: 0;
+    padding: 4px 10px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .food-filter-clear:hover { color: var(--text); }
+  .food-empty {
+    padding: 20px; text-align: center; color: var(--muted); font-size: 12px;
+    font-style: italic;
+  }
+  .food-section { margin-bottom: 18px; }
+  .food-section-head {
+    font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 8px;
+  }
+  .food-section-toggle {
+    background: none; border: none; padding: 2px 0; margin: 0; cursor: pointer;
+    font: inherit; font-size: 15px; font-weight: 600; color: var(--text);
+    display: inline-flex; align-items: center; gap: 7px; min-height: 44px;
+  }
+  .food-section-toggle:hover { color: var(--accent); }
+  .food-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .food-section-indicator {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; flex: 0 0 28px;
+    border: 1px solid var(--border); border-radius: 50%;
+    background: var(--card); color: var(--text);
+    font: 600 22px/1 system-ui, sans-serif;
+  }
+  .food-section-toggle:hover .food-section-indicator {
+    border-color: var(--accent); color: var(--accent);
+  }
+  .food-section-count {
+    color: var(--muted); font-weight: 400; font-size: 13px;
+  }
+  .food-list {
+    list-style: none; padding: 0; margin: 0;
+    display: grid; gap: 8px;
+  }
+  .food-list.collapsed { display: none; }
+  .food-row {
+    display: flex; gap: 8px; padding: 10px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--card);
+  }
+  .food-row.clickable { cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+  .food-row.clickable:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .food-row.expanded { border-color: var(--accent); }
+  .food-row-toggle {
+    display: block; width: 100%; padding: 0; border: 0; text-align: left;
+    background: transparent; color: inherit; font: inherit; cursor: pointer;
+  }
+  .food-row-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .food-caret { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .food-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .food-detail-desc { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
+  .food-detail-camp { margin: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .food-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .food-link {
+    display: inline-flex; align-items: center; min-height: 32px; padding: 4px 10px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+    color: var(--accent); font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer;
+  }
+  .food-link:hover { border-color: var(--accent); }
+  .food-open-camp { font: inherit; font-size: 12px; font-weight: 600; }
+  .food-loc { color: var(--muted); }
+  .food-campname { color: var(--accent); font-weight: 600; }
+  .food-star {
+    background: none; border: none; cursor: pointer; font-size: 18px;
+    color: var(--muted); line-height: 1; min-width: 32px; min-height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent; transition: color 0.12s;
+  }
+  .food-star:hover { color: var(--accent); }
+  .food-star.on { color: var(--accent); }
+  .food-row-body { flex: 1; min-width: 0; }
+  .food-row-title { display: block; font-weight: 600; color: var(--text); }
+  .food-when {
+    color: var(--muted); font-weight: 400; font-size: 13px; margin-top: 2px;
+  }
+  .food-row-meta { display: block; font-size: 12px; margin-top: 2px; color: var(--muted); }
+  .food-campname {
+    background: none; border: 0; padding: 0; margin: 0;
+    color: var(--accent); cursor: pointer; font: inherit;
+    text-decoration: none;
+  }
+  .food-campname:hover { text-decoration: underline; }
+  .food-loc { color: var(--muted); font-size: 12px; }
+  .food-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .food-chip {
+    font-size: 11px; padding: 1px 6px; border-radius: 999px;
+    background: var(--chip-bg); color: var(--text);
+  }
+  .food-friends { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
 
   /* === Map view ======================================================= */
   .map-wrap { padding: 16px 24px 64px; }
@@ -1424,7 +1571,11 @@ __TIER_WRAPPERS_META__
   }
   .brc-bearing {
     stroke: var(--highlight-color, var(--accent));
-    stroke-width: 14; stroke-dasharray: 60 40; opacity: 0.9;
+    stroke-width: 14; stroke-dasharray: 60 40; stroke-linecap: round;
+    opacity: 0.9;
+  }
+  .brc-bearing-arrow {
+    fill: var(--highlight-color, var(--accent)); opacity: 0.95;
   }
   .brc-user-halo { fill: #3b82f6; opacity: 0.22; }
   .brc-user-ring {
@@ -2044,10 +2195,60 @@ __TIER_WRAPPERS_META__
     }
     .schedule-accordion summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 0; display: flex; justify-content: space-between; align-items: center; }
     .schedule-accordion summary::-webkit-details-marker { display: none; }
+    .food-typechip { min-height: 44px; }
+    .food-star { min-width: 44px; min-height: 44px; }
   }
 
   @media (max-width: 600px) {
-    .site-chrome { padding: 14px 14px 10px; }
+    .site-chrome {
+      padding: 14px 14px 10px;
+      transition: padding 180ms ease, border-color 180ms ease,
+        background-color 180ms ease;
+    }
+    .site-chrome-primary-shell {
+      transition: grid-template-rows 180ms ease;
+    }
+    .site-chrome-primary {
+      overflow: hidden;
+      transition: opacity 140ms ease, transform 180ms ease;
+    }
+    .site-chrome.chrome-collapsed .site-chrome-primary-shell {
+      grid-template-rows: minmax(0, 0fr);
+    }
+    .site-chrome.chrome-collapsed .site-chrome-primary {
+      opacity: 0;
+      transform: translateY(-10px);
+      visibility: hidden;
+      pointer-events: none;
+    }
+    /* Camps and Art retain their search/filter context. Other views shrink the
+       global chrome completely and let their own sticky controls take over. */
+    .site-chrome.chrome-collapsed.site-chrome-has-context {
+      padding-top: 6px;
+      padding-bottom: 6px;
+    }
+    .site-chrome.chrome-collapsed:not(.site-chrome-has-context) {
+      padding-top: 0;
+      padding-bottom: 0;
+      border-bottom-color: transparent;
+      background: transparent;
+      backdrop-filter: none;
+    }
+    .food-search-sticky,
+    .schedule-filters {
+      position: sticky;
+      top: calc(var(--site-chrome-height, 0px) - 1px);
+      z-index: 9;
+      padding: 6px 0;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .schedule-filters { margin-bottom: 8px; }
+    /* Keep an empty/short schedule tall enough that its sticky controls are
+       not constrained behind the global chrome when that chrome reappears. */
+    .schedule-wrap {
+      min-height: calc(100dvh - var(--site-chrome-height, 0px));
+    }
     .tagcloud { padding: 10px 14px; }
     main { padding: 12px 14px 48px; }
     footer.site-footer { padding: 20px 14px 32px; }
@@ -2088,6 +2289,12 @@ __TIER_WRAPPERS_META__
   @media (max-width: 600px) {
     .themes { gap: 0; padding: 2px; }
     .theme-btn { width: 26px; height: 26px; font-size: 13px; }
+  }
+
+  @media (max-width: 600px) and (prefers-reduced-motion: reduce) {
+    .site-chrome,
+    .site-chrome-primary-shell,
+    .site-chrome-primary { transition: none; }
   }
 </style>
 <script>

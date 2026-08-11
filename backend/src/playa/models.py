@@ -25,14 +25,21 @@ class Event:
     #   {kind: "single"|"recurring", days: ["Mon",...], start_day, start_date,
     #    start_time: "HH:MM" 24h, end_day, end_time}
     parsed_time: dict[str, Any] | None = None
+    # App-generated food-type classifications for this event (e.g.
+    # ["tacos", "vegan"]). Populated by Tagger.tag_event_food at
+    # build time; empty for non-food events. Omitted from to_dict when empty.
+    food_tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "id": self.id, "name": self.name,
             "description": self.description, "time": self.time,
             "display_time": self.display_time,
             "parsed_time": self.parsed_time,
         }
+        if self.food_tags:
+            d["food_tags"] = list(self.food_tags)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Event":
@@ -43,6 +50,7 @@ class Event:
             time=d.get("time", ""),
             display_time=d.get("display_time", ""),
             parsed_time=d.get("parsed_time"),
+            food_tags=list(d.get("food_tags", [])),
         )
 
 
@@ -56,9 +64,13 @@ class Camp:
     url: str
     events: list[Event] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    # Food-type buckets the camp advertises in its own name+description (ADR
+    # docs/17). Drives the Food tab's camp-level "anytime" rows precisely,
+    # unlike the coarse `food` tag. Omitted from to_dict when empty.
+    food_tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "id": self.id,
             "name": self.name,
             "location": self.location,
@@ -68,6 +80,9 @@ class Camp:
             "events": [e.to_dict() for e in self.events],
             "tags": list(self.tags),
         }
+        if self.food_tags:
+            d["food_tags"] = list(self.food_tags)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Camp":
@@ -81,6 +96,7 @@ class Camp:
             url=d.get("url") or f"https://directory.burningman.org/camps/{cid}/",
             events=[Event.from_dict(e) for e in (d.get("events") or [])],
             tags=list(d.get("tags", [])),
+            food_tags=list(d.get("food_tags", [])),
         )
 
 

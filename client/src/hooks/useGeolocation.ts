@@ -2,6 +2,7 @@
 // the caller invokes `request()`. Watches for updates after the first
 // fix so the "you are here" dot tracks movement.
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { mockGps } from '../utils/mockGps';
 
 export type GeoState =
   | { status: 'idle' }
@@ -10,7 +11,12 @@ export type GeoState =
   | { status: 'ready'; lat: number; lng: number; accuracyM: number; at: number };
 
 export function useGeolocation() {
-  const [state, setState] = useState<GeoState>({ status: 'idle' });
+  const [state, setState] = useState<GeoState>(() => {
+    const simulated = mockGps();
+    return simulated
+      ? { status: 'ready', ...simulated, at: Date.now() }
+      : { status: 'idle' };
+  });
   const watchId = useRef<number | null>(null);
 
   const stop = useCallback(() => {
@@ -23,6 +29,11 @@ export function useGeolocation() {
   }, []);
 
   const request = useCallback(() => {
+    const simulated = mockGps();
+    if (simulated) {
+      setState({ status: 'ready', ...simulated, at: Date.now() });
+      return;
+    }
     if (!('geolocation' in navigator)) {
       setState({ status: 'unavailable', message: 'This browser has no GPS support.' });
       return;

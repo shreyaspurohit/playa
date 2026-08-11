@@ -1,6 +1,7 @@
 ---
 title: Schedule System
 date: 2026-04-27
+updated: 2026-08-10
 status: current
 ---
 
@@ -105,9 +106,15 @@ event shows in 5 columns. Unparsed events land in a dashed-border
 
 ### Filters
 
-- **⚡ Now**: events starting in the next 2 hours of `Date.now()`.
+- **⚡ Now**: events starting in the next 2 hours of the shared
+  `utils/clock.now()` value. This normally uses the device clock and honors the
+  `?now=<ISO>` manual-test override described in the mobile visual runbook.
 - **📍 Near me**: events at camps within ~1 km of the user's GPS fix.
-  Reuses the same `latLngToSvgFeet` math the map uses.
+  Reuses the same `latLngToSvgFeet` math the map uses. The button is a toggle;
+  press it again (or use Clear filters) to restore the prior schedule and stop
+  Schedule's GPS watch. For deterministic testing,
+  `?gps=<latitude>,<longitude>` supplies a fixed GPS position through the shared
+  hook without a permission prompt; see the mobile visual-testing runbook.
 
 ## Failure modes & trade-offs
 
@@ -118,11 +125,11 @@ event shows in 5 columns. Unparsed events land in a dashed-border
   The parser strips trailing `2`/`3` digits and dedupes — second
   occurrence is collapsed into the first. The calendar columns
   derive from the actual date window so this is fine.
-- **Recurring events with no date tuple** get their `(starts M/D)`
-  annotation from the earliest day in their day-list, looked up in
-  the year's derived week map. If the map is empty (no
-  single-occurrence events to seed from), recurring annotations
-  silently drop — extremely rare in practice.
+- **Recurring events with no date tuple** get their `(starts M/D)` annotation
+  from the earliest mapped calendar date among their weekdays—not from a
+  Monday-first weekday ordering. This handles event windows that begin on
+  Sunday. The builder stamps the same date into `parsed_time.start_date` so
+  Food and Schedule display/date-gating agree.
 
 ## Code references
 
@@ -133,4 +140,6 @@ event shows in 5 columns. Unparsed events land in a dashed-border
   walk that derives the week map then formats display strings
 - `client/src/components/ScheduleView.tsx` — calendar grid +
   filters + day-hide
+- `client/src/utils/clock.ts` — shared real/simulated clock
 - `client/src/hooks/useGeolocation.ts` — opt-in GPS for Near-me
+- `client/src/utils/mockGps.ts` — persistent `?gps=` test override

@@ -1,6 +1,7 @@
 ---
 title: Multi-source data architecture
 date: 2026-04-28
+updated: 2026-08-10
 status: current
 ---
 
@@ -243,6 +244,12 @@ confidentiality. Directory and past-year API sources are unaffected. A future
 `api-YYYY` fails closed (locations stay masked) until `BRC_MAP_YEAR` and both
 annual timestamps are advanced. A current-year API build with either timestamp
 missing, timezone-naive, reversed, or from the wrong year fails before deploy.
+
+Runtime comparisons are supplied by `client/src/utils/clock.now()` so embargo,
+Food availability, and Schedule testing use one clock. Production returns the
+real device time. `?now=<ISO>` freezes a clearly bannered, local-only simulated
+instant for manual verification; clearing the simulation removes both its
+persisted value and URL override. This is a test seam, not an embargo bypass.
 
 **Per-tier bypass for `god-mode`** (added 2026-04-28). The embargo is
 a UX gate, not a security boundary — full location data is in the
@@ -925,8 +932,9 @@ playa all --sources directory   # nightly default — no API hits unless asked
 
 - **ToS §5.5 modification**: tag generation + calendar canonicalization
   are transformations on Event Data; both are already disclosed in the
-  About modal ("tags are keyword-matched by this app — not from Burning
-  Man Project"). Continues to apply to API-sourced events.
+  About modal (tags are generated from listing text and event times are
+  formatted against the configured burn-week calendar). Continues to apply
+  to API-sourced events.
 
 ## Code references
 

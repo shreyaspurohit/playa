@@ -212,16 +212,16 @@ export function InfoModal({
 
 // === Guide tab =====================================================
 
-function GuideTab() {
+export function GuideTab() {
   return (
     <>
       <p class="guide-intro">
-        The tour. Everything here works offline once the page has
-        loaded once with signal.
+        A quick tour. Everything here works offline once the page has
+        loaded successfully with signal.
       </p>
 
       <section class="guide-section">
-        <h3>1. Find camps</h3>
+        <h3>1. Find camps and art</h3>
         <p>
           Search scans names, descriptions, events, and tags. Tap tag
           chips to narrow by theme (e.g., <em>yoga</em>, <em>bar</em>)
@@ -232,10 +232,32 @@ function GuideTab() {
           down to just the ones you starred, and can wipe them all at
           once.
         </p>
+        <p>
+          The <strong>🎨 Art</strong> tab works similarly for installations.
+          Star a piece to keep it in your list and place it on the Map.
+        </p>
       </section>
 
       <section class="guide-section">
-        <h3>2. Build your schedule</h3>
+        <h3>2. Find food</h3>
+        <p>
+          The <strong>🍽 Food</strong> tab groups meals and snacks by
+          <strong> Serving now</strong>, <strong>Starting soon</strong>,
+          <strong> Upcoming</strong>, and <strong>Hours not listed</strong>.
+          Search by dish, camp, or dietary option, or tap food chips to narrow
+          the list. Tap a row for details and star an event to add it to your
+          upcoming picks and Schedule.
+        </p>
+        <p>
+          <strong>📍 Near me</strong> keeps food at camps within roughly
+          1&thinsp;km (~15&thinsp;min walk), including entries whose hours are
+          not listed. Tap the active button again to restore your previous
+          search and food filters and stop the location watch.
+        </p>
+      </section>
+
+      <section class="guide-section">
+        <h3>3. Build your schedule</h3>
         <p>
           The <strong>📅 Schedule</strong> tab lays every starred event
           out on a day-by-day calendar. Two filter buttons at the top:
@@ -247,24 +269,27 @@ function GuideTab() {
           </li>
           <li>
             <strong>📍 Near me</strong> &mdash; only events at camps
-            within ~1&thinsp;km of your GPS fix (~15&thinsp;min walk).
+            within ~1&thinsp;km of your GPS fix (~15&thinsp;min walk). Tap
+            it again, or use <strong>Clear filters</strong>, to return to the
+            full schedule and stop the location watch.
           </li>
         </ul>
         <p>
-          Tap the 👁 on any day column to <strong>hide</strong> a
-          recurring event from just that day (un-hide later from the
-          same spot).
+          Tap the 👁 beside an event to <strong>hide that occurrence</strong>
+          from one day without removing the event from the rest of your week.
+          You can reveal it later from that day's hidden section.
         </p>
       </section>
 
       <section class="guide-section">
-        <h3>3. The map + GPS</h3>
+        <h3>4. The map + GPS</h3>
         <p>
           The grid is clock-hours (2:00&ndash;10:00) &times; letter
           streets (Esplanade &rarr; K). Starred camps drop as pins;
-          <strong> Center Camp</strong> and <strong>Playa Info</strong>{' '}
-          are pre-placed as landmarks. Tap any pin to draw its
-          intersection near the Man.
+          starred art, your home camp, friends' plans, and meet spots use
+          distinct markers. Official layers add landmarks, safety resources,
+          services, transport, toilets, and the city boundary. Tap a marker or
+          list row to see its details and location.
         </p>
         <p>
           Tap <strong>Use my GPS</strong> (top of the Map tab) to
@@ -273,16 +298,17 @@ function GuideTab() {
         <ul class="guide-list">
           <li>a <strong>dot</strong> for where you are,</li>
           <li>your current <strong>clock &amp; street address</strong> (e.g., <em>7:45 &amp; D</em>),</li>
-          <li>a <strong>line</strong> from you to any selected pin with distance, compass bearing, and <strong>walk / bike ETA</strong>.</li>
+          <li>a dashed <strong>arrow</strong> from your GPS position to any selected marker, with distance, compass bearing, and <strong>walk / bike ETA</strong>.</li>
         </ul>
         <p class="guide-subtle">
-          GPS is read in-page and never leaves your device. Tap{' '}
+          Location access is optional. GPS is read in-page and never leaves
+          your device. Tap{' '}
           <strong>? Legend</strong> for a deeper read of the grid.
         </p>
       </section>
 
       <section class="guide-section">
-        <h3>4. Plan rendezvous with friends</h3>
+        <h3>5. Plan rendezvous with friends</h3>
         <p>
           Set a <strong>nickname</strong> in the header pill so friends
           see who's sharing. On a camp card tap <strong>set as my
@@ -294,12 +320,12 @@ function GuideTab() {
       </section>
 
       <section class="guide-section">
-        <h3>5. Share &amp; sync across devices</h3>
+        <h3>6. Share &amp; sync across devices</h3>
         <p>
           Three ways to move your plans around &mdash; pick the one
-          that fits the situation. All three round-trip the same
-          payload: starred camps, starred events, your home camp,
-          your meet spots.
+          that fits the situation. Share links carry only the items you select;
+          file export/import preserves the fuller device snapshot, including
+          hidden schedule occurrences and imported friends.
         </p>
         <ul class="guide-list">
           <li>
@@ -334,9 +360,9 @@ function GuideTab() {
       </section>
 
       <section class="guide-section">
-        <h3>6. Install &amp; offline</h3>
+        <h3>7. Install, scroll &amp; use offline</h3>
         <p>
-          Tap <strong>Install app</strong> in the header (Chrome /
+          Open the top-right menu and tap <strong>Install app</strong> (Chrome /
           Android / Edge), or on iPhone open this page in Safari &rarr;{' '}
           <strong>Share &rarr; Add to Home Screen</strong>. After one
           full load with signal, the site works from your home screen
@@ -344,8 +370,10 @@ function GuideTab() {
           GPS, and your starred list.
         </p>
         <p class="guide-subtle">
-          Theme switcher (emoji pill in the header) picks from 5
-          palettes. Stuck on an old build? See{' '}
+          On phones, scrolling down hides the global header while keeping the
+          current tab's essential controls available. Start scrolling back up
+          to reveal the header and tabs again.{' '}
+          The same top-right menu offers 5 themes. Stuck on an old build? See{' '}
           <strong>Force refresh</strong> on the About tab.
         </p>
       </section>
@@ -437,16 +465,11 @@ function AboutTab({
         </>
       )}
       <p>
-        <strong>What this app adds:</strong>{' '}
-        tags are keyword-matched by this app — <em>not</em> supplied by
-        Burning Man Project. Event times are normalized against the
-        configured burn-week calendar so they can be searched and displayed
-        consistently.
-      </p>
-      <p>
-        <strong>What you can trust less:</strong> those auto-generated tags,
-        normalized event times, and anything changed upstream after the last
-        refresh.
+        <strong>Search, Food, and scheduling:</strong> The Food tab groups
+        matching meals and snacks by current availability; Schedule organizes
+        starred events by day. Tags are generated from listing text, and event
+        times are formatted against the configured burn-week calendar. Check
+        the selected source for the latest details.
       </p>
       {!showDirectoryDisclaimer && (
         <p>
@@ -492,12 +515,14 @@ function AboutTab({
         to wipe it all.
       </p>
       <p>
-        <strong>GPS / location:</strong> when you tap{' '}
-        <em>Navigate</em> on a camp, your browser will prompt you for
-        location permission. If granted, your GPS fix is read entirely
-        in-page to compute distance + bearing to the camp — nothing is
-        sent anywhere. Decline and the map still works without the
-        "you are here" dot.
+        <strong>GPS / location:</strong> location access is optional and begins
+        only when you choose <strong>Use my GPS</strong> on Map or
+        <strong> Near me</strong> on Schedule or Food. If granted, your GPS fix
+        is read entirely in-page to filter nearby results and compute distance,
+        bearing, and travel estimates — nothing is sent anywhere. Tap an active
+        Near me button again (or Clear filters in Schedule) to restore the full
+        list and stop that location watch. Decline and every tab remains usable
+        without location-aware features.
       </p>
       <p>
         <strong>Sharing favorites:</strong> the share URL carries your

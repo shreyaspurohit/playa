@@ -16,6 +16,9 @@ import {
 } from '../utils/embargo';
 import type { LocationKind, LocationReleasePolicy } from '../utils/embargo';
 import { readString, writeString } from '../utils/storage';
+import {
+  advanceScrollChrome, INITIAL_SCROLL_CHROME, type ScrollChromeState,
+} from '../utils/scrollChrome';
 import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
 import type { SharePayload } from '../utils/share';
@@ -29,7 +32,7 @@ import {
   useSource, migrateLegacyKeysOnce, sourceForDisplay,
 } from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
-import { useHashRoute } from '../hooks/useHashRoute';
+import { useHashRoute, type View } from '../hooks/useHashRoute';
 import { ActionBar } from './ActionBar';
 import { ArtView } from './ArtView';
 import { CampsView } from './CampsView';
@@ -49,9 +52,12 @@ import type { Snapshot } from '../utils/exportImport';
 import { InfoModal } from './InfoModal';
 import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
+import { FoodView } from './FoodView';
 import { ShareModal } from './ShareModal';
 import { TabBar } from './TabBar';
 import { Toolbar } from './Toolbar';
+import { now, isMockNow, mockNowLabel, clearMockNow } from '../utils/clock';
+import { isMockGps, mockGpsLabel, clearMockGps } from '../utils/mockGps';
 
 interface Meta {
   fetchedDate: string;
@@ -98,6 +104,162 @@ export function App() {
   ]);
   const { theme, setTheme } = useTheme();
   const { view, goto } = useHashRoute();
+  const [chromeCollapsed, setChromeCollapsed] = useState(false);
+  const scrollChromeRef = useRef<ScrollChromeState>({
+    ...INITIAL_SCROLL_CHROME,
+    y: window.scrollY,
+  });
+  const scrollChromeSettleUntilRef = useRef(0);
+  const scrollChromeSettleTimerRef = useRef(0);
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 600px)');
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const previous = scrollChromeRef.current;
+      // Collapsing a sticky element changes document geometry. Browsers may
+      // counter that change with scroll anchoring, which looks like an
+      // immediate user reversal. Rebase those animation-time deltas without
+      // allowing them to flip the state.
+      if (performance.now() < scrollChromeSettleUntilRef.current) {
+        scrollChromeRef.current = {
+          ...previous,
+          y: window.scrollY,
+          direction: 0,
+          travel: 0,
+        };
+        return;
+      }
+      const next = advanceScrollChrome(previous, window.scrollY, mobile.matches);
+      scrollChromeRef.current = next;
+      if (next.collapsed !== previous.collapsed) {
+        setChromeCollapsed(next.collapsed);
+        scrollChromeSettleUntilRef.current = performance.now() + 240;
+        if (scrollChromeSettleTimerRef.current) {
+          window.clearTimeout(scrollChromeSettleTimerRef.current);
+        }
+        scrollChromeSettleTimerRef.current = window.setTimeout(() => {
+          scrollChromeRef.current = {
+            ...scrollChromeRef.current,
+            y: window.scrollY,
+            direction: 0,
+            travel: 0,
+          };
+          scrollChromeSettleTimerRef.current = 0;
+        }, 240);
+      }
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    const onBreakpointChange = () => update();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    if (mobile.addEventListener) mobile.addEventListener('change', onBreakpointChange);
+    else mobile.addListener(onBreakpointChange);
+    update();
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (mobile.removeEventListener) mobile.removeEventListener('change', onBreakpointChange);
+      else mobile.removeListener(onBreakpointChange);
+      if (frame) window.cancelAnimationFrame(frame);
+      if (scrollChromeSettleTimerRef.current) {
+        window.clearTimeout(scrollChromeSettleTimerRef.current);
+      }
+    };
+  }, []);
+  useEffect(() => {
+    // A tab change is an orientation moment: reveal the global navigation and
+    // restart tracking after that tab's saved scroll position is restored.
+    setChromeCollapsed(false);
+    scrollChromeSettleUntilRef.current = 0;
+    if (scrollChromeSettleTimerRef.current) {
+      window.clearTimeout(scrollChromeSettleTimerRef.current);
+      scrollChromeSettleTimerRef.current = 0;
+    }
+    let settleFrame = 0;
+    const frame = window.requestAnimationFrame(() => {
+      settleFrame = window.requestAnimationFrame(() => {
+        scrollChromeRef.current = {
+          ...INITIAL_SCROLL_CHROME,
+          y: window.scrollY,
+        };
+        setChromeCollapsed(false);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (settleFrame) window.cancelAnimationFrame(settleFrame);
+    };
+  }, [view]);
+  // Publish the live sticky-chrome height for view-owned controls. It changes
+  // with the active context, transient banners, and the mobile collapse
+  // animation; Food search, Schedule filters, and Map controls all consume the
+  // same offset so they never overlap the global chrome.
+  useEffect(() => {
+    const siteChrome = document.querySelector<HTMLElement>('.site-chrome');
+    if (!siteChrome) return;
+    const updateOffset = () => {
+      document.documentElement.style.setProperty(
+        '--site-chrome-height',
+        `${siteChrome.getBoundingClientRect().height}px`,
+      );
+    };
+    updateOffset();
+    const observer = typeof window.ResizeObserver === 'function'
+      ? new window.ResizeObserver(updateOffset)
+      : null;
+    observer?.observe(siteChrome);
+    window.addEventListener('resize', updateOffset);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateOffset);
+      document.documentElement.style.removeProperty('--site-chrome-height');
+    };
+  }, []);
+  const [foodNowSnapshot, setFoodNowSnapshot] = useState(() => now());
+  const refreshFoodNow = useCallback(() => setFoodNowSnapshot(now()), []);
+  // Keep Food availability current during a long-lived PWA session.
+  // Re-entering Food refreshes immediately; the minute tick handles users who
+  // leave the tab open while service windows change.
+  useEffect(() => {
+    const interval = window.setInterval(refreshFoodNow, 60_000);
+    return () => window.clearInterval(interval);
+  }, [refreshFoodNow]);
+  useEffect(() => {
+    if (view === 'food') refreshFoodNow();
+  }, [view, refreshFoodNow]);
+  // Per-tab scroll memory. All tabs are always-mounted (hidden divs) sharing
+  // the document scroll, so without this, scrolling one tab (e.g. Camps
+  // scroll-to-card) leaves the shared offset there and other tabs inherit it —
+  // switch back to Food and you land wherever Camps left off. We remember each
+  // view's scroll and restore it on return. Exception: when we arrive with an
+  // explicit scroll target (onGotoCamp / onGotoArt), that view's own
+  // scroll-into-view should win, so we skip the restore once.
+  const scrollByView = useRef<Partial<Record<View, number>>>({});
+  const activeViewRef = useRef<View>(view);
+  const restoringScrollRef = useRef(false);
+  const navScrollTargetRef = useRef<View | null>(null);
+  useEffect(() => {
+    const onScroll = () => {
+      if (restoringScrollRef.current) return;
+      scrollByView.current[activeViewRef.current] = window.scrollY;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  useEffect(() => {
+    const target = scrollByView.current[view] ?? 0;
+    activeViewRef.current = view;
+    if (navScrollTargetRef.current === view) {
+      navScrollTargetRef.current = null;   // explicit scroll-to target wins
+      return;
+    }
+    restoringScrollRef.current = true;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, target);
+      requestAnimationFrame(() => { restoringScrollRef.current = false; });
+    });
+  }, [view]);
   const { updateAvailable, latest: latestVersion } = useVersionCheck();
   const { pending: pendingReleaseNotes, dismiss: dismissReleaseNotes } = useReleaseNotes();
 
@@ -167,11 +329,11 @@ export function App() {
           // this clears `camp.location` on every camp;
           // outside the embargo window (or for trusted/god-mode users)
           // it's a no-op.
-          if (isLocationEmbargoed(source, locationPolicy, 'camp', new Date(), unlockedTrusted)) {
+          if (isLocationEmbargoed(source, locationPolicy, 'camp', now(), unlockedTrusted)) {
             setEmbargoedAtIngest((state) => ({ ...state, camp: true }));
           }
           const masked = applyLocationEmbargo(
-            p.camps, source, locationPolicy, new Date(), unlockedTrusted,
+            p.camps, source, locationPolicy, now(), unlockedTrusted,
           );
           indexHaystacks(masked);
           setCamps(masked);
@@ -212,11 +374,11 @@ export function App() {
         const p = await readEmbeddedArt(source);
         if (cancelled) return;
         if (p.kind === 'plain') {
-          if (isLocationEmbargoed(source, locationPolicy, 'art', new Date(), unlockedTrusted)) {
+          if (isLocationEmbargoed(source, locationPolicy, 'art', now(), unlockedTrusted)) {
             setEmbargoedAtIngest((state) => ({ ...state, art: true }));
           }
           const masked = applyArtLocationEmbargo(
-            p.art, source, locationPolicy, new Date(), unlockedTrusted,
+            p.art, source, locationPolicy, now(), unlockedTrusted,
           );
           indexArtHaystacks(masked);
           setArt(masked);
@@ -262,11 +424,11 @@ export function App() {
           const jsonText = await decryptSource(env.cipher, dekIv);
           if (cancelled) return;
           const raw = JSON.parse(jsonText) as Camp[];
-          if (isLocationEmbargoed(source, locationPolicy, 'camp', new Date(), unlockedTrusted)) {
+          if (isLocationEmbargoed(source, locationPolicy, 'camp', now(), unlockedTrusted)) {
             setEmbargoedAtIngest((state) => ({ ...state, camp: true }));
           }
           const arr = applyLocationEmbargo(
-            raw, source, locationPolicy, new Date(), unlockedTrusted,
+            raw, source, locationPolicy, now(), unlockedTrusted,
           );
           indexHaystacks(arr);
           decryptedRef.current.set(source, arr);
@@ -277,11 +439,11 @@ export function App() {
           const artText = await decryptSource(env.artCipher, dekIv);
           if (cancelled) return;
           const rawArt = JSON.parse(artText) as Art[];
-          if (isLocationEmbargoed(source, locationPolicy, 'art', new Date(), unlockedTrusted)) {
+          if (isLocationEmbargoed(source, locationPolicy, 'art', now(), unlockedTrusted)) {
             setEmbargoedAtIngest((state) => ({ ...state, art: true }));
           }
           const arr = applyArtLocationEmbargo(
-            rawArt, source, locationPolicy, new Date(), unlockedTrusted,
+            rawArt, source, locationPolicy, now(), unlockedTrusted,
           );
           indexArtHaystacks(arr);
           decryptedArtRef.current.set(source, arr);
@@ -381,7 +543,7 @@ export function App() {
     if (releases.length === 0) return;
 
     function check() {
-      const released = releases.find(({ time }) => Date.now() >= time);
+      const released = releases.find(({ time }) => now().getTime() >= time);
       if (released) {
         setEmbargoLifted(released.kind);
         return true;
@@ -405,10 +567,10 @@ export function App() {
 
   const onUnlock = useCallback(async (jsonText: string, password: string) => {
     const raw = JSON.parse(jsonText) as Camp[];
-    if (isLocationEmbargoed(source, locationPolicy, 'camp')) {
+    if (isLocationEmbargoed(source, locationPolicy, 'camp', now())) {
       setEmbargoedAtIngest((state) => ({ ...state, camp: true }));
     }
-    const unlocked = applyLocationEmbargo(raw, source, locationPolicy);
+    const unlocked = applyLocationEmbargo(raw, source, locationPolicy, now());
     indexHaystacks(unlocked);
     setCamps(unlocked);
     setEncEnvelope(null);
@@ -595,6 +757,18 @@ export function App() {
   // CampsView re-runs its scroll effect even when id is unchanged.
   const [scrollToCampId, setScrollToCampId] = useState<string | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
+  // Once the user leaves Camps, drop the scroll target. Otherwise a later
+  // manual visit to Camps re-runs the scroll and — for a beyond-cap target
+  // that CampsView appends to render (see CampsView) — leaves that card
+  // lingering at the bottom of the list. Guarded on the camps→elsewhere
+  // transition so it never clears the target mid-navigation *into* Camps.
+  const prevViewForScrollRef = useRef<View>(view);
+  useEffect(() => {
+    if (prevViewForScrollRef.current === 'camps' && view !== 'camps' && scrollToCampId) {
+      setScrollToCampId(null);
+    }
+    prevViewForScrollRef.current = view;
+  }, [view, scrollToCampId]);
 
   const [shareOpen, setShareOpen] = useState(false);
   const [incomingShare, setIncomingShare] = useState<SharePayload | null>(null);
@@ -878,14 +1052,10 @@ export function App() {
     setArtFavOnly(false);
     setScrollToArtId(artId);
     setScrollToArtTick((t) => t + 1);
+    navScrollTargetRef.current = 'art';   // let scroll-to-art win over restore
     goto('art');
   }, [goto]);
   // -------------------------------------------------------------------
-
-  // Only your own starred events. Friends' events still show on the
-  // calendar, but a "48 things on your calendar (of which 30 are yours)"
-  // tab badge is just noise — the user wants a count of their own plans.
-  const scheduleBadge = eventFavs.size;
 
   const onToggleTag = useCallback((tag: string) => {
     setActiveTags((prev) => {
@@ -939,6 +1109,7 @@ export function App() {
     setFavOnly(false);
     setScrollToCampId(campId);
     setScrollTick((t) => t + 1);
+    navScrollTargetRef.current = 'camps';   // let scroll-to-card win over restore
     goto('camps');
   }, [goto]);
 
@@ -964,144 +1135,172 @@ export function App() {
 
   return (
     <>
-      <div class="site-chrome">
-        <Header
-          campTotal={camps?.length ?? 0}
-          campMatching={filtered.length}
-          artTotal={art?.length ?? 0}
-          artMatching={artFiltered.length}
-          view={view}
-          filterNote={filterNote}
-          fetchedDate={meta.fetchedDate}
-          fetchedAt={meta.fetchedAt}
-          version={meta.version}
-          currentTheme={theme}
-          onThemeChange={setTheme}
-          onInfoClick={() => { setInfoPulse(false); setInfoOpen(true); }}
-          infoPulse={infoPulse}
-          source={visibleSource}
-          availableSources={effectiveAvailableSources}
-          onSourceChange={setSource}
-        />
-        <TabBar
-          view={view}
-          onGoto={goto}
-          scheduleBadge={scheduleBadge}
-          artBadge={artFavs.size}
-        />
-        <ActionBar
-          onShare={() => setShareOpen(true)}
-          onExport={onExportSnapshot}
-          onImport={onImportSnapshot}
-          hasSomethingToSend={
-            campFavs.size + eventFavs.size + artFavs.size + meetSpots.spots.length > 0
-            || Boolean(myCampId)
-          }
-        />
-        {embargoLifted && (
-          <EmbargoLiftedBanner
-            kind={embargoLifted}
-            onRefresh={() => { ackEmbargoLift(); location.reload(); }}
-            onDismiss={() => { ackEmbargoLift(); setEmbargoLifted(null); }}
-          />
-        )}
-        {updateAvailable && <UpdateBanner latest={latestVersion} />}
-        {pendingReleaseNotes.length > 0 && (
-          <ReleaseNotesBanner
-            notes={pendingReleaseNotes}
-            onDismiss={dismissReleaseNotes}
-          />
-        )}
-        {incomingShare && (
-          <ImportBanner
-            payload={incomingShare}
-            existing={friends.friends[incomingShare.name]}
-            ownNickname={readString(LS.nickname, '').trim()}
-            currentSource={source}
-            availableSources={availableSources}
-            onSwitchSource={setSource}
-            onImport={onImportFriend}
-            onImportAsSelf={onImportAsSelf}
-            onDismiss={onDismissImport}
-          />
-        )}
-        {incomingSnapshot && (
-          <SnapshotImportBanner
-            snapshot={incomingSnapshot}
-            ownNickname={readString(LS.nickname, '').trim()}
-            existing={
-              incomingSnapshot.nickname
-                ? friends.friends[incomingSnapshot.nickname]
-                : undefined
-            }
-            onApplySelf={onApplySnapshotSelf}
-            onImportAsFriend={onImportSnapshotAsFriend}
-            onDismiss={onDismissSnapshot}
-          />
-        )}
-        {view === 'camps' && (
-          <Toolbar
-            query={query}
-            onQueryChange={setQuery}
-            onClear={onClear}
-            favOnly={favOnly}
-            favCount={favMatchCount}
-            favCampN={campFavs.size}
-            favEventN={eventFavs.size}
-            onToggleFavFilter={() => setFavOnly((v) => !v)}
-            webOnly={webOnly}
-            webCount={webMatchCount}
-            onToggleWebFilter={() => setWebOnly((v) => !v)}
-            onUnfavoriteAll={onUnfavoriteAll}
-            focusKey={focusKey}
-          />
-        )}
-        {view === 'art' && (
-          <>
-            <div class="controls">
-              <input
-                type="search"
-                placeholder="Search art (name, artist, description, tags…)"
-                value={artQuery}
-                onInput={(e) => setArtQuery((e.target as HTMLInputElement).value)}
-                autocomplete="off"
+      <div class={
+        'site-chrome'
+        + (chromeCollapsed ? ' chrome-collapsed' : '')
+        + (view === 'camps' || view === 'art' ? ' site-chrome-has-context' : '')
+      }>
+        <div
+          class="site-chrome-primary-shell"
+          aria-hidden={chromeCollapsed ? 'true' : undefined}
+        >
+          <div class="site-chrome-primary">
+            <Header
+              campTotal={camps?.length ?? 0}
+              campMatching={filtered.length}
+              artTotal={art?.length ?? 0}
+              artMatching={artFiltered.length}
+              view={view}
+              filterNote={filterNote}
+              fetchedDate={meta.fetchedDate}
+              fetchedAt={meta.fetchedAt}
+              version={meta.version}
+              currentTheme={theme}
+              onThemeChange={setTheme}
+              onInfoClick={() => { setInfoPulse(false); setInfoOpen(true); }}
+              infoPulse={infoPulse}
+              source={visibleSource}
+              availableSources={effectiveAvailableSources}
+              onSourceChange={setSource}
+            />
+            <TabBar view={view} onGoto={goto} />
+            <ActionBar
+              onShare={() => setShareOpen(true)}
+              onExport={onExportSnapshot}
+              onImport={onImportSnapshot}
+              hasSomethingToSend={
+                campFavs.size + eventFavs.size + artFavs.size + meetSpots.spots.length > 0
+                || Boolean(myCampId)
+              }
+            />
+            {embargoLifted && (
+              <EmbargoLiftedBanner
+                kind={embargoLifted}
+                onRefresh={() => { ackEmbargoLift(); location.reload(); }}
+                onDismiss={() => { ackEmbargoLift(); setEmbargoLifted(null); }}
               />
-            </div>
-            <div class="controls toolbar-row">
-              <div class="filters">
+            )}
+            {isMockNow() && (
+              <div class="mock-now-banner" role="status">
+                🕒 Simulated time: <strong>{mockNowLabel()}</strong>
                 <button
                   type="button"
-                  class={'fav-filter' + (artFavOnly ? ' active' : '')}
-                  aria-pressed={artFavOnly ? 'true' : 'false'}
-                  title={`${artFavs.size} starred art piece${artFavs.size === 1 ? '' : 's'}`}
-                  onClick={() => {
-                    if (!artFavOnly && artFavs.size === 0) return;
-                    setArtFavOnly((v) => !v);
-                  }}
-                >
-                  {artFavOnly ? '★' : '☆'} Favorites <span class="count">({artFavs.size})</span>
-                </button>
-                {(artQuery || artActiveTags.size || artFavOnly) && (
+                  class="mock-now-clear"
+                  onClick={() => { clearMockNow(); location.reload(); }}
+                >Use real time</button>
+              </div>
+            )}
+            {isMockGps() && (
+              <div class="mock-gps-banner" role="status">
+                📍 Simulated location: <strong>{mockGpsLabel()}</strong>
+                <button
+                  type="button"
+                  class="mock-gps-clear"
+                  onClick={() => { clearMockGps(); location.reload(); }}
+                >Use real location</button>
+              </div>
+            )}
+            {updateAvailable && <UpdateBanner latest={latestVersion} />}
+            {pendingReleaseNotes.length > 0 && (
+              <ReleaseNotesBanner
+                notes={pendingReleaseNotes}
+                onDismiss={dismissReleaseNotes}
+              />
+            )}
+            {incomingShare && (
+              <ImportBanner
+                payload={incomingShare}
+                existing={friends.friends[incomingShare.name]}
+                ownNickname={readString(LS.nickname, '').trim()}
+                currentSource={source}
+                availableSources={availableSources}
+                onSwitchSource={setSource}
+                onImport={onImportFriend}
+                onImportAsSelf={onImportAsSelf}
+                onDismiss={onDismissImport}
+              />
+            )}
+            {incomingSnapshot && (
+              <SnapshotImportBanner
+                snapshot={incomingSnapshot}
+                ownNickname={readString(LS.nickname, '').trim()}
+                existing={
+                  incomingSnapshot.nickname
+                    ? friends.friends[incomingSnapshot.nickname]
+                    : undefined
+                }
+                onApplySelf={onApplySnapshotSelf}
+                onImportAsFriend={onImportSnapshotAsFriend}
+                onDismiss={onDismissSnapshot}
+              />
+            )}
+          </div>
+        </div>
+        <div class="site-chrome-context">
+          {view === 'camps' && (
+            <Toolbar
+              query={query}
+              onQueryChange={setQuery}
+              onClear={onClear}
+              favOnly={favOnly}
+              favCount={favMatchCount}
+              favCampN={campFavs.size}
+              favEventN={eventFavs.size}
+              onToggleFavFilter={() => setFavOnly((v) => !v)}
+              webOnly={webOnly}
+              webCount={webMatchCount}
+              onToggleWebFilter={() => setWebOnly((v) => !v)}
+              onUnfavoriteAll={onUnfavoriteAll}
+              focusKey={focusKey}
+            />
+          )}
+          {view === 'art' && (
+            <>
+              <div class="controls">
+                <input
+                  type="search"
+                  placeholder="Search art (name, artist, description, tags…)"
+                  value={artQuery}
+                  onInput={(e) => setArtQuery((e.target as HTMLInputElement).value)}
+                  autocomplete="off"
+                />
+              </div>
+              <div class="controls toolbar-row">
+                <div class="filters">
                   <button
                     type="button"
-                    class="fav-filter"
+                    class={'fav-filter' + (artFavOnly ? ' active' : '')}
+                    aria-pressed={artFavOnly ? 'true' : 'false'}
+                    title={`${artFavs.size} starred art piece${artFavs.size === 1 ? '' : 's'}`}
                     onClick={() => {
-                      setArtQuery('');
-                      setArtActiveTags(new Set());
-                      setArtFavOnly(false);
+                      if (!artFavOnly && artFavs.size === 0) return;
+                      setArtFavOnly((v) => !v);
                     }}
-                    title="Clear search + filters"
                   >
-                    Clear
+                    {artFavOnly ? '★' : '☆'} Favorites <span class="count">({artFavs.size})</span>
                   </button>
-                )}
+                  {(artQuery || artActiveTags.size || artFavOnly) && (
+                    <button
+                      type="button"
+                      class="fav-filter"
+                      onClick={() => {
+                        setArtQuery('');
+                        setArtActiveTags(new Set());
+                        setArtFavOnly(false);
+                      }}
+                      title="Clear search + filters"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* All three views stay mounted once `camps` is loaded so tab
+      {/* All views stay mounted once `camps` is loaded so tab
           switches are an instant CSS toggle, not a remount of 600
           camp cards / a fresh SVG / a fresh calendar. The one-time
           mount hit happens at first paint; everything afterward is
@@ -1152,6 +1351,20 @@ export function App() {
               onClearHidden={hiddenDays.clear}
               onGotoCamp={onGotoCamp}
               source={source}
+            />
+          </div>
+          <div hidden={view !== 'food'}>
+            <FoodView
+              camps={camps}
+              isEventFav={eventFavs.has}
+              onToggleEventFav={eventFavs.toggle}
+              friendFavEventIds={friends.friendsFavingEvent}
+              onGotoCamp={onGotoCamp}
+              source={source}
+              burnStart={meta.burnStart}
+              burnEnd={meta.burnEnd}
+              nowSnapshot={foodNowSnapshot}
+              onRefreshNow={refreshFoodNow}
             />
           </div>
           <div hidden={view !== 'art'}>

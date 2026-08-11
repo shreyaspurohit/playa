@@ -196,6 +196,26 @@ def canonical_week_map(burn_start: str, burn_end: str) -> dict[str, str]:
     return out
 
 
+def earliest_day_in_map(days, week_map: dict[str, str]) -> Optional[str]:
+    """Return the day whose mapped M/D date occurs first.
+
+    Weekday order is not sufficient because the effective event window may
+    begin on any day. For example, in a Sunday-starting map, Sun 8/30 occurs
+    before Mon 8/31 even though ``WEEK_ORDER`` is Monday-first.
+    """
+    candidates: list[tuple[tuple[int, int], str]] = []
+    for day in days or []:
+        raw = week_map.get(day)
+        if not raw:
+            continue
+        try:
+            month, date_num = (int(part) for part in raw.split("/", 1))
+        except (TypeError, ValueError):
+            continue
+        candidates.append(((month, date_num), day))
+    return min(candidates)[1] if candidates else None
+
+
 def effective_burn_start(
     parsed_events,
     configured_start: str,
@@ -288,9 +308,9 @@ def format_display(parsed: Optional[dict], week_map: dict[str, str]) -> Optional
 
     if parsed["kind"] == "recurring":
         day_str = _compact_days(parsed["days"])
-        # Earliest day, by week order — serves as "starts" annotation.
-        earliest = min(parsed["days"], key=lambda d: _DAY_INDEX[d.lower()])
-        earliest_date = week_map.get(earliest)
+        # Earliest actual date in this window — serves as "starts" annotation.
+        earliest = earliest_day_in_map(parsed["days"], week_map)
+        earliest_date = week_map.get(earliest or "")
         if earliest_date:
             return f"{day_str} · {st} – {et} (starts {earliest_date})"
         return f"{day_str} · {st} – {et}"

@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from .models import Art, Camp
+from .models import Art, Camp, Event
 
 
 # Keep patterns specific enough to avoid obvious false positives, but
@@ -445,6 +445,73 @@ TAGS: dict[str, list[str]] = {
     "gender_play": [r"\bgender\s*bend(?:er|ing)\b", r"\bdrag\s*queens?\b", r"\bdrag\s*kings?\b"],
 }
 
+# Curated FOOD-ONLY, granular per-EVENT buckets (ADR docs/17). Drinks
+# (alcohol/bar, coffee/tea, juice/soda) are deliberately EXCLUDED — this
+# classifies food, not beverages. Matched case-insensitively against each
+# event's name+description; keep \b word boundaries to avoid false positives.
+FOOD_TYPES: dict[str, list[str]] = {
+    # Dishes / mains
+    "pizza": [r"\bpizzas?\b"],
+    "hot-dog": [r"\bhot\s*dogs?\b", r"\bcorn\s*dogs?\b"],
+    "burger": [r"\bburgers?\b", r"\bcheeseburgers?\b", r"\bhamburgers?\b", r"\bsliders?\b"],
+    "grilled-cheese": [r"\bgrilled\s*cheese\b"],
+    "grill": [r"\bgrill(?:ed|ing|e)?\b"],
+    "bbq": [r"\bbbq\b", r"\bbarbe?que\b", r"\bbarbecue\b", r"\bbrisket\b", r"\bribs\b", r"\bpulled\s*pork\b", r"\bsmoked?\s*meat\b", r"\bsausages?\b", r"\bbratwurst\b", r"\bkielbasa\b", r"\bhot\s*links?\b"],
+    "tacos": [r"\btacos?\b", r"\bburritos?\b", r"\bquesadillas?\b", r"\bnachos\b", r"\benchiladas?\b", r"\bmexican\b"],
+    "noodles": [r"\bramen\b", r"\bnoodles?\b", r"\bpho\b", r"\bpad\s*thai\b", r"\budon\b", r"\blo\s*mein\b"],
+    "sushi": [r"\bsushi\b", r"\bsashimi\b", r"\bpoke\s*bowls?\b"],
+    "curry": [r"\bcurry\b", r"\btikka\b", r"\bmasala\b", r"\bindian\s*food\b"],
+    "dumplings": [r"\bdumplings?\b", r"\bdim\s*sum\b", r"\bpotstickers?\b", r"\bgyoza\b", r"\bpierogi\b", r"\bbao\b"],
+    # Global street food not covered by the buckets above.
+    "international": [r"\bkimchi\b", r"\bpoutine\b", r"\bshawarma\b", r"\barepas?\b", r"\bcongee\b", r"\bbanh\s*mi\b", r"\bbiryani\b", r"\bsamosas?\b", r"\bempanadas?\b", r"\bfalafel\b", r"\bgyros?\b", r"\bkebabs?\b", r"\bpho\b"],
+    "sandwich": [r"\bsandwich(?:es)?\b", r"\bwraps?\b", r"\bpaninis?\b", r"\bhoagies?\b"],
+    "soup": [r"\bsoups?\b", r"\bstews?\b", r"\bchili\b", r"\bgumbo\b"],
+    "pickles": [r"\bpickles?\b"],
+    "fruit": [r"\bfruits?\b", r"\bwatermelons?\b", r"\bmangos?\b", r"\bberries\b"],
+    # Breakfast items
+    "breakfast": [r"\bbreakfast\b", r"\bbrunch\b", r"\b(?:french|avocado|vegemite)\s*toast\b", r"\bcrepes?\b", r"\bhash\s*browns?\b", r"\bcereal\b", r"\boatmeal\b"],
+    "pancakes": [r"\bpancakes?\b", r"\bflapjacks?\b"],
+    "waffles": [r"\bwaffles?\b"],
+    "bacon": [r"\bbacon\b"],
+    "eggs": [r"\beggs?\b", r"\bomelet(?:te)?s?\b", r"\bfrittatas?\b"],
+    # Sweets
+    "ice-cream": [r"\bice\s*cream\b", r"\bgelato\b", r"\bsorbet\b", r"\bpopsicles?\b", r"\bsundaes?\b"],
+    "chocolate": [r"\bchocolates?\b", r"\bfondue\b"],
+    "cookies": [r"\bcookies?\b"],
+    "cake": [r"\bcakes?\b", r"\bcupcakes?\b", r"\bbrownies?\b", r"\bcheesecakes?\b"],
+    "candy": [r"\bcandy\b", r"\bcandies\b", r"\bgummies\b", r"\blollipops?\b"],
+    "donuts": [r"\bdo(?:ugh)?nuts?\b"],
+    "pastries": [r"\bpastr(?:y|ies)\b", r"\bcroissants?\b", r"\bdanish\b", r"\bscones?\b", r"\bmuffins?\b", r"\bpies?\b", r"\bchurros?\b"],
+    "smores": [r"\bs'?mores\b", r"\bmarshmallows?\b"],
+    # Snacks
+    "snacks": [r"\bpopcorn\b", r"\bpretzels?\b", r"\bchips\b", r"\bcrackers\b", r"\bfries\b", r"\btater\s*tots?\b", r"\btrail\s*mix\b"],
+    # Dietary (cross-cutting flags)
+    "vegan": [r"\bvegan(?:s|ism)?\b", r"\bplant[-\s]?based\b"],
+    "vegetarian": [r"\bvegetarian\b", r"\bveggie\b"],
+    "gluten-free": [r"\bgluten[-\s]?free\b"],
+    # General food catch-all so generic food offerings still register (NO drinks)
+    "meal": [r"\bfoods?\b", r"\bmeals?\b", r"\bfeed(?:ing)?\b", r"\bdinner\b", r"\blunch\b", r"\bkitchen\b", r"\bbuffet\b", r"\bpotluck\b", r"\bdin(?:e|ing|er)\b", r"\bnourish(?:ment)?\b"],
+}
+
+# Narrow phrases whose food words are not an offering. Mask the complete
+# phrase before FOOD_TYPES matching rather than suppressing a whole bucket
+# afterward: "cake is a lie, but we serve cake" still matches the second cake,
+# and "communal kitchen serving tacos" still matches tacos. Keep these generic
+# and source-independent; record-specific ambiguity belongs in the year-scoped
+# ID lists documented in docs/19-food-classification-audit.md.
+FOOD_FALSE_POSITIVE_PHRASES: list[str] = [
+    r"\bcake\s+is\s+(?:a\s+)?lie\b",
+    r"\bpiece\s+of\s+cake\b",
+    r"\beye\s+candy\b",
+    r"\bfood\s+for\s+thought\b",
+    r"\bfeed(?:ing)?\s+(?:(?:the|your|our)\s+)?(?:mind|soul|spirit|imagination|curiosity)\b",
+    r"\bnourish(?:ing)?\s+(?:(?:the|your|our)\s+)?(?:mind|soul|spirit|imagination|curiosity)\b",
+    r"\bnourishment\s+(?:for|of)\s+(?:(?:the|your|our)\s+)?(?:mind|soul|spirit|imagination|curiosity)\b",
+    r"\bfood\s+(?:storage|prep(?:aration)?|supplies)\b",
+    r"\b(?:shared|communal|camp)\s+kitchen\b",
+    r"\bmeal[-\s]+(?:plans?|planning|planner)\b",
+]
+
 
 class Tagger:
     """Compiled-taxonomy matcher. Construct once, reuse for many camps."""
@@ -454,6 +521,14 @@ class Tagger:
             name: [re.compile(p, re.IGNORECASE) for p in pats]
             for name, pats in taxonomy.items()
         }
+        self.food_compiled: dict[str, list[re.Pattern[str]]] = {
+            name: [re.compile(p, re.IGNORECASE) for p in pats]
+            for name, pats in FOOD_TYPES.items()
+        }
+        self.food_false_positive_compiled: list[re.Pattern[str]] = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in FOOD_FALSE_POSITIVE_PHRASES
+        ]
 
     def tag(self, text: str) -> list[str]:
         """Return every tag whose any-pattern hits `text`."""
@@ -479,6 +554,34 @@ class Tagger:
         """In-place: populate `camp.tags` for every camp."""
         for camp in camps:
             camp.tags = self.tag_camp(camp)
+
+    @staticmethod
+    def event_food_haystack(event: Event) -> str:
+        """Text an event's food type is classified against: name + description."""
+        return " ".join(p for p in (event.name, event.description) if p)
+
+    def food_types(self, text: str) -> list[str]:
+        """Return every FOOD_TYPES bucket whose any-pattern hits `text`."""
+        for pattern in self.food_false_positive_compiled:
+            text = pattern.sub(" ", text)
+        found: list[str] = []
+        for name, patterns in self.food_compiled.items():
+            if any(p.search(text) for p in patterns):
+                found.append(name)
+        return found
+
+    def tag_event_food(self, event: Event) -> list[str]:
+        """Food types for one event, from its name + description."""
+        return self.food_types(self.event_food_haystack(event))
+
+    def food_types_for_camp(self, camp: Camp) -> list[str]:
+        """Food types a camp advertises in its OWN name + description — used for
+        the Food tab's camp-level "anytime" rows. Deliberately NOT the event
+        haystack (that's noisy: a camp gets the coarse `food` tag if any event
+        merely mentions e.g. "snacks"). This precise per-type match keeps
+        non-food camps (squirrel carnivals, bars) out of the food list."""
+        text = " ".join(p for p in (camp.name, camp.description) if p)
+        return self.food_types(text)
 
     @staticmethod
     def art_haystack(art: Art) -> str:

@@ -1,6 +1,6 @@
 .PHONY: help bootstrap install-backend client-install test test-py test-js \
-        bundle bundle-watch fetch fetch-small build rebuild tag meta merge \
-        preview clean dev snapshot-pages fetch-api gis-fetch gis-prepare map-audit
+        bundle bundle-watch fetch fetch-small build rebuild tag food-audit food-review meta merge \
+        preview review-mobile clean dev snapshot-pages fetch-api gis-fetch gis-prepare map-audit
 
 CLIENT_DIR  := client
 BACKEND_DIR := backend
@@ -45,6 +45,10 @@ help:
 	@echo "  preview         — serve site/ at http://localhost:\$$PREVIEW_PORT"
 	@echo "                    env: PREVIEW_PORT (default 8080)"
 	@echo ""
+	@echo "  review-mobile   — capture 390x844 expanded/collapsed/revealed"
+	@echo "                    screenshots; restores encrypted build afterward"
+	@echo "                    env: CHROME_HEADLESS_SHELL (auto-detected locally)"
+	@echo ""
 	@echo "============================================================"
 	@echo "  PIECEMEAL TARGETS — individual pipeline steps (no env vars)"
 	@echo "============================================================"
@@ -54,6 +58,8 @@ help:
 	@echo "  meta            — write data/meta.json"
 	@echo "  merge           — write data/camps.csv"
 	@echo "  tag             — retag + write data/camps_tagged.csv"
+	@echo "  food-audit      — aggregate food-classification coverage across sources"
+	@echo "  food-review     — local Ollama review of Hours-not-listed candidates"
 	@echo "  gis-fetch       — strictly fetch/validate official annual map layers"
 	@echo "  map-audit       — derive reviewed base-grid candidates from a local"
 	@echo "                    official street_lines.geojson"
@@ -271,6 +277,15 @@ build: install-backend bundle gis-prepare
 tag: install-backend
 	python3 -m playa tag
 
+food-audit: install-backend
+	python3 -m playa food-audit
+
+# Operator-only semantic audit. FOOD_REVIEW_ARGS can override models, sources,
+# batch size, or an outside-repo checkpoint/output directory. The script
+# refuses non-loopback Ollama URLs and never edits classification files.
+food-review: install-backend
+	python3 scripts/food_hours_ollama_audit.py $(FOOD_REVIEW_ARGS)
+
 meta: install-backend
 	python3 -m playa meta
 
@@ -287,6 +302,9 @@ preview:
 	@echo "==> Serving site/ at http://localhost:$(PREVIEW_PORT)"
 	@echo "    Ctrl-C to stop. Build first with 'make rebuild' if needed."
 	@cd site && python3 -m http.server $(PREVIEW_PORT)
+
+review-mobile: install-backend client-install
+	bash scripts/mobile_visual_review.sh
 
 clean:
 	rm -rf data/pages/*.json data/logs/*.log

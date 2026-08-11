@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { h, render } from 'preact';
 import { Footer } from '../src/components/Footer';
-import { InfoModal } from '../src/components/InfoModal';
+import { GuideTab, InfoModal } from '../src/components/InfoModal';
 import type { Source } from '../src/types';
 import { installDom, teardownDom } from './_dom';
 
@@ -15,6 +15,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  try { render(null, mount); } catch { /* ignore */ }
   teardownDom();
 });
 
@@ -69,12 +70,30 @@ describe('source-specific directory disclaimer', () => {
     assert.doesNotMatch(mount.textContent ?? '', /Always verify on/);
     assert.doesNotMatch(mount.textContent ?? '', /directory\.burningman\.org/);
     assert.match(mount.textContent ?? '', /not affiliated, endorsed, or verified/);
-    assert.match(mount.textContent ?? '', /tags are keyword-matched by this app/);
-    assert.match(mount.textContent ?? '', /Event times are normalized/);
+    assert.match(mount.textContent ?? '', /Tags are generated from listing text/);
+    assert.match(mount.textContent ?? '', /event times are formatted/);
     assert.match(mount.textContent ?? '', /no commercial purpose/);
     assert.match(mount.textContent ?? '', /camp locations starting August 23 at 12:00 AM PDT/);
     assert.match(mount.textContent ?? '', /art locations starting August 30 at 12:00 AM PDT/);
     assert.match(mount.textContent ?? '', /Events do not carry a separate location coordinate/);
+    assert.match(mount.textContent ?? '', /Use my GPS/);
+    assert.match(mount.textContent ?? '', /Near me/);
+    assert.match(mount.textContent ?? '', /stop that location watch/);
+    assert.doesNotMatch(mount.textContent ?? '', /\?(?:gps|now)=/);
+  });
+
+  test('How to use covers current tabs and normal GPS controls without developer URLs', () => {
+    render(h(GuideTab, {}), mount);
+    const copy = mount.textContent ?? '';
+    assert.match(copy, /Find camps and art/);
+    assert.match(copy, /Find food/);
+    assert.match(copy, /Hours not listed/);
+    assert.match(copy, /Tap the active button again/);
+    assert.match(copy, /Build your schedule/);
+    assert.match(copy, /The map \+ GPS/);
+    assert.match(copy, /scrolling down hides the global header/);
+    assert.match(copy, /top-right menu/);
+    assert.doesNotMatch(copy, /\?(?:gps|now)=/);
   });
 
   test('Clear all local data removes persisted map-layer preferences', () => {

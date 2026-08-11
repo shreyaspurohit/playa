@@ -1,6 +1,7 @@
 ---
 title: Architecture Docs Index
 date: 2026-04-27
+updated: 2026-08-11
 status: current
 ---
 
@@ -45,6 +46,10 @@ sections wherever they apply:
 | [13](./13-tos-compliance.md) | ToS compliance | directory.burningman.org + Innovate API stance |
 | [14](./14-refresh-cycle.md) | Refresh & force-refresh | What each path does, the SW interactions, the bug we fixed |
 | [15](./15-data-sources.md) | Multi-source data architecture | Directory + `api.burningman.org`, per-source state, normalization |
+| [16](./16-cloud-sync.md) | Cloud sync (draft) | Opt-in, provider-agnostic sync of user state; Dropbox default, LWW soft-delete |
+| [17](./17-food-tab.md) | Food tab | Food-only classification, live availability, search, filters, stars, and Near Me |
+| [18](./18-mobile-scroll-chrome.md) | Mobile scroll-aware chrome | Auto-hide global chrome while retaining each tab's task-critical controls |
+| [19](./19-food-classification-audit.md) | Local Food classification audit | Private two-model review of Hours-not-listed false positives, with ID-only proposals |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
 | (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
 | (ref) | [HTML scraping patterns](./dev/html-scraping-patterns.md) | Directory markup shapes used by the parsers |

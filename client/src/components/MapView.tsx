@@ -185,32 +185,6 @@ export function MapView({
     return () => { cancelled = true; };
   }, [requestedYear, exactBrc]);
 
-  // The app's global chrome is itself sticky and changes height by viewport,
-  // active tab, and transient banners. Publish its live height as a CSS custom
-  // property so the map control panel can stick immediately below it instead
-  // of disappearing underneath it or relying on a brittle hard-coded offset.
-  useEffect(() => {
-    const siteChrome = document.querySelector<HTMLElement>('.site-chrome');
-    if (!siteChrome) return;
-    const updateOffset = () => {
-      document.documentElement.style.setProperty(
-        '--site-chrome-height',
-        `${siteChrome.getBoundingClientRect().height}px`,
-      );
-    };
-    updateOffset();
-    const observer = typeof window.ResizeObserver === 'function'
-      ? new window.ResizeObserver(updateOffset)
-      : null;
-    observer?.observe(siteChrome);
-    window.addEventListener('resize', updateOffset);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', updateOffset);
-      document.documentElement.style.removeProperty('--site-chrome-height');
-    };
-  }, []);
-
   // Optional official layers are global map preferences, not source data.
   // A versioned LS key lets a future layer reorganization reset defaults.
   const [enabledMapLayers, setEnabledMapLayers] = useState<Set<MapLayer>>(() => {
@@ -1000,6 +974,9 @@ export function MapView({
           </div>
           <div class="row-eta">
             ~{e.walk} min walk &middot; {e.bike} min bike
+          </div>
+          <div class="row-footnote">
+            The dashed map arrow points from your GPS position to this location.
           </div>
         </>
       );
@@ -2749,22 +2726,65 @@ function Svg({
         );
       })()}
 
-      {/* Bearing line from user to single selection. Multi-select
+      {/* Bearing guide from user to single selection. Multi-select
           drops it — there's no clear "where am I going?" with N≥2.
-          Color matches the target's dot so the line reads as an
-          extension of the dot, not a separate visual layer. */}
+          Color matches the target's dot. The line stops outside both
+          markers and ends in an arrowhead so its direction and endpoint
+          remain legible even in a dense POI cluster. */}
       {userSvg && (target || artTarget || activeSpot) && (() => {
         const t =
-          target ? { x: target.x, y: target.y, color: target.color }
-          : artTarget ? { x: artTarget.x, y: artTarget.y, color: artTarget.color }
-          : { x: activeSpot!.x, y: activeSpot!.y, color: activeSpot!.color };
+          target ? {
+            x: target.x, y: target.y, color: target.color, label: target.camp.name,
+          }
+          : artTarget ? {
+            x: artTarget.x, y: artTarget.y, color: artTarget.color, label: artTarget.art.name,
+          }
+          : {
+            x: activeSpot!.x, y: activeSpot!.y,
+            color: activeSpot!.color, label: activeSpot!.label,
+          };
+        const dx = t.x - userSvg.x;
+        const dy = t.y - userSvg.y;
+        const length = Math.hypot(dx, dy);
+        const startGap = 115;
+        const targetGap = 150;
+        const arrowLength = 95;
+        const arrowHalfWidth = 52;
+        // At very short distances the fixed marker clearances would make the
+        // shaft fold back past the GPS point. The detail row already reports
+        // the near-zero distance, so omit the redundant guide in that case.
+        if (length <= startGap + targetGap + arrowLength) return null;
+        const ux = dx / length;
+        const uy = dy / length;
+        const px = -uy;
+        const py = ux;
+        const startX = userSvg.x + ux * startGap;
+        const startY = userSvg.y + uy * startGap;
+        const tipX = t.x - ux * targetGap;
+        const tipY = t.y - uy * targetGap;
+        const baseX = tipX - ux * arrowLength;
+        const baseY = tipY - uy * arrowLength;
         return (
-          <line
-            x1={userSvg.x} y1={userSvg.y}
-            x2={t.x} y2={t.y}
-            class="brc-bearing"
+          <g
+            class="brc-bearing-guide"
             style={{ '--highlight-color': t.color } as JSX.CSSProperties}
-          />
+            pointer-events="none"
+          >
+            <line
+              x1={startX} y1={startY}
+              x2={baseX} y2={baseY}
+              class="brc-bearing"
+            />
+            <polygon
+              points={[
+                `${tipX},${tipY}`,
+                `${baseX + px * arrowHalfWidth},${baseY + py * arrowHalfWidth}`,
+                `${baseX - px * arrowHalfWidth},${baseY - py * arrowHalfWidth}`,
+              ].join(' ')}
+              class="brc-bearing-arrow"
+            />
+            <title>Your GPS position to {t.label}</title>
+          </g>
         );
       })()}
 

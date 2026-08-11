@@ -19,6 +19,7 @@ export interface Event {
   time: string;                   // raw directory text
   display_time: string;           // pre-parsed clean form; '' if unparseable
   parsed_time: ParsedTime | null; // structured form for the calendar
+  food_tags?: string[];           // app-generated food-type buckets (ADR 17); absent for non-food events
 }
 
 export interface Camp {
@@ -29,6 +30,7 @@ export interface Camp {
   website: string;
   url: string;                    // canonical /camps/<id>/
   tags: string[];
+  food_tags?: string[];           // precise food-type buckets from name+desc (ADR 17)
   events: Event[];
 }
 
@@ -119,6 +121,12 @@ export const LS = {
   // Enabled optional official-map layers. JSON array of layer ids; base
   // landmarks and safety points are always visible and are not stored here.
   mapLayers: 'bm-map-layers/v1',
+  // Dev/testing only: a simulated "now" (ISO string). When set, utils/clock
+  // returns this frozen instant for all time-based logic. See utils/clock.ts.
+  mockNow: 'bm-mock-now',
+  // Dev/testing only: fixed `lat,lng` consumed by useGeolocation instead of
+  // browser GPS. Set via ?gps=lat,lng; see utils/mockGps.ts.
+  mockGps: 'bm-mock-gps',
   // Currently active data source. Matches one of the sources listed in
   // <meta name="bm-sources">. Keys ending in this constant's prefix
   // ('bm-favs', 'bm-fav-events', 'bm-shared', 'bm-my-camp',

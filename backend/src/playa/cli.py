@@ -134,6 +134,17 @@ def _parser() -> argparse.ArgumentParser:
         "--json", action="store_true",
         help="print the full JSON report instead of the TypeScript candidate",
     )
+
+    food_audit = sub.add_parser(
+        "food-audit",
+        help="aggregate report of food-classified events (counts only, no records)",
+    )
+    food_audit.add_argument(
+        "--sources", default=None,
+        help=("comma-separated sources to audit; defaults to BM_API_YEARS "
+              "plus directory"),
+    )
+
     return p
 
 
@@ -292,6 +303,55 @@ def cmd_tag(config: Config) -> None:
         print("art top 30 tags:")
         for name, n in a_counter.most_common(30):
             print(f"  {name:20s} {n}")
+
+
+def cmd_food_audit(config: Config, sources: list[str] | None = None) -> None:
+    """Aggregate-only report of event-level food classification.
+
+    Prints counts only — never fetched camp/event text — per the ToS
+    stance. Re-run any time to reclassify against updated data.
+    """
+    from collections import Counter
+    resolved = sources or _resolve_sources(None, config)
+    builder = SiteBuilder(config, sources=resolved)
+    type_counts: Counter[str] = Counter()
+    total_events = 0
+    food_events = 0
+    food_camps = 0
+    total_camps = 0
+    hours_not_listed = 0
+    hours_type_counts: Counter[str] = Counter()
+    for spec in resolved:
+        camps = builder.load_camps_for_source(spec)
+        source_hours = 0
+        for camp in camps:
+            total_camps += 1
+            camp_has_food = False
+            for event in camp.events:
+                total_events += 1
+                if event.food_tags:
+                    food_events += 1
+                    camp_has_food = True
+                    for t in event.food_tags:
+                        type_counts[t] += 1
+            if camp_has_food:
+                food_camps += 1
+            elif camp.food_tags:
+                hours_not_listed += 1
+                source_hours += 1
+                hours_type_counts.update(camp.food_tags)
+        print(f"  [{spec}] hours not listed: {source_hours}")
+    pct = (100 * food_events // total_events) if total_events else 0
+    print(f"food-audit sources: {', '.join(resolved)}")
+    print(f"  events: {food_events}/{total_events} food-classified ({pct}%)")
+    print(f"  camps with >=1 food event: {food_camps}/{total_camps}")
+    print(f"  camps with food in camp text but no food event: {hours_not_listed}")
+    print("  food-type distribution (event hits):")
+    for name, n in type_counts.most_common():
+        print(f"    {name:16s} {n}")
+    print("  hours-not-listed type distribution (camp hits):")
+    for name, n in hours_type_counts.most_common():
+        print(f"    {name:16s} {n}")
 
 
 def cmd_build(config: Config, sources: list[str] | None = None) -> None:
@@ -486,4 +546,5 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output,
         as_json=args.json,
     )
+    elif args.cmd == "food-audit":      cmd_food_audit(config, _resolve_sources(args.sources, config))
     return 0

@@ -1,7 +1,7 @@
 ---
 title: Map System
 date: 2026-04-27
-updated: 2026-08-07
+updated: 2026-08-10
 status: current
 ---
 
@@ -17,8 +17,13 @@ no tile server. That's a hard requirement: on-playa the only working
 "map" is the one that shipped in the bundle.
 
 GPS is supported when granted, with a "you are here" bullseye, a current
-clock-and-letter address readout, and a bearing line to whatever the
-user has selected.
+clock-and-letter address readout, and a dashed arrow from the GPS marker to
+whatever the user has selected.
+
+For deterministic local and headless review, `?gps=<latitude>,<longitude>`
+feeds a fixed coordinate through the same `useGeolocation` hook used by Map,
+Schedule, and Food. The override persists across route changes/reloads and is
+visibly labeled until “Use real location” clears it.
 
 ## Decisions
 
@@ -56,11 +61,12 @@ user has selected.
   for fat-finger touch.
 - **Sticky map controls below dynamic site chrome.** The map title, zoom/unit/GPS
   actions, legend, and horizontally scrollable layer toggles stay visible while
-  the user scrolls the landmark lists and SVG. `MapView` observes the existing
+  the user scrolls the landmark lists and SVG. `App` observes the existing
   `.site-chrome` height and publishes `--site-chrome-height`; the control panel
-  uses that live value as its sticky offset. Do not replace it with a fixed
-  pixel value: the header height varies by phone width, active source, and
-  transient import/update/release-note banners.
+  uses that live value as its sticky offset, including while the global mobile
+  chrome collapses ([ADR 18](./18-mobile-scroll-chrome.md)). Do not replace it
+  with a fixed pixel value: the header height varies by phone width, active
+  source, transient banners, and scroll state.
 
 ## Accepted extension: official GIS landmarks and services
 
@@ -658,7 +664,7 @@ flowchart TB
     FriendCamps["Friend tents (per-name hue)"]
     MeetSpots["Four-point rendezvous markers"]
     User["GPS crosshair/bullseye"]
-    Bearing["Dashed bearing line<br>user → selected"]
+    Bearing["Dashed bearing arrow<br>user → selected"]
   end
   Bg --> Streets --> Radials --> Man --> Labels
   Labels --> POIs --> Pins --> MyCamp --> FriendCamps
@@ -710,7 +716,7 @@ section.
 
 - **GPS off-grid**: when the user's fix is outside the city's clock
   arc, `latLngToAddress` returns null and the address readout shows
-  `off-grid · ±Nm`. The bearing line still draws to the selected pin
+  `off-grid · ±Nm`. The bearing arrow still draws to the selected pin
   even if the user is off-map, but enters from the viewport edge —
   the legend covers what to make of that.
 - **Pin density at zoom=1** can be visually noisy if a user has
