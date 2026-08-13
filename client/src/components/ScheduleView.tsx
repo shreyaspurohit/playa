@@ -15,7 +15,7 @@ import { EyeIcon } from './EyeIcon';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { addressToLatLng, haversineMeters } from '../map/address';
 import { brcForSource } from '../hooks/useSource';
-import { now } from '../utils/clock';
+import { now, playaTimeParts } from '../utils/clock';
 import type { Source } from '../types';
 
 /** "Near me" proximity cutoff: ~1 km ≈ 15 min walk at 4 km/h. Events
@@ -67,6 +67,12 @@ function buildCalendarCells(startISO: string, endISO: string): DayCell[] {
   return cells;
 }
 
+function addIsoDays(iso: string, days: number): string {
+  const value = new Date(iso + 'T00:00:00Z');
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
 export interface ScheduleEntry {
   event: Event;
   camp: Camp;
@@ -100,6 +106,8 @@ interface Props {
   /** Active data source — drives the per-year BRC geometry used for
    *  "near me" distance calculations on event camps. */
   source: Source;
+  /** Shared minute-level clock from App. Optional for isolated rendering. */
+  nowSnapshot?: Date;
 }
 
 /** 12h pretty-print from "HH:MM" 24h. */
@@ -118,6 +126,25 @@ function byStart(a: ScheduleEntry, b: ScheduleEntry) {
     return a.startTime.localeCompare(b.startTime);
   }
   return a.event.name.localeCompare(b.event.name);
+}
+
+/** ISO-minute key for the end of this occurrence. The cell supplies the
+ * occurrence date for recurring events; overnight spans advance from there. */
+function occurrenceEndKey(entry: ScheduleEntry, cellIso: string): string | null {
+  const p = entry.event.parsed_time;
+  if (!p || !entry.startTime) return null;
+  const endTime = p.end_time || entry.startTime;
+  let dayOffset = 0;
+  if (p.start_day && p.end_day && p.start_day !== p.end_day) {
+    const startIndex = WEEKDAYS.indexOf(p.start_day as DayKey);
+    const endIndex = WEEKDAYS.indexOf(p.end_day as DayKey);
+    if (startIndex >= 0 && endIndex >= 0) {
+      dayOffset = (endIndex - startIndex + WEEKDAYS.length) % WEEKDAYS.length;
+    }
+  } else if (endTime < entry.startTime) {
+    dayOffset = 1;
+  }
+  return `${addIsoDays(cellIso, dayOffset)}T${endTime}`;
 }
 
 /** Bucket every starred event into one or more DayCells. Single-
@@ -327,7 +354,7 @@ export function ScheduleView({
   camps, favEventIds, friendFavEventIds, burnStart, burnEnd,
   isDayHidden, onToggleDayHidden, hiddenCount, onClearHidden,
   onGotoCamp, youLabel = 'you',
-  source,
+  source, nowSnapshot,
 }: Props) {
   const brc = useMemo(() => brcForSource(source), [source]);
   const cells = useMemo(
@@ -339,9 +366,9 @@ export function ScheduleView({
     () => new Set(cells.map((c) => c.iso)),
   );
 
-  // "What should I do in the next 2 hours" + "near me" proximity
-  // filters. Both default off so the full schedule shows on open.
+  // Schedule filters default off so the full schedule shows on open.
   const [nowOnly, setNowOnly] = useState(false);
+  const [hidePast, setHidePast] = useState(false);
   const [nearMeOnly, setNearMeOnly] = useState(false);
   // Geometry can disappear while this component remains mounted when the
   // user switches sources. Disable the filter immediately for rendering, then
@@ -349,6 +376,11 @@ export function ScheduleView({
   // it for a different year.
   const nearMeActive = nearMeOnly && brc !== null;
   const { state: geo, request: requestGps, stop: stopGps } = useGeolocation();
+  const currentInstant = nowSnapshot ?? now();
+  const currentPlayaTime = useMemo(
+    () => playaTimeParts(currentInstant),
+    [currentInstant],
+  );
   useEffect(() => {
     if (!brc && nearMeOnly) {
       setNearMeOnly(false);
@@ -376,22 +408,29 @@ export function ScheduleView({
   // Today's cell (iso match by M/D so local/UTC mismatches don't
   // swallow a burn-day). Null when today isn't in the burn window.
   const todayCell = useMemo(() => {
-    const current = now();
-    const md = `${current.getMonth() + 1}/${current.getDate()}`;
+    const md = `${currentPlayaTime.month}/${currentPlayaTime.day}`;
     return cells.find((c) => c.dateLabel === md) ?? null;
-  }, [cells]);
+  }, [cells, currentPlayaTime]);
 
   // Current HH:MM + 2-hour horizon, both as 24-h strings for direct
   // lexicographic comparison with ScheduleEntry.startTime.
   const nowBounds = useMemo(() => {
-    const current = now();
-    const cur = pad2(current.getHours()) + ':' + pad2(current.getMinutes());
-    const endMin = current.getHours() * 60 + current.getMinutes() + NOW_WINDOW_HOURS * 60;
+    const cur = pad2(currentPlayaTime.hours) + ':' + pad2(currentPlayaTime.minutes);
+    const endMin = currentPlayaTime.hours * 60 + currentPlayaTime.minutes + NOW_WINDOW_HOURS * 60;
     const endH = Math.floor((endMin % (24 * 60)) / 60);
     const endM = endMin % 60;
     const end = pad2(endH) + ':' + pad2(endM);
     return { cur, end, wrapsMidnight: endMin >= 24 * 60 };
-  }, [nowOnly]); // recomputed when toggle flips so filter feels fresh
+  }, [currentPlayaTime]);
+
+  // Hide-past compares each occurrence end with the Playa wall clock, rather
+  // than the browser's timezone. App refreshes the shared instant each minute.
+  const pastCutoff = useMemo(() => {
+    return {
+      date: `${currentPlayaTime.year}-${pad2(currentPlayaTime.month)}-${pad2(currentPlayaTime.day)}`,
+      time: pad2(currentPlayaTime.hours) + ':' + pad2(currentPlayaTime.minutes),
+    };
+  }, [currentPlayaTime]);
 
   // Cache per-event camp distance (meters) when nearMeOnly is on.
   // Null = no fix / filter off. Events with an unparseable camp
@@ -409,6 +448,10 @@ export function ScheduleView({
   }, [nearMeActive, geo, camps, brc]);
 
   function passesFilters(entry: ScheduleEntry, cellIso: string): boolean {
+    if (hidePast) {
+      const endKey = occurrenceEndKey(entry, cellIso);
+      if (endKey && endKey <= `${pastCutoff.date}T${pastCutoff.time}`) return false;
+    }
     if (nowOnly) {
       if (!todayCell || cellIso !== todayCell.iso) return false;
       if (!entry.startTime) return false;
@@ -429,27 +472,37 @@ export function ScheduleView({
     return true;
   }
 
-  const { byCell: rawByCell, hiddenByCell, unscheduled } = useMemo(
+  const { byCell: rawByCell, hiddenByCell: rawHiddenByCell, unscheduled } = useMemo(
     () => collectSchedule(
       camps, favEventIds, friendFavEventIds, youLabel, cells, isDayHidden,
     ),
     [camps, favEventIds, friendFavEventIds, youLabel, cells, isDayHidden],
   );
 
-  // Apply Now + Near-me filters. We filter by-cell so the empty-
-  // days render case (grid with empty columns) still works.
-  const byCell = useMemo(() => {
-    if (!nowOnly && !nearMeActive) return rawByCell;
+  // Apply Hide-past + Now + Near-me filters. We filter by-cell so the empty-
+  // days render case (grid with empty columns) still works. Eye-hidden
+  // occurrences must obey the same filters — otherwise a past event hidden on a
+  // day stays expandable/counted once Hide-past is on.
+  const applyFilters = (src: Map<string, ScheduleEntry[]>): Map<string, ScheduleEntry[]> => {
+    if (!hidePast && !nowOnly && !nearMeActive) return src;
     const out = new Map<string, ScheduleEntry[]>();
-    for (const [iso, entries] of rawByCell) {
+    for (const [iso, entries] of src) {
       const kept = entries.filter((e) => passesFilters(e, iso));
       if (kept.length > 0) out.set(iso, kept);
     }
     return out;
-    // passesFilters closes over nowOnly/nearMeActive/todayCell/etc; we
-    // depend on the raw map + all filter inputs.
+  };
+  const byCell = useMemo(
+    () => applyFilters(rawByCell),
+    // passesFilters/applyFilters close over all filter inputs listed here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawByCell, nowOnly, nearMeActive, todayCell, nowBounds, nearMeFit]);
+    [rawByCell, hidePast, nowOnly, nearMeActive, todayCell, nowBounds, nearMeFit, pastCutoff],
+  );
+  const hiddenByCell = useMemo(
+    () => applyFilters(rawHiddenByCell),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawHiddenByCell, hidePast, nowOnly, nearMeActive, todayCell, nowBounds, nearMeFit, pastCutoff],
+  );
 
   const totalScheduled = cells.reduce(
     (n, c) => n + (byCell.get(c.iso)?.length ?? 0), 0,
@@ -458,11 +511,20 @@ export function ScheduleView({
     (n, c) => n + (hiddenByCell.get(c.iso)?.length ?? 0), 0,
   );
   const nothing = totalScheduled === 0 && totalHiddenInWindow === 0 && unscheduled.length === 0;
-  const filtersOn = nowOnly || nearMeActive;
+  const filtersOn = hidePast || nowOnly || nearMeActive;
 
   return (
     <div class="schedule-wrap">
       <div class="schedule-filters">
+        <button
+          type="button"
+          class={'sched-filter-btn past' + (hidePast ? ' active' : '')}
+          aria-pressed={hidePast ? 'true' : 'false'}
+          title="Hide events whose scheduled end time has passed"
+          onClick={() => setHidePast((v) => !v)}
+        >
+          🕘 Hide past
+        </button>
         <button
           type="button"
           class={'sched-filter-btn' + (nowOnly ? ' active' : '')}
@@ -491,7 +553,7 @@ export function ScheduleView({
         {filtersOn && (
           <button
             type="button" class="subtle-btn sched-filter-clear"
-            onClick={() => { setNowOnly(false); setNearMeOnly(false); stopGps(); }}
+            onClick={() => { setHidePast(false); setNowOnly(false); setNearMeOnly(false); stopGps(); }}
           >
             Clear filters
           </button>
@@ -537,9 +599,11 @@ export function ScheduleView({
 
       {nothing ? (
         <div class="empty-state">
-          No starred events yet. Head to Camps, find something interesting,
-          expand its events list, and tap the ☆ next to an event you want to
-          attend. It'll show up here grouped by day.
+          {filtersOn
+            ? 'No starred events match the active filters. Use Clear filters to restore the full schedule.'
+            : <>No starred events yet. Head to Camps, find something interesting,
+              expand its events list, and tap the ☆ next to an event you want to
+              attend. It'll show up here grouped by day.</>}
         </div>
       ) : (
         <>

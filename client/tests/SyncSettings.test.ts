@@ -26,6 +26,7 @@ function controller(overrides: Partial<SyncController> = {}): SyncController {
     message: '',
     lastSyncedAt: null,
     connect: async () => {},
+    cancelConnect: () => {},
     syncNow: async () => {},
     disconnect: async () => {},
     ...overrides,
@@ -98,5 +99,20 @@ describe('Dropbox settings', () => {
     assert.equal(connects, 0);
     button?.click();
     assert.equal(connects, 1);
+  });
+
+  test('a pending popup can be cancelled immediately and retried', () => {
+    let cancels = 0;
+    render(h(SyncSettings, {
+      sync: controller({
+        status: 'connecting',
+        cancelConnect: () => { cancels++; },
+      }),
+    }), mount);
+    const button = mount.querySelector<HTMLButtonElement>('.sync-actions button');
+    assert.equal(button?.disabled, false);
+    assert.match(button?.textContent ?? '', /Cancel Dropbox sign-in/);
+    button?.click();
+    assert.equal(cancels, 1);
   });
 });

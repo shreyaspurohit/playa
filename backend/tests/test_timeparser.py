@@ -285,6 +285,11 @@ class FormatDisplayTests(unittest.TestCase):
         s = format_display(p, self.week_map)
         self.assertEqual(s, "Thu 8/29 9:00 PM – Fri 8/30 2:00 AM")
 
+    def test_second_week_overnight_uses_date_after_start(self):
+        p = parse_event_time("Begins Sat (9/5) at 11:00 PM, Ends Sun at 1:00 AM")
+        s = format_display(p, self.week_map)
+        self.assertEqual(s, "Sat 9/5 11:00 PM – Sun 9/6 1:00 AM")
+
     def test_recurring_with_starts_annotation(self):
         p = parse_event_time("From 11:00 AM to 3:00 PM on Mon, Tue, Wed, Thu, Fri")
         s = format_display(p, self.week_map)

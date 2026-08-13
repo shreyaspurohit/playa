@@ -46,6 +46,8 @@ from .timeparser import (
     effective_burn_start,
     format_display,
     parse_event_time,
+    resolve_end_date,
+    resolve_single_start_date,
 )
 
 
@@ -355,9 +357,8 @@ class SiteBuilder:
                     earliest = earliest_day_in_map(p["days"], week_map)
                     p["start_date"] = week_map.get(earliest or "") or p.get("start_date")
                 else:
-                    p["start_date"] = (
-                        week_map.get(p["start_day"] or "")
-                        or p.get("start_date")
+                    p["start_date"] = resolve_single_start_date(
+                        p, week_map, source_effective_start, self.config.burn_end,
                     )
             s = format_display(p, week_map)
             if s:
@@ -366,7 +367,7 @@ class SiteBuilder:
             if p:
                 ev.parsed_time = {
                     **p,
-                    "end_date": week_map.get(p["end_day"] or ""),
+                    "end_date": resolve_end_date(p, week_map),
                 }
         if parses:
             print(f"  event times parsed: {recognized}/{len(parses)} "
@@ -803,7 +804,11 @@ class SiteBuilder:
             "const IMG_CACHE = 'playa-img-v1';\n"
             "// Cap image-cache entries — eviction is best-effort\n"
             "// LRU via insertion order (Cache.keys() returns FIFO).\n"
-            "const IMG_CACHE_MAX = 400;\n"
+            "// Sized to hold the whole art set (a few hundred pieces) with\n"
+            "// headroom so idle warming fills a complete offline set instead\n"
+            "// of churning; the browser's own storage quota is the real\n"
+            "// backstop past this.\n"
+            "const IMG_CACHE_MAX = 2000;\n"
             "const SHELL = ['./', './index.html', './privacy.html', "
             "'./robots.txt', './manifest.webmanifest', './icon.svg'];\n"
             "self.addEventListener('install', (e) => {\n"
@@ -840,6 +845,15 @@ class SiteBuilder:
             "// if any fetch fails, the old cached entry stays in place,\n"
             "// so the next load still has a working copy of the site.\n"
             "self.addEventListener('message', (e) => {\n"
+            "  if (e.data && e.data.type === 'CACHE_ART_IMAGE') {\n"
+            "    const reply = e.ports && e.ports[0];\n"
+            "    e.waitUntil(cacheArtImage(e.data.url).then((ok) => {\n"
+            "      try { reply && reply.postMessage({ ok }); } catch (_) {}\n"
+            "    }).catch(() => {\n"
+            "      try { reply && reply.postMessage({ ok: false }); } catch (_) {}\n"
+            "    }));\n"
+            "    return;\n"
+            "  }\n"
             "  if (e.data === 'CLEAR_IMAGE_CACHE') {\n"
             "    // Used by the 'Clear all local data' flow so users get\n"
             "    // a true reset, not just LS wipe.\n"
@@ -869,6 +883,23 @@ class SiteBuilder:
             "  if (keys.length <= IMG_CACHE_MAX) return;\n"
             "  const drop = keys.slice(0, keys.length - IMG_CACHE_MAX);\n"
             "  await Promise.all(drop.map(k => cache.delete(k)));\n"
+            "}\n"
+            "// Called one URL at a time by the page's idle scheduler.\n"
+            "// Visible <img> requests use the fetch handler below; both paths\n"
+            "// share the same durable cache and entry cap.\n"
+            "async function cacheArtImage(rawUrl) {\n"
+            "  if (typeof rawUrl !== 'string' || rawUrl.length > 4096) return false;\n"
+            "  let url;\n"
+            "  try { url = new URL(rawUrl); } catch (_) { return false; }\n"
+            "  if (url.protocol !== 'https:') return false;\n"
+            "  const req = new Request(url.href, { mode: 'no-cors', credentials: 'omit', referrerPolicy: 'no-referrer' });\n"
+            "  const cache = await caches.open(IMG_CACHE);\n"
+            "  if (await cache.match(req)) return true;\n"
+            "  const response = await fetch(req);\n"
+            "  if (!response || !(response.ok || response.type === 'opaque')) return false;\n"
+            "  await cache.put(req, response.clone());\n"
+            "  await pruneImageCache();\n"
+            "  return true;\n"
             "}\n"
             "self.addEventListener('fetch', (e) => {\n"
             "  const req = e.request;\n"

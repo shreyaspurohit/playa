@@ -1,7 +1,7 @@
 ---
 title: Food tab — currently & soon-available food, by type
 date: 2026-08-08
-updated: 2026-08-11
+updated: 2026-08-13
 status: current
 ---
 
@@ -243,6 +243,9 @@ The Food tab is a **view**, not new state. It respects:
 - **Favorites + friends** — food-event rows reuse event stars and show friend
   stars. Camp-only Hours-not-listed rows have no invented event to star. A
   separate "Your upcoming picks" section shows the user's starred food events.
+  It uses the same accessible plus/minus disclosure as the availability groups
+  and starts collapsed, alongside Upcoming and Hours not listed, so a long plan
+  does not consume the Food tab's initial screen space.
 - **Near-me** — reuse the Schedule/Map GPS model and ~1 km cutoff. It filters
   every availability section, including Hours not listed. The button is a
   reversible toggle: pressing the active button again restores the prior

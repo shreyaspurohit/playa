@@ -65,7 +65,7 @@ flowchart LR
 
 Two halves of the codebase:
 
-- **`backend/src/playa/`** (Python 3.12, stdlib + openssl CLI):
+- **`backend/src/playa/`** (Python 3.14.4, stdlib + openssl CLI):
   fetch HTML, parse, tag, encrypt, write `site/index.html` + `sw.js` +
   `version.txt`.
 - **`client/src/`** (TypeScript + Preact + esbuild): bundled into one

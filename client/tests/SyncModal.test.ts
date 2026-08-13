@@ -26,6 +26,7 @@ function controller(overrides: Partial<SyncController> = {}): SyncController {
     message: '',
     lastSyncedAt: null,
     connect: async () => {},
+    cancelConnect: () => {},
     syncNow: async () => {},
     disconnect: async () => {},
     ...overrides,

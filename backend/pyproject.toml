@@ -7,18 +7,18 @@
 # After install, run either `python -m playa <cmd>` or the `playa` console
 # script the [project.scripts] block below creates.
 #
-# Build-backend: setuptools. Chosen because it's built into every Python
-# install — no wheel of hatchling/flit needed just to bootstrap.
+# Build-backend: setuptools. It is widely supported, and PEP 517 build
+# isolation installs the declared version when it is not already available.
 
 [build-system]
-requires = ["setuptools>=83.0.0"]
+requires = ["setuptools>=84,<85"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "playa"
 version = "0.0.0"
 description = "Burning Man theme-camp directory fetcher + static site builder."
-requires-python = ">=3.14"
+requires-python = ">=3.14,<3.15"
 license = { text = "MIT" }
 authors = [{ name = "Shreyas Purohit" }]
 # No `readme` field — setuptools sandboxes to the package root and refuses
@@ -30,7 +30,7 @@ keywords = ["burningman", "fetcher", "static-site"]
 classifiers = [
   "Private :: Do Not Upload",
   "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
 ]
 
 [project.scripts]

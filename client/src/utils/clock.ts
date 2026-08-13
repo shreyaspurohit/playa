@@ -17,6 +17,7 @@ import { readString, writeString, removeKey } from './storage';
 export const PLAYA_TIME_ZONE = 'America/Los_Angeles';
 
 export interface PlayaTimeParts {
+  year: number;
   weekday: string;
   month: number;
   day: number;
@@ -26,6 +27,7 @@ export interface PlayaTimeParts {
 
 const PLAYA_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: PLAYA_TIME_ZONE,
+  year: 'numeric',
   weekday: 'short',
   month: 'numeric',
   day: 'numeric',
@@ -42,6 +44,7 @@ export function playaTimeParts(when: Date): PlayaTimeParts {
       .map((part) => [part.type, part.value]),
   );
   return {
+    year: Number(parts.year),
     weekday: parts.weekday,
     month: Number(parts.month),
     day: Number(parts.day),

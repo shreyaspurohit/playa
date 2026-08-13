@@ -7,7 +7,7 @@ export interface SyncBackend {
   isConnected(): Promise<boolean>;
   /** Popup authorization (browser tab / desktop / Android PWA). Throws
    *  SyncPopupBlockedError when the popup cannot open. */
-  authorize(): Promise<void>;
+  authorize(signal?: AbortSignal): Promise<void>;
   /** Standalone-PWA path (ADR 16 D13): persist PKCE state and navigate the
    *  top window to Dropbox. The page unloads, so this does not resolve
    *  meaningfully on success. */
@@ -33,4 +33,10 @@ export class SyncConflictError extends Error {
  *  redirect flow (ADR 16 D13) rather than surfacing a dead end. */
 export class SyncPopupBlockedError extends Error {
   constructor() { super('Dropbox sign-in popup was blocked.'); }
+}
+
+/** The user closed or explicitly cancelled the popup flow. This is a normal
+ *  disconnected state, not a provider/network failure. */
+export class SyncAuthorizationCancelledError extends Error {
+  constructor() { super('Dropbox sign-in was cancelled. You can try again.'); }
 }

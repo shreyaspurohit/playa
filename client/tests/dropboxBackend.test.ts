@@ -66,6 +66,145 @@ describe('Dropbox SDK adapter', () => {
     assert.equal(channels[0].closed, true);
   });
 
+  test('returns promptly when the user closes the OAuth popup', async () => {
+    let popupClosed = false;
+    const popup = {
+      get closed() { return popupClosed; },
+      close: () => { popupClosed = true; },
+    } as unknown as Window;
+    const { waitForOAuth } = await import('../src/sync/dropboxBackend');
+
+    const result = waitForOAuth(popup, 'pc_expected', undefined, 0);
+    window.dispatchEvent(new Event('blur'));
+    popupClosed = true;
+    window.dispatchEvent(new Event('focus'));
+
+    await assert.rejects(result, /cancelled/);
+  });
+
+  test('accepts a valid callback delivered after focus returns and the popup closes', async () => {
+    const channels: FakeBroadcastChannel[] = [];
+    class FakeBroadcastChannel {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      constructor(_name: string) { channels.push(this); }
+      close() {}
+      emit(data: unknown) { this.onmessage?.({ data } as MessageEvent); }
+    }
+    Object.defineProperty(window, 'BroadcastChannel', {
+      value: FakeBroadcastChannel, configurable: true,
+    });
+    let popupClosed = false;
+    const popup = {
+      get closed() { return popupClosed; },
+      close: () => { popupClosed = true; },
+    } as unknown as Window;
+    const { waitForOAuth } = await import('../src/sync/dropboxBackend');
+
+    const result = waitForOAuth(popup, 'pc_expected', undefined, 30);
+    window.dispatchEvent(new Event('blur'));
+    popupClosed = true;
+    window.dispatchEvent(new Event('focus'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    channels[0].emit({
+      type: 'PLAYA_DROPBOX_OAUTH', state: 'pc_expected', code: 'valid-code',
+    });
+
+    assert.equal(await result, 'valid-code');
+  });
+
+  test('recovers the code from the durable handoff when the popup closes and no message arrives', async () => {
+    let popupClosed = false;
+    const popup = {
+      get closed() { return popupClosed; },
+      close: () => { popupClosed = true; },
+    } as unknown as Window;
+    const { waitForOAuth } = await import('../src/sync/dropboxBackend');
+
+    const result = waitForOAuth(popup, 'pc_expected', undefined, 0);
+    // The popup wrote its result to localStorage just before closing, but both
+    // the postMessage and BroadcastChannel deliveries were lost/late. The
+    // close-check must recover the code here instead of reporting a cancel.
+    localStorage.setItem('bm-sync-oauth-result/pc_expected', JSON.stringify({
+      state: 'pc_expected', code: 'late-code', error: '', at: Date.now(),
+    }));
+    window.dispatchEvent(new Event('blur'));
+    popupClosed = true;
+    window.dispatchEvent(new Event('focus'));
+
+    assert.equal(await result, 'late-code');
+    // The consumed handoff must not linger for a later attempt to replay.
+    assert.equal(localStorage.getItem('bm-sync-oauth-result/pc_expected'), null);
+  });
+
+  test('a concurrent attempt in another tab is neither clobbered nor consumed', async () => {
+    let popupClosed = false;
+    const popup = {
+      get closed() { return popupClosed; },
+      close: () => { popupClosed = true; },
+    } as unknown as Window;
+    // A fresh record from a *different* tab's attempt must be left intact, and
+    // this wait's genuine popup-close still reported as a cancellation.
+    localStorage.setItem('bm-sync-oauth-result/pc_other', JSON.stringify({
+      state: 'pc_other', code: 'other-tab-code', error: '', at: Date.now(),
+    }));
+    const { waitForOAuth } = await import('../src/sync/dropboxBackend');
+
+    const result = waitForOAuth(popup, 'pc_expected', undefined, 0);
+    window.dispatchEvent(new Event('blur'));
+    popupClosed = true;
+    window.dispatchEvent(new Event('focus'));
+
+    await assert.rejects(result, /cancelled/);
+    // The other tab's still-fresh record survives for its own wait to recover.
+    assert.notEqual(localStorage.getItem('bm-sync-oauth-result/pc_other'), null);
+  });
+
+  test('two concurrent waits each recover their own state-scoped handoff', async () => {
+    const mkPopup = () => {
+      let closed = false;
+      const popup = {
+        get closed() { return closed; },
+        close: () => { closed = true; },
+      } as unknown as Window;
+      return { popup, close: () => { closed = true; } };
+    };
+    const a = mkPopup();
+    const b = mkPopup();
+    const { waitForOAuth } = await import('../src/sync/dropboxBackend');
+
+    const rA = waitForOAuth(a.popup, 'pc_a', undefined, 0);
+    const rB = waitForOAuth(b.popup, 'pc_b', undefined, 0);
+    localStorage.setItem('bm-sync-oauth-result/pc_a', JSON.stringify({
+      state: 'pc_a', code: 'code-a', error: '', at: Date.now(),
+    }));
+    localStorage.setItem('bm-sync-oauth-result/pc_b', JSON.stringify({
+      state: 'pc_b', code: 'code-b', error: '', at: Date.now(),
+    }));
+    window.dispatchEvent(new Event('blur'));
+    a.close();
+    b.close();
+    window.dispatchEvent(new Event('focus'));
+
+    assert.equal(await rA, 'code-a');
+    assert.equal(await rB, 'code-b');
+  });
+
+  test('an explicit cancellation aborts the OAuth wait and closes the popup', async () => {
+    let popupClosed = false;
+    const popup = {
+      closed: false,
+      close: () => { popupClosed = true; },
+    } as unknown as Window;
+    const abort = new AbortController();
+    const { waitForOAuth } = await import('../src/sync/dropboxBackend');
+
+    const result = waitForOAuth(popup, 'pc_expected', abort.signal);
+    abort.abort();
+
+    await assert.rejects(result, /cancelled/);
+    assert.equal(popupClosed, true);
+  });
+
   test('downloads the app-folder file and reads its revision header', async () => {
     let request: { url: string; init?: RequestInit } | null = null;
     const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -171,6 +310,19 @@ describe('Dropbox SDK adapter', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test('disconnect removes the local session before remote revocation finishes', async () => {
+    const pendingRevoke: { finish?: (response: Response) => void } = {};
+    const fetchFn = (() => new Promise<Response>((resolve) => { pendingRevoke.finish = resolve; })) as typeof fetch;
+    const backend = await connectedBackend(fetchFn);
+
+    const disconnecting = backend.disconnect();
+    assert.equal(localStorage.getItem(LS.syncToken), null);
+    // Let session decryption reach the best-effort revocation request.
+    while (!pendingRevoke.finish) await new Promise((resolve) => setTimeout(resolve, 0));
+    pendingRevoke.finish(new Response('{}', { status: 200 }));
+    await disconnecting;
   });
 
   test('standalone redirect persists PKCE state and navigates the top window', async () => {

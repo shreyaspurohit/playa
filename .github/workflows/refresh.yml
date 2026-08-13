@@ -43,11 +43,11 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version-file: '.tool-versions'
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version-file: '.tool-versions'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
@@ -88,11 +88,11 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version-file: '.tool-versions'
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version-file: '.tool-versions'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 

@@ -2370,6 +2370,18 @@ __SYNC_META__
       var om = {
         type: 'PLAYA_DROPBOX_OAUTH', state: os, code: oc, error: oe
       };
+      // Durable same-origin handoff. postMessage/BroadcastChannel are the fast
+      // paths, but if either is delayed past the opener's popup-closed grace
+      // window the opener would otherwise treat a *successful* sign-in as a
+      // cancel. localStorage is written synchronously before this popup closes,
+      // so the opener can always recover the code even if both messages race.
+      try {
+        // State-scoped key so two tabs authorizing at once never overwrite
+        // each other's callback; bm- prefix so Clear-all-local-data sweeps it.
+        localStorage.setItem('bm-sync-oauth-result/' + os, JSON.stringify({
+          state: os, code: oc, error: oe, at: Date.now()
+        }));
+      } catch (e) {}
       try {
         if (window.opener) window.opener.postMessage(om, location.origin);
       } catch (e) {}
