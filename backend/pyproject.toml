@@ -11,14 +11,14 @@
 # install — no wheel of hatchling/flit needed just to bootstrap.
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "playa"
 version = "0.0.0"
 description = "Burning Man theme-camp directory fetcher + static site builder."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [{ name = "Shreyas Purohit" }]
 # No `readme` field — setuptools sandboxes to the package root and refuses
