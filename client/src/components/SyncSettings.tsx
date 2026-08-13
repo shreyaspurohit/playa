@@ -9,7 +9,7 @@ export function SyncSettings({
 }) {
   if (!sync.available) return null;
   const checking = sync.status === 'checking';
-  const busy = checking || sync.status === 'connecting' || sync.status === 'syncing';
+  const busy = checking || sync.status === 'syncing';
   const connected = sync.connected && sync.status !== 'expired';
   const time = sync.lastSyncedAt === null ? '' : new Date(sync.lastSyncedAt).toLocaleTimeString([], {
     hour: 'numeric', minute: '2-digit',
@@ -44,17 +44,28 @@ export function SyncSettings({
       </p>
       <div class="sync-actions">
         {!connected ? (
-          <button class="action-btn" type="button" disabled={busy} onClick={() => void sync.connect()}>
+          <button
+            class="action-btn"
+            type="button"
+            disabled={busy}
+            onClick={() => sync.status === 'connecting'
+              ? sync.cancelConnect()
+              : void sync.connect()}
+          >
             <span class="action-label">
               {checking
                 ? 'Checking Dropbox connection…'
                 : sync.status === 'connecting'
-                  ? 'Connecting…'
+                  ? 'Cancel Dropbox sign-in'
                   : sync.status === 'expired'
                     ? 'Reconnect Dropbox'
                     : 'Connect Dropbox'}
             </span>
-            <span class="action-desc">Back up this device or restore an existing cloud copy.</span>
+            <span class="action-desc">
+              {sync.status === 'connecting'
+                ? 'Close the sign-in window, then try again whenever you’re ready.'
+                : 'Back up this device or restore an existing cloud copy.'}
+            </span>
           </button>
         ) : (
           <>

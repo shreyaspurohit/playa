@@ -60,6 +60,7 @@ import { Toolbar } from './Toolbar';
 import { now, isMockNow, mockNowLabel, clearMockNow } from '../utils/clock';
 import { isMockGps, mockGpsLabel, clearMockGps } from '../utils/mockGps';
 import { useSync } from '../hooks/useSync';
+import { warmArtImagesWhenIdle } from '../utils/artImageCache';
 
 interface Meta {
   fetchedDate: string;
@@ -218,18 +219,18 @@ export function App() {
       document.documentElement.style.removeProperty('--site-chrome-height');
     };
   }, []);
-  const [foodNowSnapshot, setFoodNowSnapshot] = useState(() => now());
-  const refreshFoodNow = useCallback(() => setFoodNowSnapshot(now()), []);
-  // Keep Food availability current during a long-lived PWA session.
-  // Re-entering Food refreshes immediately; the minute tick handles users who
-  // leave the tab open while service windows change.
+  const [nowSnapshot, setNowSnapshot] = useState(() => now());
+  const refreshNow = useCallback(() => setNowSnapshot(now()), []);
+  // Keep Food and Schedule availability current during a long-lived PWA
+  // session. Re-entering either tab refreshes immediately; the minute tick
+  // handles users who leave one open while event windows change.
   useEffect(() => {
-    const interval = window.setInterval(refreshFoodNow, 60_000);
+    const interval = window.setInterval(refreshNow, 60_000);
     return () => window.clearInterval(interval);
-  }, [refreshFoodNow]);
+  }, [refreshNow]);
   useEffect(() => {
-    if (view === 'food') refreshFoodNow();
-  }, [view, refreshFoodNow]);
+    if (view === 'food' || view === 'schedule') refreshNow();
+  }, [view, refreshNow]);
   // Per-tab scroll memory. All tabs are always-mounted (hidden divs) sharing
   // the document scroll, so without this, scrolling one tab (e.g. Camps
   // scroll-to-card) leaves the shared offset there and other tabs inherit it —
@@ -314,6 +315,14 @@ export function App() {
   // Parallel cache + state for art per source.
   const [art, setArt] = useState<Art[] | null>(null);
   const decryptedArtRef = useRef<Map<Source, Art[]>>(new Map());
+
+  // Art cards keep native lazy loading, so scrolling fetches + caches each
+  // visible thumbnail normally. While the browser is otherwise idle, warm the
+  // rest one at a time through the service worker for a complete offline set.
+  useEffect(() => {
+    if (!art) return;
+    return warmArtImagesWhenIdle(art.map((piece) => piece.image_url));
+  }, [art]);
 
   // Detect mode + (re)load source-specific data when source changes.
   // Envelope mode reads ALL sources up front (one effect, not per
@@ -1168,6 +1177,7 @@ export function App() {
               }}
               onSyncNow={() => { void sync.syncNow(); }}
               onSyncConnect={() => { void sync.connect(); }}
+              onSyncCancel={sync.cancelConnect}
               onSyncDisconnect={() => { void sync.disconnect(); }}
               infoPulse={infoPulse}
               syncAvailable={sync.available}
@@ -1365,6 +1375,7 @@ export function App() {
               onClearHidden={hiddenDays.clear}
               onGotoCamp={onGotoCamp}
               source={source}
+              nowSnapshot={nowSnapshot}
             />
           </div>
           <div hidden={view !== 'food'}>
@@ -1377,8 +1388,8 @@ export function App() {
               source={source}
               burnStart={meta.burnStart}
               burnEnd={meta.burnEnd}
-              nowSnapshot={foodNowSnapshot}
-              onRefreshNow={refreshFoodNow}
+              nowSnapshot={nowSnapshot}
+              onRefreshNow={refreshNow}
             />
           </div>
           <div hidden={view !== 'art'}>

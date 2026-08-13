@@ -97,7 +97,7 @@ function DropboxGlyph() {
 
 function syncDetail(connected: boolean, status: SyncStatus): string {
   if (status === 'checking') return 'Checking saved connection…';
-  if (status === 'connecting') return 'Opening Dropbox…';
+  if (status === 'connecting') return 'Opening Dropbox… tap to cancel';
   if (status === 'syncing') return 'Syncing devices, browsers & tabs…';
   if (status === 'offline') return 'Offline · local changes are safe';
   if (status === 'expired') return 'Reconnect required';
@@ -115,6 +115,7 @@ interface Props {
   onInfoClick: () => void;
   onSyncNow: () => void;
   onSyncConnect: () => void;
+  onSyncCancel: () => void;
   onSyncDisconnect: () => void;
   infoPulse: boolean;
   syncAvailable: boolean;
@@ -125,7 +126,8 @@ interface Props {
 export function HeaderMenu({
   source, availableSources, onSourceChange,
   currentTheme, onThemeChange, onInfoClick, onSyncNow, infoPulse,
-  onSyncConnect, onSyncDisconnect, syncAvailable, syncConnected, syncStatus,
+  onSyncConnect, onSyncCancel, onSyncDisconnect,
+  syncAvailable, syncConnected, syncStatus,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [syncDisclosureOpen, setSyncDisclosureOpen] = useState(false);
@@ -134,9 +136,7 @@ export function HeaderMenu({
     && window.matchMedia('(max-width: 600px)').matches
     ? `${(wrapRef.current?.getBoundingClientRect().bottom ?? 0) + 8}px`
     : undefined;
-  const syncBusy = syncStatus === 'checking'
-    || syncStatus === 'connecting'
-    || syncStatus === 'syncing';
+  const syncBusy = syncStatus === 'checking' || syncStatus === 'syncing';
 
   // Close on outside click + Escape.
   useEffect(() => {
@@ -230,9 +230,16 @@ export function HeaderMenu({
                 class="header-menu-item header-menu-sync"
                 role="menuitem"
                 disabled={syncBusy}
-                aria-label={syncConnected ? 'Sync now with Dropbox' : 'Open Dropbox sync settings'}
+                aria-label={syncStatus === 'connecting'
+                  ? 'Cancel Dropbox sign-in'
+                  : syncConnected
+                    ? 'Sync now with Dropbox'
+                    : 'Open Dropbox sync settings'}
                 onClick={() => {
-                  if (syncConnected) onSyncNow();
+                  if (syncStatus === 'connecting') {
+                    onSyncCancel();
+                    setSyncDisclosureOpen(true);
+                  } else if (syncConnected) onSyncNow();
                   else {
                     setSyncDisclosureOpen((value) => !value);
                   }

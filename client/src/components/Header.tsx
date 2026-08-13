@@ -26,6 +26,7 @@ interface Props {
   onInfoClick: () => void;
   onSyncNow: () => void;
   onSyncConnect: () => void;
+  onSyncCancel: () => void;
   onSyncDisconnect: () => void;
   infoPulse: boolean;
   syncAvailable: boolean;
@@ -40,7 +41,7 @@ export function Header({
   campTotal, campMatching, artTotal, artMatching,
   view, filterNote, fetchedDate, fetchedAt, version,
   currentTheme, onThemeChange, onInfoClick, onSyncNow,
-  onSyncConnect, onSyncDisconnect, infoPulse,
+  onSyncConnect, onSyncCancel, onSyncDisconnect, infoPulse,
   syncAvailable, syncConnected, syncStatus,
   source, availableSources, onSourceChange,
 }: Props) {
@@ -67,6 +68,7 @@ export function Header({
             onInfoClick={onInfoClick}
             onSyncNow={onSyncNow}
             onSyncConnect={onSyncConnect}
+            onSyncCancel={onSyncCancel}
             onSyncDisconnect={onSyncDisconnect}
             infoPulse={infoPulse}
             syncAvailable={syncAvailable}

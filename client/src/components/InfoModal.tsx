@@ -39,6 +39,7 @@ const UNAVAILABLE_SYNC: SyncController = {
   message: '',
   lastSyncedAt: null,
   connect: async () => {},
+  cancelConnect: () => {},
   syncNow: async () => {},
   disconnect: async () => {},
 };
@@ -291,12 +292,17 @@ export function GuideTab() {
         <h3>3. Build your schedule</h3>
         <p>
           The <strong>📅 Schedule</strong> tab lays every starred event
-          out on a day-by-day calendar. Two filter buttons at the top:
+          out on a day-by-day calendar. Filter buttons at the top:
         </p>
         <ul class="guide-list">
           <li>
             <strong>⚡ Now</strong> &mdash; only events in the next 2h
             today.
+          </li>
+          <li>
+            <strong>🕘 Hide past</strong> &mdash; removes events whose
+            scheduled end time has already passed. Events happening now and
+            events without a parseable time remain available.
           </li>
           <li>
             <strong>📍 Near me</strong> &mdash; only events at camps
@@ -398,7 +404,11 @@ export function GuideTab() {
           <strong>Share &rarr; Add to Home Screen</strong>. After one
           full load with signal, the site works from your home screen
           with airplane mode on &mdash; including the map, schedule,
-          GPS, and your starred list.
+          GPS, your starred list, and art images that finished caching.
+          Art images cache as you scroll and, to build a complete offline
+          set, the whole collection also downloads quietly in the background
+          while the open app is idle. That uses data, so leave it open on
+          Wi-Fi before heading out.
         </p>
         <p class="guide-subtle">
           On phones, scrolling down hides the global header while keeping the
@@ -483,9 +493,11 @@ function AboutTab({
               directory.burningman.org
             </a>. This site has{' '}
             <strong>
-              no ads, no analytics, no tracking, no accounts, and no commercial
-              purpose
-            </strong>.
+              no ads, no accounts, and no commercial purpose, and sets no
+              cookies or tracking scripts of its own
+            </strong>. Cloudflare and GitHub Pages, which serve it, process
+            ordinary request metadata such as IP addresses and expose aggregate
+            traffic statistics.
           </p>
           <p>
             <strong>Camp owner? Want your camp removed?</strong>{' '}
@@ -503,8 +515,11 @@ function AboutTab({
       </p>
       {!showDirectoryDisclaimer && (
         <p>
-          This is a personal, non-commercial tool with no ads, analytics,
-          tracking, or accounts, and no commercial purpose.
+          This is a personal, non-commercial tool with no ads, no accounts, and
+          no commercial purpose, and it sets no cookies or tracking scripts of
+          its own. Cloudflare and GitHub Pages, which serve it, process ordinary
+          request metadata such as IP addresses and expose aggregate traffic
+          statistics.
         </p>
       )}
       {showCurrentApiSchedule && (

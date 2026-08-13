@@ -112,6 +112,7 @@ describe('source-specific directory disclaimer', () => {
       message: '',
       lastSyncedAt: null,
       connect: async () => {},
+      cancelConnect: () => {},
       syncNow: async () => {},
       disconnect: async () => {},
     };

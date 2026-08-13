@@ -4,7 +4,8 @@ import { cacheSecureValue, clearSecureValue, loadSecureValue } from '../utils/se
 import { readString, removeKey, writeString } from '../utils/storage';
 import type { SyncConfig } from './config';
 import {
-  SyncAuthExpiredError, SyncConflictError, SyncPopupBlockedError,
+  SyncAuthExpiredError, SyncAuthorizationCancelledError, SyncConflictError,
+  SyncPopupBlockedError,
   type RemoteSyncFile, type SyncBackend,
 } from './SyncBackend';
 
@@ -12,6 +13,18 @@ const SYNC_PATH = '/playa-sync.json';
 const OAUTH_MESSAGE = 'PLAYA_DROPBOX_OAUTH';
 const OAUTH_CHANNEL = 'playa-dropbox-oauth';
 const OAUTH_TIMEOUT_MS = 5 * 60_000;
+// Focus commonly returns to the opener before postMessage/BroadcastChannel
+// delivers the callback. Give that valid result a generous chance to win
+// before interpreting a closed WindowProxy as manual cancellation.
+const OAUTH_CLOSE_CALLBACK_GRACE_MS = 1_500;
+// Durable same-origin handoff the popup callback writes before it closes. Lets
+// the opener recover the authorization code even if postMessage and the
+// BroadcastChannel are both delivered after the popup-closed grace window, so a
+// successful-but-slow sign-in is never misread as a cancel. The key is scoped
+// by the attempt's random `state` so two tabs connecting at once never clobber
+// each other's callback; the `bm-` prefix means "Clear all local data" also
+// sweeps any abandoned record.
+const OAUTH_RESULT_PREFIX = 'bm-sync-oauth-result/';
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const DROPBOX_SCOPES = ['files.content.read', 'files.content.write'];
 // Popup vs. redirect are distinguished by state prefix. `pcr_` deliberately
@@ -114,18 +127,73 @@ function stripRedirectCallbackFromUrl(): void {
   history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
-export function waitForOAuth(popup: Window, state: string): Promise<string> {
+/** Consume the popup's durable localStorage handoff for this attempt's `state`,
+ *  if present and fresh. Always clears this attempt's record so it can't be
+ *  replayed. Returns the code/error, or null when nothing matches. */
+function takeOAuthHandoff(state: string, now: number): { code: string; error: string } | null {
+  const key = OAUTH_RESULT_PREFIX + state;
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(key); } catch { return null; }
+  if (!raw) return null;
+  try { localStorage.removeItem(key); } catch { /* best effort */ }
+  let value: Record<string, unknown>;
+  try { value = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
+  if (value.state !== state) return null;
+  if (typeof value.at !== 'number' || now - value.at > OAUTH_TIMEOUT_MS) return null;
+  return {
+    code: typeof value.code === 'string' ? value.code : '',
+    error: typeof value.error === 'string' ? value.error : '',
+  };
+}
+
+function clearOAuthHandoff(state: string): void {
+  try { localStorage.removeItem(OAUTH_RESULT_PREFIX + state); } catch { /* best effort */ }
+}
+
+/** Remove only *expired* handoff records (any attempt's). Runs when a new wait
+ *  starts, bounding leftover records from attempts abandoned before their
+ *  popup could close — without touching a concurrent tab's still-fresh one. */
+function sweepStaleOAuthHandoffs(now: number): void {
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(OAUTH_RESULT_PREFIX)) continue;
+      let at = 0;
+      try { at = (JSON.parse(localStorage.getItem(key) ?? '{}') as { at?: number }).at ?? 0; } catch { at = 0; }
+      if (!at || now - at > OAUTH_TIMEOUT_MS) stale.push(key);
+    }
+    for (const key of stale) localStorage.removeItem(key);
+  } catch { /* best effort */ }
+}
+
+export function waitForOAuth(
+  popup: Window,
+  state: string,
+  signal?: AbortSignal,
+  closeCheckDelayMs = OAUTH_CLOSE_CALLBACK_GRACE_MS,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const channel = 'BroadcastChannel' in window
       ? new window.BroadcastChannel(OAUTH_CHANNEL)
       : null;
     let timeout = 0;
+    let closeCheck = 0;
+    let popupHadFocus = false;
+    // Drop only *expired* leftovers from abandoned attempts. A concurrent tab's
+    // fresh record (a different `state`) is left intact for its own wait.
+    sweepStaleOAuthHandoffs(Date.now());
     const finish = (error?: Error, code?: string) => {
       if (settled) return;
       settled = true;
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('blur', onWindowBlur);
+      window.removeEventListener('focus', onWindowFocus);
       window.clearTimeout(timeout);
+      window.clearTimeout(closeCheck);
+      signal?.removeEventListener('abort', onAbort);
+      clearOAuthHandoff(state);
       try { channel?.close(); } catch { /* ignore */ }
       try { popup.close(); } catch { /* ignore */ }
       if (error) reject(error);
@@ -140,12 +208,37 @@ export function waitForOAuth(popup: Window, state: string): Promise<string> {
       if (event.origin !== location.origin || event.source !== popup) return;
       accept(event.data);
     };
+    const onWindowBlur = () => { popupHadFocus = true; };
+    const onWindowFocus = () => {
+      if (!popupHadFocus) return;
+      window.clearTimeout(closeCheck);
+      closeCheck = window.setTimeout(() => {
+        // Check only after the opener lost and regained focus. Continuously
+        // polling `closed` is unsafe: Dropbox/privacy-browser COOP isolation
+        // can make a still-open popup's severed WindowProxy appear closed.
+        if (!popup.closed) return;
+        // The popup is gone. Before concluding the user cancelled, consult the
+        // durable handoff: a successful sign-in whose message merely arrived
+        // late still left its code here, and must resolve rather than reject.
+        const handoff = takeOAuthHandoff(state, Date.now());
+        if (handoff?.error) finish(new Error(`Dropbox authorization failed: ${handoff.error}`));
+        else if (handoff?.code) finish(undefined, handoff.code);
+        else finish(new SyncAuthorizationCancelledError());
+      }, closeCheckDelayMs);
+    };
+    const onAbort = () => finish(new SyncAuthorizationCancelledError());
     window.addEventListener('message', onMessage);
+    window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('focus', onWindowFocus);
     if (channel) channel.onmessage = (event: MessageEvent<OAuthMessage>) => accept(event.data);
+    if (signal?.aborted) {
+      finish(new SyncAuthorizationCancelledError());
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
 
-    // Do not poll popup.closed. Dropbox/privacy-browser COOP isolation may
-    // deliberately sever the WindowProxy and make a still-open popup appear
-    // closed. The same-origin callback channel remains available in that case.
+    // Preserve a generous ceiling for users who need time to sign in. Manual
+    // close is handled above; the UI also exposes an immediate Cancel action.
     timeout = window.setTimeout(() => finish(new Error(
       'Dropbox sign-in did not return to this tab. Close the Dropbox window and try again.',
     )), OAUTH_TIMEOUT_MS);
@@ -291,7 +384,7 @@ export class DropboxBackend implements SyncBackend {
     });
   }
 
-  async authorize(): Promise<void> {
+  async authorize(signal?: AbortSignal): Promise<void> {
     const popup = window.open('', 'playa-dropbox-oauth', 'popup,width=520,height=720');
     if (!popup) throw new SyncPopupBlockedError();
     const state = `${POPUP_STATE_PREFIX}${randomUrlSafe()}`;
@@ -299,8 +392,12 @@ export class DropboxBackend implements SyncBackend {
     const auth = this.createAuth();
     try {
       popup.location.href = await buildDropboxAuthorizeUrl(auth, redirect, state);
-      const code = await waitForOAuth(popup, state);
+      const code = await waitForOAuth(popup, state, signal);
       await this.exchangeCodeAndSave(auth, redirect, code);
+      if (signal?.aborted) {
+        clearSecureValue(LS.syncToken);
+        throw new SyncAuthorizationCancelledError();
+      }
     } catch (error) {
       try { popup.close(); } catch { /* ignore */ }
       throw error;
@@ -385,8 +482,12 @@ export class DropboxBackend implements SyncBackend {
   }
 
   async disconnect(): Promise<void> {
-    const session = await this.session();
+    // Capture the session for best-effort server revocation, but remove the
+    // browser credential synchronously. Callers such as Cancel can therefore
+    // permit an immediate retry without an authorized-but-disconnected gap.
+    const sessionPromise = this.session();
     clearSecureValue(LS.syncToken);
+    const session = await sessionPromise;
     if (!session) return;
     try {
       await new Dropbox({ auth: this.createAuth(session) }).authTokenRevoke();

@@ -16,9 +16,18 @@ other so a broken parser can never overwrite the live site.
 ## Decisions
 
 - **Pages over a real host.** Free, custom-domain-ready, automatic
-  Let's Encrypt cert, no DNS or CDN config. Trade-off: anonymous
-  reads of the file. Mitigated by encrypting the data payload + the
-  `noindex` meta + `robots.txt`.
+  Let's Encrypt cert. Trade-off: anonymous reads of the file. Mitigated
+  by encrypting the data payload + the `noindex` meta + `robots.txt`.
+- **Cloudflare proxy in front of Pages.** `playa.purohit.dev` is proxied
+  through Cloudflare (orange-cloud), with a per-hostname Configuration Rule
+  setting SSL to Full (strict) so the rest of the zone is untouched. GitHub
+  Pages stays the origin; Cloudflare fronts it purely for server-side,
+  cookieless **aggregate traffic analytics** (visitor counts) — no in-page
+  script or cookie is added, keeping the no-tracking stance intact (see the
+  privacy disclosures in `docs/13` / About modal / `privacy.html`). Operational
+  notes: enable Pages "Enforce HTTPS" (so the cert exists) *before* proxying;
+  a rare cert renewal may need a brief un-proxy; Pages HTML isn't edge-cached
+  by default, so nightly rebuilds and `version.txt` polling still propagate.
 - **Three jobs, hard `needs:` chain.** `test` blocks `build`; `build`
   blocks `deploy`. A failed Python test stops the world.
 - **`actions/upload-pages-artifact` over commit-and-push.** Data
@@ -46,14 +55,16 @@ flowchart LR
   Test[test job<br>npm + python tests] --> Build
   Build[build job<br>fetch + tag + bundle + encrypt] --> Deploy
   Deploy[deploy job<br>actions/deploy-pages]
-  Deploy --> Pages[Pages CDN]
-  Pages --> CNAME["playa.purohit.dev"]
+  Deploy --> Pages[GitHub Pages origin]
+  Pages --> CF["Cloudflare edge<br>proxied playa.purohit.dev<br>SSL Full strict + aggregate analytics"]
+  CF --> Users[Visitors]
 ```
 
 ### Test job
 
 - Checkout (depth: default 1, no need for history).
-- Setup Python 3.12 + Node 22.
+- Setup Python 3.14.4 + Node 26.7.0 directly from `.tool-versions`, matching
+  the asdf project toolchain and package constraints used locally.
 - `pip install -e ./backend` + `npm ci` in `client`.
 - Python: `unittest discover` over `backend/tests/`.
 - TS: `tsc --noEmit` (typecheck) + `node --test` (unit tests).

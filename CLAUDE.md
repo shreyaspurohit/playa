@@ -116,8 +116,16 @@ Mitigations baked into this project (so we can point to them if challenged):
   raw data isn't committed, takedowns are genuine removals (no git
   history to unwind). Reversing a takedown is removing the id from
   `denylist.txt`.
-- **No ads, no analytics, no tracking, no accounts, no monetization, and no
-  commercial purpose.** Keeps the "commercial endeavor" clause from applying.
+- **No ads, no monetization, no accounts, no per-user analytics, and no
+  commercial purpose; the app sets no cookies or tracking scripts of its own.**
+  The site is served through GitHub Pages + Cloudflare, which process ordinary
+  request metadata (e.g. IP addresses) to deliver/protect the site and expose
+  aggregate traffic statistics; some Cloudflare services may set their own
+  cookies. Nothing is added to the page itself. Keeps the "commercial endeavor"
+  clause from applying. The user-facing disclaimers (About modal + footer +
+  `privacy.html`) must describe this accurately: scope the no-cookie/no-tracking
+  claim to *the app*, never claim a flat "no analytics" or "anonymous," and
+  disclose the CDN/host request metadata + aggregate stats.
 
 **Remaining residual risk:** §6 still applies to every camp's description
 text as it exists in the live site. This is mitigated (password-gated,
@@ -388,11 +396,11 @@ build job uses `contents: write` solely for encrypted API-cache Releases, and
 the deploy job uses `pages: write` + `id-token: write`.
 
 **Runtime dependencies** (all pre-installed on `ubuntu-latest` —
-nothing to apt-get): `openssl` (encrypted-payload path). Python 3.12
-comes from `actions/setup-python`. Node 22 comes from
-`actions/setup-node` (for the client bundle + JS tests). Python
-project code is stdlib-only; JS project restores deps via
-`npm ci` (cached on `package-lock.json`).
+nothing to apt-get): `openssl` (encrypted-payload path). Python 3.14.4 and
+Node 26.7.0 come from the repo's `.tool-versions`; `actions/setup-python`
+and `actions/setup-node` read that same file used by local asdf. Python project
+code is stdlib-only; JS project restores deps via `npm ci` (cached on
+`package-lock.json`).
 
 **How deploy works** — the runner generates `site/index.html` etc. on
 its local filesystem, `actions/upload-pages-artifact@v5` tars up
@@ -583,8 +591,9 @@ proposal and obtain owner approval before changing either layer.
   the header topline, between the version pill and the theme switcher.
   Opens a modal with: "unofficial & best-effort" banner, "always verify on
   directory.burningman.org", explanation of what to trust less (auto tags,
-  event times, anything changed after the nightly refresh), no-ads/no-
-  analytics note, takedown mailto. Button pulses the first 2 visits
+  event times, anything changed after the nightly refresh), no-ads/
+  no-per-user-analytics note (discloses aggregate CDN visit counts),
+  takedown mailto. Button pulses the first 2 visits
   (`localStorage` flag `bm-info-seen`). Modal closes on ✕, backdrop click,
   or Escape. Escape also still clears the search if the modal is closed.
 

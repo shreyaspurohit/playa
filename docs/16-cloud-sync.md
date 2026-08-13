@@ -1,7 +1,7 @@
 ---
 title: Optional Dropbox sync of user state
 date: 2026-08-08
-updated: 2026-08-11
+updated: 2026-08-13
 status: current
 ---
 
@@ -116,15 +116,37 @@ app-specific safety policy.
   cross-origin Dropbox visit.
 - The original tab verifies message origin plus popup identity on the direct
   path, and exact unguessable state on both paths, before exchanging the code.
-  It does not poll `popup.closed`, because an isolated but still-open popup can
-  appear closed through its severed `WindowProxy`.
+  It does not continuously poll `popup.closed`, because an isolated but
+  still-open popup can appear closed through its severed `WindowProxy`. When
+  the popup returns focus to the original tab, the client performs one delayed
+  close check. That check includes a callback-delivery grace period because
+  focus can return before `postMessage` or `BroadcastChannel` is delivered.
+  As a durable fallback, the callback also writes `{code,state,error,at}` to a
+  state-scoped `localStorage` key (`bm-sync-oauth-result/<state>`) just before
+  the popup closes; if both messages race past the grace window, the close
+  check recovers the code from there instead of misreporting a cancel. The key
+  is scoped by the attempt's random `state` so two tabs authorizing at once
+  never clobber each other, is cleared as soon as it is consumed (or when the
+  wait settles), and stale records are swept once past the five-minute timeout.
+  The `bm-` prefix means "Clear all local data" also removes any abandoned one.
+  This is the only Dropbox value that touches plaintext `localStorage`: a
+  single-use, PKCE-bound authorization code with a five-minute lifetime, not a
+  token — it is useless without the SDK-held `code_verifier` and grants nothing
+  on its own once exchanged.
+  While authorization or the first sync is pending, the Dropbox row/settings
+  action also provides explicit cancellation: it aborts the callback listener,
+  closes the reachable popup, invalidates stale sync completion, and removes a
+  just-saved wrapped session before best-effort revocation. This permits an
+  immediate clean retry without waiting for the five-minute safety timeout.
 - Callback mode never executes the application bundle. It closes after the
   handoff, or shows only a small completion message if the browser refuses to
   close it, so it cannot become a second password-gated Playa Camps session.
 - The short-lived access token, expiry, and long-lived refresh token are
   AES-GCM wrapped using the same non-extractable IndexedDB device key as the
-  cached site password. No Dropbox credential appears as plaintext in
-  `localStorage`.
+  cached site password. No Dropbox **access or refresh token** ever appears as
+  plaintext in `localStorage`. (The only plaintext value is the transient,
+  single-use authorization code in the state-scoped OAuth handoff described
+  above, which is not a token and expires within five minutes.)
 - Before file requests, the SDK refreshes an expired/nearly expired access token
   with the public App key and refresh token. A static browser client never
   receives or embeds the Dropbox App secret; PKCE replaces that secret for the

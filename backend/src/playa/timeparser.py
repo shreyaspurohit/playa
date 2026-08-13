@@ -25,11 +25,11 @@ We normalize to:
   Thu 8/29 9:00 PM – Fri 8/30 2:00 AM
   Mon–Fri · 11:00 AM – 3:00 PM (starts 8/26)
 
-We explicitly do NOT hardcode a year. Instead, `derive_week_map()` walks all
-single-occurrence events in a given fetch and builds {day: "M/D"} from
-what the directory posted this year. Recurring events pick up "(starts M/D)"
-by looking up their earliest day in that map. When the directory updates
-for a new burn year, the map self-adjusts.
+We explicitly do NOT hardcode a year. SiteBuilder derives a canonical weekday
+map from the configured burn window. Valid explicit single-event dates are
+preserved so a second-week occurrence does not collapse into the first week;
+stale tuples are repaired when their weekday disagrees with the configured
+year. Recurring events pick up "(starts M/D)" from the canonical map.
 """
 from __future__ import annotations
 
@@ -287,6 +287,66 @@ def _compact_days(days) -> str:
     return ", ".join(WEEK_ORDER[i] for i in indices)
 
 
+def _overnight_end_date(start_date: str, start_day: str, end_day: str) -> Optional[str]:
+    """Derive an overnight end date from the event's dated start.
+
+    The directory gives the end weekday but not its date. Looking it up in
+    the first-occurrence week map is wrong for events in the second week of
+    the burn (for example Sat 9/5 → Sun 9/6, where Sun also maps to 8/30).
+    """
+    try:
+        month, day = (int(part) for part in start_date.split("/", 1))
+        start = date(2000, month, day)
+        delta = (_DAY_INDEX[end_day.lower()] - _DAY_INDEX[start_day.lower()]) % 7
+        end = start + timedelta(days=delta)
+        return f"{end.month}/{end.day}"
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def resolve_single_start_date(
+    parsed: dict,
+    week_map: dict[str, str],
+    window_start: str,
+    window_end: str,
+) -> Optional[str]:
+    """Keep a valid explicit occurrence date; repair stale source tuples.
+
+    A burn window can contain the same weekday twice. The directory's explicit
+    ``M/D`` is therefore the only way to distinguish opening Saturday from the
+    following Saturday. We preserve it when it falls inside the configured
+    window and agrees with the supplied weekday. Old-year tuples fail that
+    weekday check and fall back to the canonical first occurrence.
+    """
+    raw = parsed.get("start_date")
+    start_day = parsed.get("start_day")
+    try:
+        first = date.fromisoformat(window_start)
+        last = date.fromisoformat(window_end)
+        month, day = (int(part) for part in raw.split("/", 1))
+        candidate = date(first.year, month, day)
+        candidate_day = WEEK_ORDER[candidate.weekday()]
+        if first <= candidate <= last and candidate_day == start_day:
+            return f"{candidate.month}/{candidate.day}"
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return week_map.get(start_day or "") or raw
+
+
+def resolve_end_date(parsed: dict, week_map: dict[str, str]) -> Optional[str]:
+    """Return the calendar date for a parsed event's end occurrence."""
+    end_day = parsed.get("end_day")
+    start_day = parsed.get("start_day")
+    start_date = parsed.get("start_date")
+    if parsed.get("kind") == "single" and start_date and start_day and end_day:
+        if end_day == start_day:
+            return start_date
+        derived = _overnight_end_date(start_date, start_day, end_day)
+        if derived:
+            return derived
+    return week_map.get(end_day or "")
+
+
 def format_display(parsed: Optional[dict], week_map: dict[str, str]) -> Optional[str]:
     """Clean string for the event card. None if `parsed` is None (caller
     should fall back to the raw string)."""
@@ -301,7 +361,7 @@ def format_display(parsed: Optional[dict], week_map: dict[str, str]) -> Optional
         eday = parsed["end_day"]
         if eday == sday:
             return f"{sday} {sdate} · {st} – {et}"
-        edate = week_map.get(eday)
+        edate = resolve_end_date(parsed, week_map)
         if edate:
             return f"{sday} {sdate} {st} – {eday} {edate} {et}"
         return f"{sday} {sdate} {st} – {eday} {et}"

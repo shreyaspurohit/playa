@@ -1,6 +1,7 @@
 ---
 title: Tech Stack & Tool Choices
 date: 2026-04-27
+updated: 2026-08-13
 status: current
 ---
 
@@ -14,7 +15,7 @@ nothing and the cron keeps refreshing it."
 
 ## Decisions
 
-### Server side — Python 3.12, stdlib only
+### Server side — Python 3.14.4, stdlib only
 
 - **Python over Node**: the fetch + parse + transform pipeline is
   imperative I/O glue. Python's stdlib has `urllib`, `re`, `csv`,
@@ -23,6 +24,12 @@ nothing and the cron keeps refreshing it."
   `openssl` (pre-installed on `ubuntu-latest`). Means CI has no
   `pip install` step beyond an editable install of the project itself,
   no Renovate noise on Python packages.
+- **One local/CI toolchain**: `.tool-versions` pins Python 3.14.4 and
+  Node 26.7.0; both GitHub Actions workflows read that same file. The
+  `pyproject.toml` accepts compatible Python 3.14 patch releases and
+  `package.json` requires the selected Node release. The exact tool file remains
+  the shared local/CI selection, without making the Python package uninstallable
+  on the next 3.14 security patch.
 - **`openssl` CLI for crypto**: shells out for the camp-data
   encryption (`AES-256-CBC + PBKDF2`). Battle-tested, available
   everywhere, and the JS-side decryption uses the same well-known
@@ -54,7 +61,8 @@ nothing and the cron keeps refreshing it."
 
 ### Test runner — `node --test` + happy-dom + tsx
 
-- `node --test` is built-in to Node 22 and runs TypeScript via `tsx`.
+- `node --test` is built into Node; CI uses Node 26 and runs TypeScript
+  via `tsx`.
   No Jest/Vitest config surface, no transformer chain.
 - `happy-dom` over `jsdom`: faster, lighter, runs in Node without a
   shim for `localStorage`/`SubtleCrypto` (we use both).

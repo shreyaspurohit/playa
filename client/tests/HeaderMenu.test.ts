@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 async function mountMenu(overrides: Partial<Parameters<typeof HeaderMenu>[0]> = {}) {
-  const calls = { syncNow: 0, connect: 0, disconnect: 0, settings: 0 };
+  const calls = { syncNow: 0, connect: 0, cancel: 0, disconnect: 0, settings: 0 };
   render(h(HeaderMenu, {
     source: 'directory',
     availableSources: ['directory'],
@@ -28,6 +28,7 @@ async function mountMenu(overrides: Partial<Parameters<typeof HeaderMenu>[0]> = 
     onInfoClick: () => {},
     onSyncNow: () => { calls.syncNow += 1; },
     onSyncConnect: () => { calls.connect += 1; },
+    onSyncCancel: () => { calls.cancel += 1; },
     onSyncDisconnect: () => { calls.disconnect += 1; },
     infoPulse: false,
     syncAvailable: true,
@@ -90,7 +91,23 @@ describe('header Dropbox sync entry', { concurrency: false }, () => {
     assert.equal(action?.disabled, true);
     assert.match(action?.textContent ?? '', /Checking saved connection/);
     action?.click();
-    assert.deepEqual(calls, { syncNow: 0, connect: 0, disconnect: 0, settings: 0 });
+    assert.deepEqual(calls, {
+      syncNow: 0, connect: 0, cancel: 0, disconnect: 0, settings: 0,
+    });
+  });
+
+  test('a connecting row cancels immediately and exposes retry', async () => {
+    const calls = await mountMenu({ syncConnected: false, syncStatus: 'connecting' });
+    const action = mount.querySelector<HTMLButtonElement>('.header-menu-sync');
+    assert.equal(action?.disabled, false);
+    assert.equal(action?.getAttribute('aria-label'), 'Cancel Dropbox sign-in');
+    assert.match(action?.textContent ?? '', /tap to cancel/);
+
+    action?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(calls.cancel, 1);
+    assert.ok(mount.querySelector('.header-menu-sync-note'));
   });
 
   test('is absent from builds without sync configuration', async () => {

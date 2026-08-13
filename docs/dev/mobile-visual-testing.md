@@ -376,7 +376,7 @@ the restricted runner.
 ### 4. Drive the page through CDP
 
 Query `http://127.0.0.1:9223/json/list`, select the entry whose URL starts with
-`http://127.0.0.1:8765/`, and connect to its `webSocketDebuggerUrl`. Node 22+
+`http://127.0.0.1:8765/`, and connect to its `webSocketDebuggerUrl`. Node 26
 provides the required `fetch` and `WebSocket` globals.
 
 The screenshot helper used during the 2026 review performed these CDP calls:

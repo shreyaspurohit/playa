@@ -1,6 +1,7 @@
 ---
 title: Offline + PWA
 date: 2026-04-27
+updated: 2026-08-13
 status: current
 ---
 
@@ -26,9 +27,17 @@ shell cache.
   background and updates the cache for next time. Pages-style CDN is
   fast enough that the background refresh barely matters, but the
   pattern means an offline burner gets the cached site instantly.
-- **Tiny shell.** SHELL = `['./', './index.html', './robots.txt',
+- **Tiny shell.** SHELL = `['./', './index.html', './privacy.html', './robots.txt',
   './manifest.webmanifest', './icon.svg']`. Everything else is the
   inlined bundle + data inside `index.html`. No multi-asset cache.
+- **Art thumbnails use a separate durable runtime cache.** Visible lazy-loaded
+  images enter `playa-img-v1` as the user scrolls. Once art data is unlocked,
+  the page also offers remaining URLs to the service worker one at a time
+  during browser idle periods. Warming pauses while hidden, offline, under
+  Data Saver, or on a 2G-class connection. There is deliberately no bulk-
+  download UI. The cache survives deploys, is capped at 2000 entries (ample
+  headroom over the current 327-image set so the whole collection caches
+  without churn), and is removed by **Clear all local data**.
 - **Per-URL cache: 'reload' on install + REFRESH_SHELL.** The SW's
   `install` handler explicitly bypasses the HTTP cache (`fetch(url,
   { cache: 'reload' })`) so a brand-new SW installs with bytes from
@@ -92,6 +101,17 @@ The full sequence (page → SW → reload, including the historical bug
 where a deploying-during-reload race could leave the user on stale
 bytes) is documented in [14-refresh-cycle.md](./14-refresh-cycle.md).
 
+The page can also send one `CACHE_ART_IMAGE` request during an idle period.
+The worker validates an HTTPS URL, skips an existing entry, fetches without
+credentials or a referrer, caches the response, prunes the oldest entry above
+the cap, and acknowledges completion before the page schedules another URL.
+The page remembers acknowledged URLs for its current lifetime, so changing data
+sources does not repeat hundreds of service-worker message round-trips.
+Normal `<img loading="lazy">` requests follow the same cache path, so scrolling
+warms images immediately even when the idle queue has not reached them yet, and
+cached visible images are revalidated in the background to pick up a changed
+server copy.
+
 ### Install prompt
 
 ```mermaid
@@ -116,6 +136,10 @@ Three signals merge in `useInstallPrompt.ts`:
   population can fail mid-way. The `install` handler swallows
   per-URL failures so the rest of the SHELL still caches.
   Worst-case: missing icon.svg → a slightly broken offline icon.
+- **Thumbnail warming is opportunistic.** Closing or backgrounding the app can
+  leave a partial image cache; reopening online resumes from the embedded URL
+  set and the worker cheaply skips completed entries. Text, map, and schedule
+  offline behavior never depends on image completion.
 - **SW bug requires a hard recovery**. The "About modal → Force
   refresh" button non-destructively reloads with a bypass. If a
   truly bad SW shipped, last resort is "Clear all local data" which

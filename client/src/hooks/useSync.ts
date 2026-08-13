@@ -4,7 +4,9 @@ import { isSyncedStorageKey } from '../utils/syncDoc';
 import { LOCAL_STORAGE_CHANGE_EVENT } from '../utils/storage';
 import { DropboxBackend } from '../sync/dropboxBackend';
 import { readSyncConfig } from '../sync/config';
-import { SyncAuthExpiredError, SyncPopupBlockedError } from '../sync/SyncBackend';
+import {
+  SyncAuthExpiredError, SyncAuthorizationCancelledError, SyncPopupBlockedError,
+} from '../sync/SyncBackend';
 import { syncOnce } from '../sync/syncEngine';
 import { isStandaloneDisplay } from '../utils/standalone';
 
@@ -19,6 +21,7 @@ export interface SyncController {
   message: string;
   lastSyncedAt: number | null;
   connect: () => Promise<void>;
+  cancelConnect: () => void;
   syncNow: () => Promise<void>;
   disconnect: () => Promise<void>;
 }
@@ -30,29 +33,46 @@ export function useSync(sources: readonly Source[]): SyncController {
   const [message, setMessage] = useState('');
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const connectedRef = useRef(false);
-  const runningRef = useRef<Promise<void> | null>(null);
+  const runningRef = useRef<{ epoch: number; promise: Promise<void> } | null>(null);
+  const syncEpochRef = useRef(0);
   const debounceRef = useRef(0);
+  const authAbortRef = useRef<AbortController | null>(null);
+  const authorizedAttemptRef = useRef<AbortController | null>(null);
   const sourceKey = sources.join(',');
 
   const run = useCallback(async (reload = true) => {
     if (!backend) return;
-    if (runningRef.current) return runningRef.current;
+    const epoch = syncEpochRef.current;
+    while (runningRef.current) {
+      const running = runningRef.current;
+      // Preserve the normal coalescing behavior for focus/storage/online
+      // triggers that arrive during the same sync cycle.
+      if (running.epoch === epoch) return running.promise;
+      await running.promise;
+      // A current attempt queued behind a cancelled/stale run still needs its
+      // own sync. A stale caller stops here and cannot revive cancelled UI.
+      if (epoch !== syncEpochRef.current) return;
+    }
     const task = (async () => {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        if (epoch !== syncEpochRef.current) return;
         setStatus('offline');
         setMessage('Offline. Your local changes are safe and will sync when you reconnect.');
         return;
       }
+      if (epoch !== syncEpochRef.current) return;
       setStatus('syncing');
       setMessage('');
       try {
         const outcome = await syncOnce(backend, localStorage, sources);
+        if (epoch !== syncEpochRef.current) return;
         connectedRef.current = true;
         setStatus('synced');
         setLastSyncedAt(Date.now());
         setMessage(outcome.restoredFromCloud ? 'Dropbox backup restored and merged.' : 'Dropbox is up to date.');
         if (outcome.localChanged && reload) location.reload();
       } catch (error) {
+        if (epoch !== syncEpochRef.current) return;
         if (error instanceof SyncAuthExpiredError) {
           connectedRef.current = false;
           setStatus('expired');
@@ -62,13 +82,20 @@ export function useSync(sources: readonly Source[]): SyncController {
           setMessage(error instanceof Error ? error.message : 'Dropbox sync failed.');
         }
       }
-    })().finally(() => { runningRef.current = null; });
-    runningRef.current = task;
-    return task;
+    })();
+    runningRef.current = { epoch, promise: task };
+    try {
+      await task;
+    } finally {
+      if (runningRef.current?.promise === task) runningRef.current = null;
+    }
   }, [backend, sourceKey]);
 
   const connect = useCallback(async () => {
     if (!backend) return;
+    authAbortRef.current?.abort();
+    const authAbort = new AbortController();
+    authAbortRef.current = authAbort;
     setStatus('connecting');
     setMessage('Opening Dropbox…');
     try {
@@ -81,7 +108,7 @@ export function useSync(sources: readonly Source[]): SyncController {
         return;
       }
       try {
-        await backend.authorize();
+        await backend.authorize(authAbort.signal);
       } catch (error) {
         // A blocked popup is not a dead end — fall back to the redirect path.
         if (error instanceof SyncPopupBlockedError) {
@@ -91,17 +118,46 @@ export function useSync(sources: readonly Source[]): SyncController {
         }
         throw error;
       }
+      authorizedAttemptRef.current = authAbort;
       connectedRef.current = true;
       await run();
     } catch (error) {
+      // An explicitly cancelled attempt may already have been replaced by a
+      // retry. Never let the older promise overwrite the newer attempt's UI.
+      if (authAbortRef.current !== authAbort) return;
       connectedRef.current = false;
-      setStatus('error');
+      setStatus(error instanceof SyncAuthorizationCancelledError ? 'disconnected' : 'error');
       setMessage(error instanceof Error ? error.message : 'Dropbox sign-in failed.');
+    } finally {
+      if (authAbortRef.current === authAbort) {
+        authAbortRef.current = null;
+        if (authorizedAttemptRef.current === authAbort) authorizedAttemptRef.current = null;
+      }
     }
   }, [backend, run]);
 
+  const cancelConnect = useCallback(() => {
+    const attempt = authAbortRef.current;
+    attempt?.abort();
+    authAbortRef.current = null;
+    syncEpochRef.current++;
+    if (attempt && authorizedAttemptRef.current === attempt) {
+      authorizedAttemptRef.current = null;
+      // DropboxBackend removes the wrapped local credential synchronously,
+      // then revokes remotely on a best-effort basis (including offline).
+      void backend?.disconnect();
+    }
+    connectedRef.current = false;
+    setStatus('disconnected');
+    setMessage('Dropbox sign-in was cancelled. You can try again.');
+  }, [backend]);
+
   const disconnect = useCallback(async () => {
     if (!backend) return;
+    authAbortRef.current?.abort();
+    authAbortRef.current = null;
+    authorizedAttemptRef.current = null;
+    syncEpochRef.current++;
     await backend.disconnect();
     connectedRef.current = false;
     setStatus('disconnected');
@@ -175,6 +231,7 @@ export function useSync(sources: readonly Source[]): SyncController {
     message,
     lastSyncedAt,
     connect,
+    cancelConnect,
     syncNow: run,
     disconnect,
   };

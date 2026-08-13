@@ -81,6 +81,7 @@ function entryHaystack(e: FoodEntry): string {
 
 /** Sort order for the "Your picks" summary — soonest first. */
 const AVAIL_ORDER: Record<Availability, number> = { now: 0, soon: 1, later: 2, anytime: 3 };
+type FoodSectionKey = Availability | 'picks';
 
 export function FoodView({
   camps, isEventFav, onToggleEventFav, friendFavEventIds,
@@ -113,13 +114,13 @@ export function FoodView({
     return () => document.removeEventListener('click', onDocClick);
   }, []);
 
-  // Collapsible availability sections. The browse-heavy ones (Upcoming, Hours
-  // not listed) start collapsed so the page isn't a long scroll; the
-  // time-relevant Serving now / Starting soon stay open. Header toggles.
-  const [collapsedSections, setCollapsedSections] = useState<Set<Availability>>(
-    () => new Set<Availability>(['later', 'anytime']),
+  // Collapsible sections. The potentially long planning lists (Your upcoming
+  // picks, Upcoming, Hours not listed) start collapsed so the live Food view
+  // stays compact; Serving now / Starting soon stay open.
+  const [collapsedSections, setCollapsedSections] = useState<Set<FoodSectionKey>>(
+    () => new Set<FoodSectionKey>(['picks', 'later', 'anytime']),
   );
-  const toggleSection = (k: Availability) => {
+  const toggleSection = (k: FoodSectionKey) => {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
       if (next.has(k)) next.delete(k); else next.add(k);
@@ -371,10 +372,20 @@ export function FoodView({
       {picks.length > 0 && (
         <section class="food-section food-picks">
           <h3 class="food-section-head">
-            <span aria-hidden="true">★</span> Your upcoming picks{' '}
-            <span class="food-section-count">({picks.length})</span>
+            <button
+              type="button"
+              class="food-section-toggle"
+              aria-expanded={collapsedSections.has('picks') ? 'false' : 'true'}
+              onClick={() => toggleSection('picks')}
+            >
+              <span class="food-section-indicator" aria-hidden="true">
+                {collapsedSections.has('picks') ? '+' : '−'}
+              </span>
+              <span aria-hidden="true">★</span> Your upcoming picks{' '}
+              <span class="food-section-count">({picks.length})</span>
+            </button>
           </h3>
-          <ul class="food-list">
+          <ul class={'food-list' + (collapsedSections.has('picks') ? ' collapsed' : '')}>
             {picks.map(renderEntry)}
           </ul>
         </section>

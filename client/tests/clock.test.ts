@@ -75,7 +75,7 @@ describe('clock (simulated now)', () => {
   test('playa wall-clock fields do not depend on the runtime timezone', () => {
     const morning = new Date('2026-08-31T08:00:00-07:00');
     assert.deepEqual(playaTimeParts(morning), {
-      weekday: 'Mon', month: 8, day: 31, hours: 8, minutes: 0,
+      year: 2026, weekday: 'Mon', month: 8, day: 31, hours: 8, minutes: 0,
     });
     assert.match(formatPlayaTime(morning), /8:00\s*AM/i);
     assert.equal(formatPlayaDateTime(morning), '8:00 AM PDT on Aug 31, 2026');

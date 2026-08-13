@@ -864,6 +864,41 @@ class MultiSourceCalendarWindowTests(unittest.TestCase, _TmpConfigMixin):
 
         self.assertEqual(camp.events[0].parsed_time["start_date"], "8/30")
 
+    def test_second_week_overnight_keeps_explicit_occurrence_dates(self):
+        builder = SiteBuilder(self._make_config())
+        camp = Camp(
+            id="1", name="Some Camp!", location="", description="", website="",
+            url="", events=[Event(
+                id="e1", name="Noodley night! Post burn hot water cafe",
+                description="",
+                time="Begins Sat (9/5) at 11:00 PM, Ends Sun at 1:00 AM",
+            )],
+        )
+
+        builder._enrich_event_times([camp])
+
+        event = camp.events[0]
+        self.assertEqual(event.display_time, "Sat 9/5 11:00 PM – Sun 9/6 1:00 AM")
+        self.assertEqual(event.parsed_time["start_date"], "9/5")
+        self.assertEqual(event.parsed_time["end_date"], "9/6")
+
+    def test_stale_explicit_date_is_repaired_when_weekday_disagrees(self):
+        builder = SiteBuilder(self._make_config())
+        camp = Camp(
+            id="1", name="Old dates", location="", description="", website="",
+            url="", events=[Event(
+                id="e1", name="Old-year tuple", description="",
+                time="Begins Thu (8/29) at 9:00 PM, Ends Fri at 2:00 AM",
+            )],
+        )
+
+        builder._enrich_event_times([camp])
+
+        event = camp.events[0]
+        self.assertEqual(event.display_time, "Thu 9/3 9:00 PM – Fri 9/4 2:00 AM")
+        self.assertEqual(event.parsed_time["start_date"], "9/3")
+        self.assertEqual(event.parsed_time["end_date"], "9/4")
+
 
 class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
     """Smoke test: a minimal fetch → site/index.html plaintext build."""
@@ -941,7 +976,12 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         self.assertIn("localStorage.getItem('bm-theme')", privacy)
         for theme in ("paper", "daylight", "dusk", "night", "eclipse"):
             self.assertIn(f'data-theme="{theme}"', privacy)
-        self.assertIn("'./privacy.html'", (self.config.site_dir / "sw.js").read_text())
+        sw = (self.config.site_dir / "sw.js").read_text()
+        self.assertIn("'./privacy.html'", sw)
+        self.assertIn("CACHE_ART_IMAGE", sw)
+        self.assertIn("async function cacheArtImage", sw)
+        self.assertIn("req.destination !== 'image'", sw)
+        self.assertIn("const IMG_CACHE_MAX = 2000", sw)
 
     def test_build_fails_helpfully_when_bundle_missing(self):
         """If the client bundle hasn't been built yet, the error should

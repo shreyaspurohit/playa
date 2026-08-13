@@ -50,7 +50,7 @@ old artifact is overwritten.
 
 | Concern | Mitigation |
 |---|---|
-| §5 non-commercial use | No ads, no analytics, no tracking, no monetization, no accounts. About modal calls this out verbatim. |
+| §5 non-commercial use | No ads, no monetization, no accounts, no per-user analytics; the app sets no cookies or tracking scripts of its own. The About modal states this and discloses that Cloudflare/GitHub Pages process ordinary request metadata (e.g. IP) and expose aggregate traffic stats. |
 | §6 camp-copyright on descriptions | Password gate narrows audience to friends; `noindex, nofollow, noarchive` keeps crawlers out; takedown mailto in footer + About modal. |
 | §7(d) prohibited framing/linking | Each card carries a canonical "on directory ↗" link to the official entry, and the About modal reminds users to verify there. |
 | Innovate §4 disclaimer | App carries the verbatim *"This app is not affiliated, endorsed, or verified by Burning Man Project"* in the footer + About modal. |

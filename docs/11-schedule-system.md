@@ -1,7 +1,7 @@
 ---
 title: Schedule System
 date: 2026-04-27
-updated: 2026-08-10
+updated: 2026-08-13
 status: current
 ---
 
@@ -15,8 +15,9 @@ whole burn week. The hard parts are:
 1. **Parsing the directory's free-text time strings** into a
    structured form (kind / days / start / end).
 2. **Bucketing recurring events** correctly across the day columns.
-3. **Year-agnostic dates** — the directory's `(M/D)` tuples drift
-   each year; we derive the week map from the data itself.
+3. **Year-aware occurrence dates** — valid `(M/D)` tuples distinguish repeated
+   weekdays across the two-week window, while stale prior-year tuples must be
+   detected and repaired.
 
 ## Decisions
 
@@ -24,12 +25,12 @@ whole burn week. The hard parts are:
   runs at build time and stamps every event with a structured
   `parsed_time` plus a pre-rendered `display_time` string. The
   client never sees the raw upstream format.
-- **Year-agnostic dates from the data.** `derive_week_map` scans
-  every single-occurrence parse in the fetch and builds
-  `{day_abbrev → "M/D"}` from the `(M/D)` tuples the directory
-  itself posted. Recurring events look up their start date in this
-  map. When the burn rolls over to next year, the map updates
-  automatically on the next fetch.
+- **Occurrence-aware single dates.** A valid explicit `(M/D)` is retained when
+  it falls inside the configured event window and its weekday agrees with the
+  current burn year. This distinguishes the second Saturday from the first.
+  Stale tuples whose weekday no longer agrees are repaired through the
+  canonical burn-window map. Overnight end dates are derived from the resolved
+  start occurrence, so a second-week Saturday ends on the following Sunday.
 - **Day-of-week labels, not dates, in the calendar.** Burners think
   in "Wednesday of burn week," not "Aug 27." The columns are
   Mon-first (matches camp usage) and labelled by short day name +
@@ -67,6 +68,12 @@ template falls back to `e.display_time || e.time` so unparsed events
 still render with their raw string. The build prints a coverage
 percentage to catch parser regressions.
 
+After parsing, `resolve_single_start_date` validates explicit single-event
+dates against the configured burn year, weekday, and event window. Valid dates
+survive; invalid/stale dates fall back to `canonical_week_map`. The resolved
+start occurrence also drives `resolve_end_date`, keeping both `display_time`
+and structured `parsed_time.end_date` aligned for overnight events.
+
 ### Day compaction
 
 ```mermaid
@@ -97,7 +104,7 @@ flowchart TD
   Window --> Cells
   Cells --> ColumnsDesktop[CSS grid 7 cols Mon–Sun]
   Cells --> AccordMobile["≤800px collapsible <details>"]
-  Cells --> Filters["Now + Near-me filters<br>(see hooks/useGeolocation)"]
+  Cells --> Filters["Hide-past + Now + Near-me filters<br>(see hooks/useGeolocation)"]
 ```
 
 Recurring events render once **per day they recur**. A "Mon–Fri"
@@ -106,6 +113,11 @@ event shows in 5 columns. Unparsed events land in a dashed-border
 
 ### Filters
 
+- **🕘 Hide past**: removes scheduled occurrences whose end time is at or
+  before the shared clock value, using Black Rock City local time. In-progress
+  and unparseable events remain visible. App supplies a fresh clock snapshot
+  once per minute and whenever Schedule is opened, so an installed PWA can
+  remain open without the cutoff going stale.
 - **⚡ Now**: events starting in the next 2 hours of the shared
   `utils/clock.now()` value. This normally uses the device clock and honors the
   `?now=<ISO>` manual-test override described in the mobile visual runbook.

@@ -817,6 +817,13 @@ art locations release at gate-open while camps release on build-week Sunday;
 the client therefore evaluates the same source/year/trust policy against two
 different timestamps. The `god-mode` trusted bypass applies identically.
 
+**Offline images:** API art contributes at most one thumbnail URL per piece.
+Art cards retain native lazy loading, and the service worker caches images as
+they become visible. The client also warms remaining thumbnails one at a time
+during idle periods after the source is unlocked. It pauses for hidden/offline,
+Data Saver, and 2G-class states; the durable 2000-entry cache is independent of
+the versioned app shell and has no user-facing bulk-download action.
+
 **Operational note:** the `directory` scrape's `/artwork/` page set
 is much smaller than `/camps/` (~10 pages vs 30). The shared
 `PAGES` env var still gates both — over-fetching empty pages is

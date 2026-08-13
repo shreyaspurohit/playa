@@ -35,8 +35,10 @@ export function Footer({ fetchedDate, contactEmail, source }: Props) {
               please use{' '}
               <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
                 directory.burningman.org
-              </a>. This site has no ads, no analytics, no tracking, and no
-              commercial purpose.
+              </a>. The app has no ads and sets no cookies or tracking scripts
+              of its own. Cloudflare and GitHub Pages, which serve it, process
+              ordinary request metadata (such as IP addresses) and expose
+              aggregate traffic statistics.
             </p>
             <p>
               <strong>Camp owner? Want your camp removed?</strong>{' '}

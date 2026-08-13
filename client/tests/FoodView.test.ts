@@ -482,7 +482,7 @@ describe('<FoodView>', () => {
     assert.equal(toggle.contains(star), false);
   });
 
-  test('shows a "Your picks" section for starred upcoming food', () => {
+  test('shows starred upcoming food in a collapsed, expandable picks section', async () => {
     const camp = makeCamp({
       id: 'c-pick',
       events: [makeEvent({ id: 'e-pick', name: 'Starred Ramen', food_tags: ['noodles'], parsed_time: makeParsedTime() })],
@@ -497,6 +497,17 @@ describe('<FoodView>', () => {
     const picks = mount.querySelector('.food-picks');
     assert.ok(picks, 'Your picks section present');
     assert.match(picks!.textContent ?? '', /Starred Ramen/);
+    const toggle = picks!.querySelector<HTMLButtonElement>('.food-section-toggle');
+    const list = picks!.querySelector('.food-list');
+    assert.equal(toggle?.getAttribute('aria-expanded'), 'false');
+    assert.equal(toggle?.querySelector('.food-section-indicator')?.textContent?.trim(), '+');
+    assert.equal(list?.classList.contains('collapsed'), true);
+
+    toggle?.click();
+    await tick();
+    assert.equal(toggle?.getAttribute('aria-expanded'), 'true');
+    assert.equal(toggle?.querySelector('.food-section-indicator')?.textContent?.trim(), '−');
+    assert.equal(list?.classList.contains('collapsed'), false);
   });
 
   test('Refresh re-snapshots the clock (Upcoming → Serving now)', async () => {
