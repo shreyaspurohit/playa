@@ -29,6 +29,11 @@ Two web platform APIs power this, used for two different jobs:
   setup, no message size limits. Each hook (`useFavorites`,
   `useFriends`, `useMeetSpots`, `useTheme`) listens for its own LS
   key and re-reads on change.
+- **Same-tab write notification for optional cloud sync.** The platform does
+  not emit `storage` in the tab that performed the write, so the safe wrappers
+  in `utils/storage.ts` also dispatch `playa-local-storage-change`. `useSync`
+  filters that event to the fields in ADR 16 and debounces a foreground
+  Dropbox cycle. Existing hooks continue to update their own same-tab state.
 - **BroadcastChannel for the password specifically.** The password
   on disk is encrypted (see [05-password-management.md](./05-password-management.md)).
   Sibling tabs that want to skip the prompt need the *plaintext*,
@@ -137,3 +142,5 @@ Gate falls through to the prompt.
   long-lived BroadcastChannel responder
 - `client/src/components/Gate.tsx` — fresh-tab BroadcastChannel
   request + share-on-success
+- `client/src/hooks/useSync.ts` — listens to both cross-tab `storage` and the
+  same-tab custom write event when optional Dropbox sync is connected

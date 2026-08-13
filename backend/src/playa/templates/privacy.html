@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="theme-color" content="#c2410c">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <script>
+    // Match the app's saved theme before paint; default to the app's paper theme.
+    try {
+      var t = localStorage.getItem('bm-theme') || 'paper';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+  <title>Privacy Policy · Playa Camps</title>
+  <style>
+    :root,
+    :root[data-theme="paper"] {
+      --bg: #faf7f2; --card: #ffffff; --border: #e6dfd4;
+      --text: #1a1a1a; --muted: #6b6256; --accent: #c2410c;
+      --accent-soft: #fde7d7; --header-bg: linear-gradient(180deg, #ffffff, #faf7f2);
+    }
+    :root[data-theme="daylight"] {
+      --bg: #ffffff; --card: #f7f7f8; --border: #e3e3e6;
+      --text: #0a0a0a; --muted: #5f5f63; --accent: #ea580c;
+      --accent-soft: #ffedd5; --header-bg: #ffffff;
+    }
+    :root[data-theme="dusk"] {
+      --bg: #2b231c; --card: #3a3028; --border: #544739;
+      --text: #ead9bf; --muted: #a6988a; --accent: #fb923c;
+      --accent-soft: #5a3e2a; --header-bg: linear-gradient(180deg, #3a3028, #2b231c);
+    }
+    :root[data-theme="night"] {
+      --bg: #161618; --card: #1f1f24; --border: #2e2e36;
+      --text: #e6e6ea; --muted: #9897a0; --accent: #fb923c;
+      --accent-soft: #3a2a1c; --header-bg: linear-gradient(180deg, #1f1f24, #161618);
+    }
+    :root[data-theme="eclipse"] {
+      --bg: #000000; --card: #0a0a0e; --border: #1c1c24;
+      --text: #e8e8ec; --muted: #888890; --accent: #fb923c;
+      --accent-soft: #2a1f14; --header-bg: #050508;
+    }
+    html { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      font-size: 15px; line-height: 1.45;
+    }
+    .policy-header {
+      padding: 20px 24px 12px; background: var(--header-bg);
+      border-bottom: 1px solid var(--border); backdrop-filter: blur(6px);
+    }
+    .policy-header-inner { width: min(780px, 100%); margin: auto; }
+    .policy-brand {
+      color: var(--text); font-size: 22px; font-weight: 700;
+      letter-spacing: -0.01em; text-decoration: none;
+    }
+    .policy-kicker { display: block; color: var(--muted); font-size: 12px; }
+    main { width: min(780px, 100%); margin: auto; padding: 24px 24px 48px; }
+    article {
+      padding: 24px; background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    h1, h2 { line-height: 1.2; }
+    h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -0.01em; }
+    h2 { margin: 28px 0 8px; font-size: 18px; }
+    p { margin: 0 0 14px; }
+    .updated { margin-top: 0; color: var(--muted); font-size: 12px; }
+    a { color: var(--accent); }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 3px; }
+    @media (max-width: 600px) {
+      .policy-header { padding: 16px 14px 10px; }
+      main { padding: 14px 14px 36px; }
+      article { padding: 18px; border-radius: 10px; }
+      h1 { font-size: 25px; }
+    }
+  </style>
+</head>
+<body>
+<header class="policy-header">
+  <div class="policy-header-inner">
+    <a class="policy-brand" href="./">Playa Camps</a>
+    <span class="policy-kicker">Private, non-commercial planning for Burners</span>
+  </div>
+</header>
+<main>
+<article>
+  <h1>Playa Camps Privacy Policy</h1>
+  <p class="updated">Effective August 11, 2026</p>
+
+  <p>
+    Playa Camps is a private, non-commercial planning application. It has no
+    advertising, analytics, tracking, or application accounts. Most app data
+    stays in your browser. Dropbox backup and restore is optional and begins
+    only when you choose to connect Dropbox.
+  </p>
+
+  <h2>Information stored by Dropbox sync</h2>
+  <p>
+    When you connect Dropbox, Playa Camps may read and write one readable JSON
+    backup in its dedicated Dropbox App folder. The backup can contain your
+    nickname; IDs for favorites and plans; hidden schedule days; home-camp and
+    meet-spot selections; imported friends’ nicknames and shared selections;
+    and app preferences such as theme, distance unit, and map layers.
+  </p>
+  <p>
+    The backup does not contain the Playa Camps site password, Dropbox
+    credentials, live or simulated GPS location, simulated time, access-tier
+    keys, camp descriptions, or event descriptions.
+  </p>
+
+  <h2>How the information is used</h2>
+  <p>
+    The app uses the backup only to restore your state and merge changes across
+    browsers and devices you connect. Processing occurs in your browser. Playa
+    Camps does not operate a server that receives the backup, and it does not
+    sell, advertise with, profile, or share the backup with other users.
+  </p>
+
+  <h2>Dropbox access</h2>
+  <p>
+    Playa Camps requests only Dropbox file-content read and write permissions
+    for its App folder. It cannot browse or access files elsewhere in your
+    Dropbox. Dropbox handles authentication and stores the backup under its own
+    terms and privacy policy. Dropbox access and refresh tokens are encrypted
+    on your device with a non-extractable browser key.
+  </p>
+
+  <h2>Your choices and retention</h2>
+  <p>
+    You can use Playa Camps without Dropbox. Disconnecting revokes this
+    device’s connection but deliberately leaves the backup available for later
+    restoration. To remove the cloud copy, delete the Playa Camps Sync App
+    folder from Dropbox. You can also revoke the app from your Dropbox account
+    settings. Clearing local Playa Camps data removes the local connection and
+    local planning state but does not delete the Dropbox backup.
+  </p>
+
+  <h2>Changes and contact</h2>
+  <p>
+    This policy may be updated when the app’s data practices change. The
+    operator contact for questions or privacy requests is available in the
+    Playa Camps <strong>About &amp; disclaimer</strong> panel.
+  </p>
+
+  <p><a href="./">Return to Playa Camps</a></p>
+</article>
+</main>
+</body>
+</html>

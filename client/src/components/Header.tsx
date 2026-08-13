@@ -5,6 +5,7 @@
 //          else: source switcher, theme, about, report bug, install).
 import type { Source } from '../types';
 import type { View } from '../hooks/useHashRoute';
+import type { SyncStatus } from '../hooks/useSync';
 import { HeaderMenu } from './HeaderMenu';
 import { NicknamePill } from './NicknamePill';
 
@@ -23,7 +24,13 @@ interface Props {
   currentTheme: string;
   onThemeChange: (name: string) => void;
   onInfoClick: () => void;
+  onSyncNow: () => void;
+  onSyncConnect: () => void;
+  onSyncDisconnect: () => void;
   infoPulse: boolean;
+  syncAvailable: boolean;
+  syncConnected: boolean;
+  syncStatus: SyncStatus;
   source: Source;
   availableSources: Source[];
   onSourceChange: (s: Source) => void;
@@ -32,7 +39,9 @@ interface Props {
 export function Header({
   campTotal, campMatching, artTotal, artMatching,
   view, filterNote, fetchedDate, fetchedAt, version,
-  currentTheme, onThemeChange, onInfoClick, infoPulse,
+  currentTheme, onThemeChange, onInfoClick, onSyncNow,
+  onSyncConnect, onSyncDisconnect, infoPulse,
+  syncAvailable, syncConnected, syncStatus,
   source, availableSources, onSourceChange,
 }: Props) {
   return (
@@ -56,7 +65,13 @@ export function Header({
             currentTheme={currentTheme}
             onThemeChange={onThemeChange}
             onInfoClick={onInfoClick}
+            onSyncNow={onSyncNow}
+            onSyncConnect={onSyncConnect}
+            onSyncDisconnect={onSyncDisconnect}
             infoPulse={infoPulse}
+            syncAvailable={syncAvailable}
+            syncConnected={syncConnected}
+            syncStatus={syncStatus}
           />
         </div>
       </div>

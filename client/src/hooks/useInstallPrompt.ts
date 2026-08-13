@@ -12,6 +12,7 @@
 //      boot without a network next time.
 
 import { useEffect, useState } from 'preact/hooks';
+import { isStandaloneDisplay } from '../utils/standalone';
 
 export interface InstallState {
   /** Running as an installed PWA. No install UI needed. */
@@ -21,19 +22,8 @@ export interface InstallState {
   offlineReady: boolean;
 }
 
-function matchesStandalone(): boolean {
-  try {
-    // iOS Safari uses the non-standard navigator.standalone. Everyone
-    // else uses the display-mode media query. Check both.
-    const iosStandalone =
-      (navigator as unknown as { standalone?: boolean }).standalone === true;
-    const mq = typeof window.matchMedia === 'function'
-      && window.matchMedia('(display-mode: standalone)').matches;
-    return iosStandalone || mq;
-  } catch {
-    return false;
-  }
-}
+// Shared with cloud sync's redirect-path decision (docs/16 D13).
+const matchesStandalone = isStandaloneDisplay;
 
 export function useInstallPrompt(): InstallState {
   const [isStandalone, setIsStandalone] = useState<boolean>(matchesStandalone);

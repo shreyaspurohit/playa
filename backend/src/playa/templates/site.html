@@ -27,6 +27,7 @@
 <meta name="bm-contact-email" content="__CONTACT_EMAIL__">
 __SOURCES_META__
 __TIER_WRAPPERS_META__
+__SYNC_META__
 <!-- Effective burn-week window. `bm-burn-start` is the earliest
      fetched event date (so volunteer-week shows on the calendar);
      `bm-burn-end` is Config.burn_end. ScheduleView walks this window
@@ -561,6 +562,10 @@ __TIER_WRAPPERS_META__
     background: var(--chip-bg);
     outline: none;
   }
+  .header-menu-item:disabled {
+    opacity: 0.65;
+    cursor: wait;
+  }
   /* SVG glyph that anchors a menu row. Sized + colored so it matches
      the row's text — currentColor lets it follow each theme. */
   .header-menu-icon-svg {
@@ -569,6 +574,42 @@ __TIER_WRAPPERS_META__
     display: inline-flex; align-items: center; justify-content: center;
     color: var(--muted);
   }
+  .header-menu-dropbox-glyph {
+    flex: none;
+    width: 20px; height: 20px;
+    display: block;
+  }
+  .header-menu-item-copy {
+    min-width: 0;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .header-menu-item-detail {
+    color: var(--muted);
+    font-size: 11px; line-height: 1.3;
+  }
+  .header-menu-sync-note {
+    margin: 2px 6px 8px 0;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--chip-bg);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .header-menu-sync-note strong { color: var(--text); font-weight: 600; }
+  .header-menu-sync-note-actions {
+    display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  }
+  .header-menu-sync-note-continue,
+  .header-menu-sync-note-cancel {
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 4px 7px; background: var(--card); color: var(--text);
+    font-size: 11px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .header-menu-sync-note-continue { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .header-menu-sync-note-continue:disabled { opacity: 0.6; cursor: wait; }
   /* Status row — same vertical rhythm as `.header-menu-item` but with
      a trailing action button on the right. Used by InstallPrompt for
      the offline-ready state + check-for-updates affordance, so the
@@ -655,6 +696,7 @@ __TIER_WRAPPERS_META__
     max-height: 82vh; overflow-y: auto; color: var(--text);
     box-shadow: 0 8px 40px rgba(0,0,0,0.25);
   }
+  .sync-modal-card { max-width: 480px; }
   .modal-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: 14px 20px 10px; border-bottom: 1px solid var(--border);
@@ -763,6 +805,13 @@ __TIER_WRAPPERS_META__
     border-color: #c2410c; background: transparent;
   }
   .modal-body .action-btn.danger:hover .action-label { color: #c2410c; }
+  .sync-actions { display: flex; flex-direction: column; gap: 8px; }
+  .modal-body .sync-status {
+    margin-top: 8px; padding: 8px 10px; border-radius: 7px;
+    background: var(--chip-bg); color: var(--muted); font-size: 12px;
+  }
+  .modal-body .sync-error,
+  .modal-body .sync-expired { color: #b91c1c; }
   footer.site-footer {
     padding: 24px 24px 40px; margin-top: 8px; border-top: 1px solid var(--border);
     color: var(--muted); font-size: 12px; line-height: 1.55;
@@ -2200,6 +2249,15 @@ __TIER_WRAPPERS_META__
   }
 
   @media (max-width: 600px) {
+    .header-menu-panel {
+      position: fixed;
+      right: 12px;
+      min-width: 0;
+      width: min(320px, calc(100vw - 24px));
+      max-width: none;
+      max-height: calc(100dvh - 24px);
+      overflow-y: auto;
+    }
     .site-chrome {
       padding: 14px 14px 10px;
       transition: padding 180ms ease, border-color 180ms ease,
@@ -2298,6 +2356,45 @@ __TIER_WRAPPERS_META__
   }
 </style>
 <script>
+  // Dropbox redirects its popup back to this same single-file app. Relay the
+  // short-lived authorization code before Preact/password-gate startup, then
+  // close the popup. Privacy browsers may sever window.opener while crossing
+  // Dropbox, so the same-origin BroadcastChannel is the durable handoff.
+  try {
+    var oq = new URLSearchParams(location.search);
+    var os = oq.get('state') || '';
+    var oc = oq.get('code') || '';
+    var oe = oq.get('error') || '';
+    if (os.indexOf('pc_') === 0 && (oc || oe)) {
+      window.__PLAYA_DROPBOX_OAUTH_CALLBACK__ = true;
+      var om = {
+        type: 'PLAYA_DROPBOX_OAUTH', state: os, code: oc, error: oe
+      };
+      try {
+        if (window.opener) window.opener.postMessage(om, location.origin);
+      } catch (e) {}
+      var ob = null;
+      try {
+        if ('BroadcastChannel' in window) {
+          ob = new BroadcastChannel('playa-dropbox-oauth');
+          ob.postMessage(om);
+        }
+      } catch (e) {}
+      document.addEventListener('DOMContentLoaded', function () {
+        document.body.innerHTML = '<main style="max-width:420px;margin:15vh auto;padding:24px;font:16px/1.5 system-ui;text-align:center">'
+          + '<h1 style="font-size:22px">Dropbox sign-in complete</h1>'
+          + '<p>You can close this window and return to Playa Camps.</p></main>';
+      });
+      // Give BroadcastChannel time to enqueue before closing. If a browser
+      // refuses window.close(), the minimal completion page remains instead
+      // of booting a second password-gated copy of Playa Camps.
+      setTimeout(function () {
+        if (ob) ob.close();
+        window.close();
+      }, 150);
+    }
+  } catch (e) {}
+
   // Apply saved theme before body renders, to avoid flash of wrong theme.
   try {
     var t = localStorage.getItem('bm-theme') || 'paper';
@@ -2315,7 +2412,7 @@ __TIER_WRAPPERS_META__
 
 __DATA_SCRIPT__
 __RELEASE_NOTES__
-<script>__BUNDLE__</script>
+<script>if (!window.__PLAYA_DROPBOX_OAUTH_CALLBACK__) { __BUNDLE__ }</script>
 
 </body>
 </html>

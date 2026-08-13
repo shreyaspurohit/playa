@@ -5,6 +5,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isNewer, parseVersion } from '../src/hooks/useVersionCheck';
+import { shouldReportStale } from '../src/utils/refresh';
 
 describe('parseVersion', () => {
   test('strips leading v and parses each component', () => {
@@ -57,5 +58,40 @@ describe('isNewer', () => {
   test('handles missing v prefix on either side', () => {
     assert.equal(isNewer('2026.04.25', 'v2026.04.24'), true);
     assert.equal(isNewer('v2026.04.25', '2026.04.24'), true);
+  });
+});
+
+describe('force-refresh stale guard', () => {
+  test('equal loaded, cached, and server versions are already current', () => {
+    assert.equal(shouldReportStale(
+      'v2026.08.12.1638',
+      'v2026.08.12.1638',
+      'v2026.08.12.1638',
+    ), false);
+  });
+
+  test('reports propagation only when origin is newer than the cache', () => {
+    assert.equal(shouldReportStale(
+      'v2026.08.12.1638',
+      'v2026.08.12.1638',
+      'v2026.08.12.1640',
+    ), true);
+  });
+
+  test('does not report propagation once the refreshed cache catches up', () => {
+    assert.equal(shouldReportStale(
+      'v2026.08.12.1638',
+      'v2026.08.12.1640',
+      'v2026.08.12.1640',
+    ), false);
+  });
+
+  test('missing version pin and rollbacks do not create false warnings', () => {
+    assert.equal(shouldReportStale('v2026.08.12.1638', 'v2026.08.12.1638', null), false);
+    assert.equal(shouldReportStale(
+      'v2026.08.12.1638',
+      'v2026.08.12.1638',
+      'v2026.08.12.1600',
+    ), false);
   });
 });

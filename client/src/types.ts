@@ -142,6 +142,17 @@ export const LS = {
   // or dismissed) the EmbargoLiftedBanner. Camp and art have different
   // release dates, so compose `${base}/${year}/${kind}`.
   embargoLiftAcked: 'bm-embargo-lift-acked',
+  // Optional Dropbox sync (ADR 16). The baseline is the last merged cloud
+  // document and is what lets the client infer that a missing favorite is an
+  // intentional deletion. Dropbox's access + refresh session is AES-wrapped
+  // by secureStore; the public browser client uses PKCE and has no App secret.
+  syncBase: 'bm-sync-base/v1',
+  syncToken: 'bm-sync-token/v1',
+  syncDevice: 'bm-sync-device/v1',
+  // Ephemeral PKCE state for the standalone-PWA redirect auth path (ADR 16 D13).
+  // Holds {state, verifier, redirect, at} between leaving for Dropbox and the
+  // return navigation; cleared immediately after the code exchange or on TTL.
+  syncAuthPending: 'bm-sync-auth/v1',
 } as const;
 
 /** A data-source identifier as it appears in DOM script ids,

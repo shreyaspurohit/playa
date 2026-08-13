@@ -4,7 +4,7 @@ import { installDom, teardownDom } from './_dom';
 import { LS } from '../src/types';
 import {
   now, isMockNow, mockNowLabel, clearMockNow,
-  formatPlayaTime, playaTimeParts,
+  formatPlayaDateTime, formatPlayaTime, playaTimeParts,
 } from '../src/utils/clock';
 
 describe('clock (simulated now)', () => {
@@ -78,5 +78,6 @@ describe('clock (simulated now)', () => {
       weekday: 'Mon', month: 8, day: 31, hours: 8, minutes: 0,
     });
     assert.match(formatPlayaTime(morning), /8:00\s*AM/i);
+    assert.equal(formatPlayaDateTime(morning), '8:00 AM PDT on Aug 31, 2026');
   });
 });

@@ -247,7 +247,8 @@ is available.
 The checked-in helper performs the directory-only plaintext build, drives
 Headless Shell over anonymous CDP pipes, captures expanded/collapsed/revealed
 states for every tab at 390 × 844, exercises Food Near Me with a simulated GPS
-fix, captures an explained arrow from GPS to a selected Map marker, and restores
+fix, captures an explained arrow from GPS to a selected Map marker, checks the
+dedicated Dropbox sync modal when that build option is enabled, and restores
 and verifies the normal encrypted build even when capture fails:
 
 ```bash
@@ -267,6 +268,17 @@ the script when checking another point:
 
 ```bash
 MOBILE_REVIEW_GPS=40.786958,-119.202994 make review-mobile
+```
+
+To include and require the build-gated Dropbox controls in the modal pass, use
+a non-production test app key. These review-only variables affect the temporary
+plaintext build; they are not carried into the restored build:
+
+```bash
+MOBILE_REVIEW_SYNC_PROVIDER=dropbox \
+MOBILE_REVIEW_SYNC_CLIENT_ID=mobile_review_test \
+MOBILE_REVIEW_EXPECT_SYNC=1 \
+make review-mobile
 ```
 
 The command prints a unique `/tmp/playa-mobile-review.*` directory containing

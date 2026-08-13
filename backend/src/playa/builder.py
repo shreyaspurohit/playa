@@ -21,11 +21,13 @@ Placeholders in the template:
     __LOCATION_RELEASE_YEAR__ — current live API/map year
     __CAMP_LOCATION_RELEASE_AT__ — camp public-release ISO timestamp
     __ART_LOCATION_RELEASE_AT__  — art public-release ISO timestamp
+    __SYNC_META__        — optional Dropbox provider/App-key metadata
 """
 from __future__ import annotations
 
 import base64
 import gzip
+import html as html_lib
 import json
 import os
 import subprocess
@@ -48,6 +50,7 @@ from .timeparser import (
 
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "site.html"
+PRIVACY_TEMPLATE_PATH = Path(__file__).parent / "templates" / "privacy.html"
 # The client bundle lives at <repo_root>/client/dist/bundle.js. We derive
 # it from `config.root` at call time (see _read_bundle) rather than via
 # __file__ so it's test-injectable (tests pass a tmp_path root).
@@ -144,6 +147,33 @@ class SiteBuilder:
                 "ART_LOCATION_RELEASE_AT; the official camp release "
                 "precedes the art/gate-open release.",
             )
+
+    def _sync_meta(self) -> str:
+        """Build-gated Dropbox config; default HTML has no provider metadata."""
+        provider = self.config.sync_provider
+        client_id = self.config.sync_client_id
+        if not provider and not client_id:
+            return ""
+        if provider != "dropbox":
+            raise RuntimeError(
+                "SYNC_PROVIDER must be unset or 'dropbox' for this build."
+            )
+        if not client_id:
+            raise RuntimeError(
+                "SYNC_CLIENT_ID must be set when SYNC_PROVIDER=dropbox."
+            )
+        if len(client_id) > 128 or not all(
+            c.isalnum() or c in "_-" for c in client_id
+        ):
+            raise RuntimeError("SYNC_CLIENT_ID contains invalid characters.")
+        values = {
+            "bm-sync-provider": "dropbox",
+            "bm-sync-client-id": client_id,
+        }
+        return "\n".join(
+            f'<meta name="{name}" content="{html_lib.escape(value, quote=True)}">'
+            for name, value in values.items()
+        )
 
     # --- data loading -----------------------------------------------------
 
@@ -603,6 +633,13 @@ class SiteBuilder:
     def _read_template() -> str:
         return TEMPLATE_PATH.read_text(encoding="utf-8")
 
+    def _write_privacy_page(self) -> Path:
+        """Emit a public policy without app payloads or password gating."""
+        policy = PRIVACY_TEMPLATE_PATH.read_text(encoding="utf-8")
+        out = self.config.site_dir / "privacy.html"
+        out.write_text(policy, encoding="utf-8")
+        return out
+
     def _data_script(
         self, camps: list[Camp], source: str,
     ) -> tuple[str, str]:
@@ -767,8 +804,8 @@ class SiteBuilder:
             "// Cap image-cache entries — eviction is best-effort\n"
             "// LRU via insertion order (Cache.keys() returns FIFO).\n"
             "const IMG_CACHE_MAX = 400;\n"
-            "const SHELL = ['./', './index.html', './robots.txt', "
-            "'./manifest.webmanifest', './icon.svg'];\n"
+            "const SHELL = ['./', './index.html', './privacy.html', "
+            "'./robots.txt', './manifest.webmanifest', './icon.svg'];\n"
             "self.addEventListener('install', (e) => {\n"
             "  self.skipWaiting();\n"
             "  // Per-URL fetch with cache: 'reload' bypasses the HTTP\n"
@@ -965,6 +1002,7 @@ class SiteBuilder:
         # Validate the independent, year-specific D8 location cutoffs
         # before loading any potentially expensive source data.
         self._validate_location_release_policy()
+        sync_meta = self._sync_meta()
         # Load each configured source. The MIN_CAMPS rail applies to
         # the FIRST (default) source — that's the "is the primary
         # data path broken?" signal CI uses to refuse a degraded
@@ -1144,6 +1182,7 @@ class SiteBuilder:
             .replace("__DATA_SCRIPT__",        data_script)
             .replace("__SOURCES_META__",       sources_meta)
             .replace("__TIER_WRAPPERS_META__", wrappers_meta)
+            .replace("__SYNC_META__",          sync_meta)
             .replace("__BUNDLE__",             bundle_js)
             .replace("__RELEASE_NOTES__",      notes_script)
             .replace("__CONTACT_EMAIL__",      self.config.contact_email)
@@ -1168,6 +1207,10 @@ class SiteBuilder:
 
         self.config.site_html.parent.mkdir(parents=True, exist_ok=True)
         self.config.site_html.write_text(html, encoding="utf-8")
+
+        # Dropbox requires an app-specific policy available to users. Keep it
+        # outside the password-gated SPA and free of embedded source records.
+        self._write_privacy_page()
 
         # Service worker so the site is usable offline after first load.
         # Version stamp pins a cache key — rebuilds evict old caches.

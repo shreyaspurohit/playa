@@ -509,21 +509,29 @@ export function MapView({
     onClearTarget?.();
   }
 
-  // Pins: camps the user has starred (own or friends').
-  const pins = useMemo(() => {
+  // Starred camps for THIS source (own + friends'). Keep every starred camp in
+  // the sidebar even when its address is absent, embargoed, or not understood
+  // by our map parser. Drawing is a separate concern below, just like art.
+  const starredCampList = useMemo(() => {
     return camps
       .filter((c) => favCampIds.has(c.id) || friendFavCampIds(c.id).length > 0)
-      .map((camp) => {
-        const pt = addressToSvgFeet(camp.location, brc);
-        if (!pt) return null;
-        const mine = favCampIds.has(camp.id);
-        const friends = friendFavCampIds(camp.id);
-        return { camp, x: pt.x, y: pt.y, mine, friends };
-      })
-      .filter(Boolean) as Array<{
-        camp: Camp; x: number; y: number; mine: boolean; friends: string[];
-      }>;
-  }, [camps, favCampIds, friendFavCampIds, brc]);
+      .map((camp) => ({
+        camp,
+        mine: favCampIds.has(camp.id),
+        friends: friendFavCampIds(camp.id),
+      }));
+  }, [camps, favCampIds, friendFavCampIds]);
+
+  // Drawable subset. A missing/unknown address removes only the SVG marker,
+  // never the user's saved item from the Starred camps list.
+  const pins = useMemo(() => starredCampList
+    .map((entry) => {
+      const pt = addressToSvgFeet(entry.camp.location, brc);
+      return pt ? { ...entry, x: pt.x, y: pt.y } : null;
+    })
+    .filter(Boolean) as Array<{
+      camp: Camp; x: number; y: number; mine: boolean; friends: string[];
+    }>, [starredCampList, brc]);
 
   // Starred art for THIS source (own + friends'). Doesn't require a
   // resolvable address — we still want to LIST a starred piece even
@@ -1562,14 +1570,14 @@ export function MapView({
             const hasAnyFriends =
               friendCampPins.length > 0
               || friendMeetPins.length > 0
-              || pins.some((p) => p.friends.length > 0);
-            const selectedCount = pins.reduce(
+              || starredCampList.some((p) => p.friends.length > 0);
+            const selectedCount = starredCampList.reduce(
               (n, p) => n + (selection.has(campKey(p.camp.id)) ? 1 : 0),
               0,
             );
             const visiblePins = sectionExpanded
-              ? pins
-              : pins.filter((p) => selection.has(campKey(p.camp.id)));
+              ? starredCampList
+              : starredCampList.filter((p) => selection.has(campKey(p.camp.id)));
             return (
           <div class="map-list">
             <div class="map-section-toggle">
@@ -1579,7 +1587,7 @@ export function MapView({
                 onClick={() => toggleSection('starred')}
               >
                 {sectionExpanded ? '▾' : '▸'}{' '}
-                Starred camps ({pins.length})
+                Starred camps ({starredCampList.length})
                 {!sectionExpanded && selectedCount > 0 && (
                   <span class="count"> · {selectedCount} selected</span>
                 )}
@@ -1625,7 +1633,7 @@ export function MapView({
                         </span>
                       )}
                     </span>
-                    <span class="map-pin-addr">{p.camp.location}</span>
+                    <span class="map-pin-addr">{p.camp.location || '(location not listed)'}</span>
                     {active && (
                       <div class="row-details">
                         {(youStarredCamp || p.friends.length > 0) && (
@@ -1643,7 +1651,9 @@ export function MapView({
                             ))}
                           </div>
                         )}
-                        <NavBlock address={p.camp.location} />
+                        {addressToSvgFeet(p.camp.location, brc)
+                          ? <NavBlock address={p.camp.location} />
+                          : <div class="row-footnote">This camp has no map-ready location.</div>}
                         {(() => {
                           const starred = (p.camp.events ?? []).filter(
                             (e) => favEventIds.has(e.id) || friendFavEventIds(e.id).length > 0,

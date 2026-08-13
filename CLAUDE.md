@@ -36,6 +36,7 @@ change touches one of these subsystems.
 - [`docs/13-tos-compliance.md`](docs/13-tos-compliance.md) — directory + Innovate API stance
 - [`docs/14-refresh-cycle.md`](docs/14-refresh-cycle.md) — refresh / force-refresh paths + SW interaction
 - [`docs/15-data-sources.md`](docs/15-data-sources.md) — multi-source architecture (directory + `api.burningman.org`), per-source state, normalization
+- [`docs/16-cloud-sync.md`](docs/16-cloud-sync.md) — optional Dropbox App-folder backup/restore, PKCE, LWW tombstones
 - [`docs/17-food-tab.md`](docs/17-food-tab.md) — food classification, live availability, filters, favorites, and Near Me behavior
 - [`docs/18-mobile-scroll-chrome.md`](docs/18-mobile-scroll-chrome.md) — contextual sticky controls + direction-aware mobile header collapse
 - [`docs/19-food-classification-audit.md`](docs/19-food-classification-audit.md) — local Ollama semantic audit + ID-only Food exclusion proposals
@@ -60,6 +61,8 @@ that are never committed:
 - `data/meta.json`, `data/camps.csv`, `data/camps_tagged.csv` — derived
 - `site/index.html` — the compiled site (even encrypted, keeps it out of
   GitHub code search and permanent git history)
+- `site/privacy.html` — generated public Dropbox policy; contains no fetched
+  camp data
 
 Every CI run fetches fresh on the ephemeral GH Actions runner, builds the
 site from scratch, uploads it as a Pages artifact, and the runner
@@ -169,8 +172,9 @@ python -m playa map-audit --year YYYY … → read-only annual base-grid candida
 as a dependency, so you don't need to think about it day to day.
 
 **Python side:** stdlib only + `openssl` CLI for the encrypted payload.
-**Client side:** `preact` at runtime; `@khmyznikov/pwa-install` is a
-runtime dep but only loaded lazily (dynamic `import()` from
+**Client side:** `preact` at runtime; the exact-pinned, MIT-licensed official
+`dropbox` SDK handles optional App-folder OAuth/file transport (ADR 16), and
+`@khmyznikov/pwa-install` is a runtime dep but only loaded lazily (dynamic `import()` from
 `InstallPrompt.tsx` on first click of the menu's "Install app" button)
 — it provides the iOS Add-to-Home-Screen instructions + native iOS 26+
 install dialog so we don't have to maintain hand-rolled instructions
@@ -179,11 +183,13 @@ that rot every iOS release. `esbuild`, `typescript`, `tsx`,
 of `playa/` — not nested, because it's an npm/TS project, not a
 Python module. Dev deps restored via `npm ci`.
 
-**Note on the pwa-install bundle cost.** Because our build emits a
+**Note on client dependency bundle cost.** Because our build emits a
 single IIFE (the Python builder inlines `dist/bundle.js` into
 `index.html`), `await import('@khmyznikov/pwa-install')` doesn't
 actually code-split — esbuild folds the lib into the main bundle
-(adds ~50 KB gzip). If JS payload becomes a concern, the path is to
+(adds ~50 KB gzip). The Dropbox SDK is likewise bundled even when sync is
+build-disabled, although it makes no request without sync metadata. If JS
+payload becomes a concern, the path is to
 switch esbuild to `format: 'esm'` + `splitting: true` and emit
 chunks to `site/` for the SW to serve on demand. Not worth the work
 for friends-scale traffic today.
@@ -254,6 +260,8 @@ wrapping them in classes would have been pure ceremony.
 | `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT` | unset | Repo *variables*. Timezone-aware ISO-8601 public release timestamps for the current API year's camp and art location fields (2026: `2026-08-23T00:00:00-07:00` / `2026-08-30T00:00:00-07:00`). Required when `api-<BRC_MAP_YEAR>` is embedded; independent of the burn/spirit-access window. See ADR D8. |
 | `PLAYA_GO_LIVE`      | unset / `false`               | Repo *variable* (truthy/falsy). Forces `BURN_OPEN=1` on builds whose date is BEFORE `BURN_WINDOW_OPEN_FROM` so spirit-mode auto-unlocks ahead of the burn week (e.g., for early stress-testing or operator preview). Past `BURN_WINDOW_OPEN_TO` the flag is ignored — the deploy closes regardless. Manual `workflow_dispatch` `burn_open` input still wins over this. |
 | `MIN_CAMPS`          | `500`                         | Primary-source build safety rail. `0` is for intentionally small local fixtures only; never set it in CI. |
+| `SYNC_PROVIDER`      | *(unset)*                     | Optional cloud backup provider. Set to `dropbox` with `SYNC_CLIENT_ID`; unset emits no sync UI or provider traffic. |
+| `SYNC_CLIENT_ID`     | *(unset)*                     | Public Dropbox App key for PKCE; configure an App-folder app and register the deployed/local redirect URI. |
 
 Local dev: leave `SITE_PASSWORD` unset to produce a plaintext build for
 quick preview. CI sets both via repo secrets. The API source caches are
@@ -361,6 +369,8 @@ release-note, and builder integration coverage). JS tests live at
   - `index.html` — self-contained site. Historical directory-only builds were
     ~1.7 MB plaintext / ~2.2 MB encrypted; gzip-before-encrypt reduced that
     baseline, while additional embedded sources increase it.
+  - `privacy.html` — public, payload-free Dropbox privacy policy generated from
+    `backend/src/playa/templates/privacy.html`.
   - `robots.txt` — `Disallow: /` for all user-agents.
   - `.nojekyll` — disables Jekyll processing on GH Pages.
   - `CNAME` — `playa.purohit.dev`. DNS side: a `CNAME` record for `playa`
@@ -599,8 +609,10 @@ re-run `make test`.
 
 The client is a small **Preact + htm + TypeScript** app bundled by
 **esbuild** into a single minified IIFE (`dist/bundle.js`, ~34 KB) that
-the Python builder inlines into the HTML. Zero runtime network
-dependencies — everything ships in the one static file.
+the Python builder inlines into the HTML. Default builds have zero runtime
+network dependencies — everything ships in the one static file. ADR 16 adds
+explicitly opt-in Dropbox traffic only when the build emits sync metadata; its
+official SDK is bundled locally, not loaded from a CDN.
 
 ### Why this stack
 

@@ -132,6 +132,12 @@ class Config:
     # — single-secret deployments still work.
     bm_cache_password: str = ""
 
+    # Optional browser-side cloud sync (ADR 16). The Dropbox app key is a
+    # public OAuth client identifier, not a secret. Empty provider keeps the
+    # default build fully local/offline and emits no provider endpoints.
+    sync_provider: str = ""
+    sync_client_id: str = ""
+
     # --- Path accessors (all derive from root) -----------------------------
 
     @property
@@ -246,6 +252,8 @@ class Config:
             gis_timeout=int(os.environ.get("BM_GIS_TIMEOUT", "30")),
             directory_map_year=int(os.environ.get("BRC_MAP_YEAR", "2026")),
             site_tiers=os.environ.get("SITE_TIERS", "").strip(),
+            sync_provider=os.environ.get("SYNC_PROVIDER", "").strip().lower(),
+            sync_client_id=os.environ.get("SYNC_CLIENT_ID", "").strip(),
         )
 
     # --- Derived settings --------------------------------------------------

@@ -346,6 +346,10 @@ jobs:
           BM_API_KEY: ${{ secrets.BM_API_KEY }}
           BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
+          # Optional Dropbox app-folder backup (ADR 16). Both are public repo
+          # variables; leaving them unset emits no sync UI or Dropbox origin.
+          SYNC_PROVIDER: ${{ vars.SYNC_PROVIDER }}
+          SYNC_CLIENT_ID: ${{ vars.SYNC_CLIENT_ID }}
           # Live directory/GIS year. Keep the fallback aligned with the
           # newest BRC_BY_YEAR entry; next year can be switched via a repo
           # variable after the annual map constants are reviewed.

@@ -178,7 +178,9 @@ than relabeled as future food.
 The clock snapshot is owned by `App`, refreshed whenever Food is opened, and
 updated once per minute during long-lived PWA sessions. FoodView's manual
 Refresh control uses the same snapshot, so every availability section advances
-together. The tabs do not display counts.
+together. Its freshness label includes the playa-local date, time, and timezone
+(for example, “Updated at 1:00 PM PDT on Aug 31, 2026”), which avoids ambiguity
+when planning from another timezone. The tabs do not display counts.
 
 **Simulated clock.** All time-based logic (Food availability, Schedule
 now/near-me, the location embargo) reads `utils/clock.now()` instead of

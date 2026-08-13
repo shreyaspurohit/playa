@@ -9,6 +9,8 @@ import { removeKey } from '../utils/storage';
 import { clearCachedPassword } from '../utils/secureStore';
 import { forceRefresh } from '../utils/refresh';
 import type { LocationReleasePolicy } from '../utils/embargo';
+import type { SyncController } from '../hooks/useSync';
+import { SyncSettings } from './SyncSettings';
 
 interface Props {
   open: boolean;
@@ -16,7 +18,7 @@ interface Props {
   contactEmail: string;
   source: Source;
   locationPolicy: LocationReleasePolicy;
-  trusted: boolean;
+  sync?: SyncController;
   /** File-import handler. Lives in App.tsx because picking, parsing,
    *  and dispatching needs access to the friends API + own nickname.
    *  This component just renders the button and calls the prop. */
@@ -30,9 +32,20 @@ interface Props {
 
 type Tab = 'guide' | 'about';
 
+const UNAVAILABLE_SYNC: SyncController = {
+  available: false,
+  connected: false,
+  status: 'unavailable',
+  message: '',
+  lastSyncedAt: null,
+  connect: async () => {},
+  syncNow: async () => {},
+  disconnect: async () => {},
+};
+
 export function InfoModal({
-  open, fetchedDate, contactEmail, source, locationPolicy, trusted,
-  onImport, onExport, onClose,
+  open, fetchedDate, contactEmail, source, locationPolicy,
+  sync = UNAVAILABLE_SYNC, onImport, onExport, onClose,
 }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [tab, setTab] = useState<Tab>('about');
@@ -69,7 +82,7 @@ export function InfoModal({
     if (e.target === e.currentTarget) onClose();
   }
 
-  function handleClearAll() {
+  async function handleClearAll() {
     const msg = [
       'Clear all local data?',
       '',
@@ -78,10 +91,12 @@ export function InfoModal({
       "  • your home camp + meet spots + imported friends' lists",
       "  • theme, map-layer, distance-unit, and last-viewed-tab preferences",
       "  • the password cached for this device",
+      ...(sync.available ? ["  • this device's Dropbox connection (the Dropbox backup is kept)"] : []),
       '',
       "You'll need to re-enter the password.",
     ].join('\n');
     if (!confirm(msg)) return;
+    if (sync.connected) await sync.disconnect();
     // Future-proof clear: drop every LS key with our `bm-` prefix.
     // This covers all the global slots in `LS` (theme, nickname,
     // source, etc.) and every per-source slot like
@@ -124,6 +139,9 @@ export function InfoModal({
     removeKey(LS.releaseNotesSeen);
     removeKey(LS.distanceUnit);
     removeKey(LS.mapLayers);
+    removeKey(LS.syncBase);
+    removeKey(LS.syncToken);
+    removeKey(LS.syncDevice);
     // Wipes both the encrypted-blob in LS and the AES wrapping key
     // in IndexedDB so nothing identifying the unlock state survives.
     clearCachedPassword();
@@ -187,7 +205,20 @@ export function InfoModal({
         </div>
         <div class="modal-body">
           {tab === 'guide' ? (
-            <GuideTab />
+            <>
+              <GuideTab />
+              {sync.available && (
+                <section class="guide-section">
+                  <h3>Dropbox backup &amp; restore</h3>
+                  <p>
+                    From the About tab, connect Dropbox to merge this device
+                    with a private cloud copy of your plans. Changes sync while
+                    Playa Camps is open. The device stays connected until you
+                    disconnect it or revoke Playa Camps access in Dropbox.
+                  </p>
+                </section>
+              )}
+            </>
           ) : (
             <AboutTab
               fetchedDate={fetchedDate}
@@ -195,7 +226,7 @@ export function InfoModal({
               showDirectoryDisclaimer={source === 'directory'}
               showCurrentApiSchedule={source === `api-${locationPolicy.year}`}
               locationPolicy={locationPolicy}
-              trusted={trusted}
+              sync={sync}
               onForceRefresh={handleForceRefresh}
               onExport={handleExport}
               onImport={onImport}
@@ -398,8 +429,8 @@ function formatReleaseTime(value: string): string {
 
 function AboutTab({
   fetchedDate, takedownHref, showDirectoryDisclaimer,
-  showCurrentApiSchedule, locationPolicy, trusted,
-  onForceRefresh, onExport, onImport, onClearAll,
+  showCurrentApiSchedule, locationPolicy,
+  sync, onForceRefresh, onExport, onImport, onClearAll,
   refreshState, refreshLabel,
 }: {
   fetchedDate: string;
@@ -407,11 +438,11 @@ function AboutTab({
   showDirectoryDisclaimer: boolean;
   showCurrentApiSchedule: boolean;
   locationPolicy: LocationReleasePolicy;
-  trusted: boolean;
+  sync: SyncController;
   onForceRefresh: () => void;
   onExport: () => void;
   onImport: () => void;
-  onClearAll: () => void;
+  onClearAll: () => void | Promise<void>;
   refreshState: 'idle' | 'checking' | 'offline' | 'stale';
   refreshLabel: string;
 }) {
@@ -468,8 +499,7 @@ function AboutTab({
         <strong>Search, Food, and scheduling:</strong> The Food tab groups
         matching meals and snacks by current availability; Schedule organizes
         starred events by day. Tags are generated from listing text, and event
-        times are formatted against the configured burn-week calendar. Check
-        the selected source for the latest details.
+        times are formatted against the configured burn-week calendar.
       </p>
       {!showDirectoryDisclaimer && (
         <p>
@@ -480,24 +510,15 @@ function AboutTab({
       {showCurrentApiSchedule && (
         <p>
           <strong>{locationPolicy.year} API location timing:</strong>{' '}
-          normal/spirit access shows camp locations starting{' '}
-          {formatReleaseTime(locationPolicy.campReleaseAt)}, and art locations
-          starting {formatReleaseTime(locationPolicy.artReleaseAt)}. Before
-          each cutoff, only that location field is hidden; names,
-          descriptions, schedules, favorites, and public GIS map layers remain
-          available. Events do not carry a separate location coordinate.
+          Camp location is shown on {formatReleaseTime(locationPolicy.campReleaseAt)},
+          and art location is shown on {formatReleaseTime(locationPolicy.artReleaseAt)}.
+          Names, descriptions, schedules, favorites, and public GIS map layers
+          remain available. Events do not carry a separate location coordinate.
           {' '}<a
             href="https://innovate.burningman.org/apis-page/"
             target="_blank"
             rel="noopener"
           >Official annual API schedule</a>.
-          {trusted && (
-            <>
-              {' '}This trusted internal session bypasses the public cutoffs,
-              so developer-released location fields are visible as soon as
-              they are present in the API payload.
-            </>
-          )}
         </p>
       )}
       <p>
@@ -511,8 +532,16 @@ function AboutTab({
         cache, the camps and events you've starred, any days you've
         hidden on the schedule, your nickname + home camp + meet spots,
         and any friends' favorites you've imported via share link.
-        Nothing leaves your browser. See <strong>Actions</strong> below
-        to wipe it all.
+        {sync.available
+          ? ' Nothing leaves your browser unless you explicitly connect Dropbox backup.'
+          : ' Nothing leaves your browser.'}{' '}
+        See <strong>Actions</strong> below to wipe it all.
+      </p>
+      <p>
+        <strong>Privacy:</strong>{' '}
+        <a href="./privacy.html">Read the Playa Camps Privacy Policy</a>{' '}
+        for details about local storage, optional Dropbox backup, information
+        the app does not sync, and how to disconnect or remove a cloud backup.
       </p>
       <p>
         <strong>GPS / location:</strong> location access is optional and begins
@@ -538,6 +567,8 @@ function AboutTab({
         if anything fails along the way, the cached copy stays put
         and the site keeps working.
       </p>
+
+      <SyncSettings sync={sync} />
 
       <h3 class="modal-section">Actions</h3>
       <div class="modal-actions">
@@ -582,12 +613,12 @@ function AboutTab({
           class="action-btn danger"
           type="button"
           onClick={onClearAll}
-          title="Deletes starred camps + events, hidden days, imported friends, theme preference, and cached password. Doesn't log you out of anything — this site has no account."
+          title="Deletes this device's Playa Camps state and disconnects Dropbox if enabled. The Dropbox backup itself is kept."
         >
           <span class="action-label">Clear all local data</span>
           <span class="action-desc">
-            Remove favorites, hidden days, friends, preferences, password.
-            Can't be undone.
+            Remove favorites, hidden days, friends, preferences, and password
+            from this device. The Dropbox backup is kept.
           </span>
         </button>
       </div>

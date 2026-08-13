@@ -14,6 +14,11 @@ password gate. The mechanism is a **service worker** with a
 cache-first strategy over a fixed shell, and a **PWA manifest** so
 users can "Add to Home Screen" for a real app feel.
 
+Optional Dropbox sync (ADR 16) does not change this guarantee. It is
+foreground-only and build-gated; offline changes stay local and converge after
+the app returns online. Dropbox endpoints are never part of the service-worker
+shell cache.
+
 ## Decisions
 
 - **Cache-first with background refresh.** The SW returns the cached

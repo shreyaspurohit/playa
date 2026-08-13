@@ -24,12 +24,13 @@
 //                 next load will look identical to the previous one,
 //                 but at least the page still loads.
 //   'offline'   — skipped everything. Existing cache + SW untouched.
-//   'stale'     — network reachable + SW cache refreshed, but the
-//                 freshly-fetched index.html is the same version the
-//                 user is already on. Means GitHub Pages' Fastly edge
-//                 cache hasn't propagated the new build yet (version.txt
-//                 is small + propagates faster than index.html). Reload
-//                 would be a no-op so we skip it; UI surfaces the wait.
+//   'stale'     — version.txt proves a newer build exists, but the SW
+//                 cache still contains an older shell. Means GitHub
+//                 Pages' Fastly edge cache hasn't propagated the new
+//                 index.html yet. Reload would be a no-op so we skip it;
+//                 UI surfaces the wait.
+
+import { isNewer } from '../hooks/useVersionCheck';
 
 export type RefreshOutcome = 'refreshed' | 'offline' | 'stale';
 
@@ -50,6 +51,18 @@ async function probeNetwork(): Promise<boolean> {
     return r.ok;
   } catch {
     return false;
+  }
+}
+
+/** Read the origin version pin. The SW deliberately bypasses this URL,
+ *  so it tells us whether there really is a newer deployment to wait for. */
+async function serverVersion(): Promise<string | null> {
+  try {
+    const r = await fetch('./version.txt', { cache: 'no-store' });
+    if (!r.ok) return null;
+    return (await r.text()).trim() || null;
+  } catch {
+    return null;
   }
 }
 
@@ -106,7 +119,7 @@ async function newestCachedVersion(): Promise<string | null> {
       if (!resp) continue;
       const version = extractVersion(await resp.text());
       if (!version) continue;
-      if (!newest || version.localeCompare(newest) > 0) newest = version;
+      if (!newest || isNewer(version, newest)) newest = version;
     }
     return newest;
   } catch {
@@ -114,8 +127,28 @@ async function newestCachedVersion(): Promise<string | null> {
   }
 }
 
+/** Only call the cache stale when the origin advertises a strictly newer
+ *  build and the refreshed cache has not caught up. Equal versions mean the
+ *  user is already current — the normal case for a manual Force refresh. */
+export function shouldReportStale(
+  current: string | null,
+  cached: string | null,
+  server: string | null,
+): boolean {
+  return Boolean(
+    current && cached && server
+    && isNewer(server, current)
+    && isNewer(server, cached),
+  );
+}
+
 export async function forceRefresh(): Promise<RefreshOutcome> {
   if (!await probeNetwork()) return 'offline';
+
+  // Capture the origin's advertised version before refreshing the shell.
+  // A missing version pin must not turn a healthy manual refresh into a
+  // false "server propagating" warning.
+  const server = await serverVersion();
 
   try {
     if ('serviceWorker' in navigator) {
@@ -151,15 +184,12 @@ export async function forceRefresh(): Promise<RefreshOutcome> {
     // was there before — exactly the state we started in.
   }
 
-  // Stale-cache guard. After REFRESH_SHELL, the SW has tried to pull
-  // a fresh shell. If the bytes that came back are the same version
-  // we're already on, the deploy hasn't propagated through Fastly
-  // yet (version.txt updates faster than index.html at the edge).
-  // Reloading would just re-serve the same page — flag it so the
-  // banner can keep prompting instead of silently consuming the tap.
+  // Stale-cache guard. Equal loaded/cached versions are not sufficient:
+  // that is also what a fully up-to-date app looks like. Only surface the
+  // propagation state when version.txt proves the server is ahead.
   const current = loadedVersion();
   const cached = await newestCachedVersion();
-  if (current && cached && current === cached) {
+  if (shouldReportStale(current, cached, server)) {
     return 'stale';
   }
 

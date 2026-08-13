@@ -29,6 +29,10 @@ visibly labeled until “Use real location” clears it.
 
 - **Pure SVG, zero tile fetches.** Every line, label, and pin is
   drawn from constants. Works on airplane mode after first load.
+- **Saved lists are not limited to drawable markers.** Starred camps and art
+  remain in their Map sidebar lists even when a location is blank, embargoed,
+  or outside the address parser. Only the SVG marker is omitted; saved state is
+  never made invisible merely because map coordinates are unavailable.
 - **Year-isolated constants in `data.ts`.** The golden-spike lat/lng,
   street centerline radii, themed street names, radial ranges, 12-bearing,
   and POI list all

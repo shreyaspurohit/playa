@@ -192,6 +192,31 @@ function metricsExpression(selector) {
 function validate(report) {
   const failures = [];
   for (const [route, states] of Object.entries(report)) {
+    if (route === 'syncModal') {
+      if (!states.menu.present) failures.push('sync menu: Dropbox entry is missing');
+      if (!states.menu.visible) failures.push('sync menu: Dropbox entry is outside the viewport');
+      if (!states.menu.named) failures.push('sync menu: Dropbox entry is not explicitly named');
+      if (!states.menu.branded) failures.push('sync menu: official blue Dropbox glyph is missing');
+      if ((states.menu.height ?? 0) < 44) failures.push('sync menu: Dropbox entry is smaller than 44px');
+      if ((states.menu.left ?? -1) < 0 || (states.menu.right ?? 391) > 390) {
+        failures.push('sync menu: Dropbox entry is clipped by the viewport');
+      }
+      if (!states.present) failures.push('sync modal: Dropbox settings are missing');
+      if (!states.dedicatedTitle) failures.push('sync modal: dedicated Dropbox title is missing');
+      if (states.aboutTitle) failures.push('sync modal: incorrectly opened the About dialog');
+      if (!states.visible) failures.push('sync modal: Dropbox settings are outside the viewport');
+      if (states.viewport.width !== 390 || states.viewport.height !== 844) {
+        failures.push('sync modal: viewport is not 390x844');
+      }
+      if (states.documentWidth !== states.viewport.width || states.overflow.length) {
+        failures.push('sync modal: document has horizontal overflow');
+      }
+      if (!states.actionButtons.length) failures.push('sync modal: no action button rendered');
+      if (states.actionButtons.some((button) => button.height < 44)) {
+        failures.push('sync modal: action button is smaller than 44px');
+      }
+      continue;
+    }
     if (states.expanded.collapsed) failures.push(`${route}: expanded state is collapsed`);
     if (!states.collapsed.collapsed) failures.push(`${route}: did not stay collapsed`);
     if (states.revealed.collapsed) failures.push(`${route}: did not reveal`);
@@ -360,9 +385,85 @@ try {
     }
   }
 
+  // Build-gated cloud sync lives in a dedicated modal rather than a route.
+  // When this review build enables it, exercise the real menu path and keep a
+  // mobile screenshot/metric record alongside the tab captures.
+  if (await evaluate(`Boolean(document.querySelector('meta[name="bm-sync-provider"]'))`)) {
+    await evaluate('scrollTo(0, 0)');
+    await evaluate(`document.querySelector('.header-menu-trigger')?.click()`);
+    await evaluate(`new Promise((resolve) => {
+      const deadline = Date.now() + 2000;
+      const settled = () => {
+        const entry = document.querySelector('.header-menu-sync');
+        if (entry && !entry.disabled) resolve();
+        else if (Date.now() >= deadline) resolve();
+        else setTimeout(settled, 25);
+      };
+      settled();
+    })`);
+    const syncMenu = await evaluate(`(() => {
+      const entry = document.querySelector('.header-menu-sync');
+      const rect = entry?.getBoundingClientRect();
+      const glyph = entry?.querySelector('.header-menu-dropbox-glyph path');
+      return {
+        present: Boolean(entry),
+        visible: Boolean(rect && rect.bottom > 0 && rect.top < innerHeight),
+        named: (entry?.textContent || '').includes('Dropbox sync'),
+        branded: glyph?.getAttribute('fill')?.toLowerCase() === '#0061ff',
+        left: rect ? Math.round(rect.left * 100) / 100 : -1,
+        right: rect ? Math.round(rect.right * 100) / 100 : 391,
+        height: rect ? Math.round(rect.height * 100) / 100 : 0,
+      };
+    })()`);
+    await screenshot('sync-menu');
+    await evaluate(`document.querySelector('.header-menu-sync')?.click()`);
+    await delay(200);
+    report.syncModal = await evaluate(`(() => {
+      const round = (value) => Math.round(value * 100) / 100;
+      const settings = document.querySelector('.sync-modal-card .sync-settings');
+      const settingsRect = settings?.getBoundingClientRect();
+      const overflow = [...document.querySelectorAll('.sync-modal-card *')]
+        .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.width > 0
+          && (rect.left < -0.5 || rect.right > 390.5 || rect.width > 390.5))
+        .slice(0, 12)
+        .map(({ element, rect }) => ({
+          tag: element.tagName.toLowerCase(),
+          classes: [...element.classList].slice(0, 4),
+          left: round(rect.left), right: round(rect.right), width: round(rect.width),
+        }));
+      return {
+        menu: ${JSON.stringify(syncMenu)},
+        present: Boolean(settings),
+        dedicatedTitle: document.querySelector('#sync-modal-title')?.textContent === 'Dropbox sync',
+        aboutTitle: Boolean(document.querySelector('.modal:not(.modal-hidden) #info-title')),
+        visible: Boolean(settingsRect
+          && settingsRect.bottom > 0 && settingsRect.top < innerHeight),
+        viewport: { width: innerWidth, height: innerHeight },
+        documentWidth: document.documentElement.scrollWidth,
+        overflow,
+        actionButtons: [...document.querySelectorAll('.sync-modal-card .sync-settings .action-btn')]
+          .map((button) => {
+            const rect = button.getBoundingClientRect();
+            return { width: round(rect.width), height: round(rect.height) };
+          }),
+      };
+    })()`);
+    await screenshot('sync-modal');
+  } else if (process.env.MOBILE_REVIEW_EXPECT_SYNC === '1') {
+    throw new Error('mobile review expected Dropbox sync metadata, but none was built');
+  }
+
   await writeFile(`${outputDir}/metrics.json`, `${JSON.stringify(report, null, 2)}\n`);
   const failures = validate(report);
   for (const [route, states] of Object.entries(report)) {
+    if (route === 'syncModal') {
+      console.log(
+        `sync     present=${states.present} buttons=${states.actionButtons.length} `
+        + `width=${states.documentWidth}`,
+      );
+      continue;
+    }
     console.log(
       `${route.padEnd(8)} collapse=${states.collapsed.collapsed} `
       + `retainedTop=${states.collapsed.retained?.top} `

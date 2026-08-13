@@ -803,6 +803,30 @@ class LocationReleasePolicyTests(unittest.TestCase, _TmpConfigMixin):
             SiteBuilder(reversed_dates, sources=["api-2026"])._validate_location_release_policy()
 
 
+class CloudSyncConfigTests(unittest.TestCase, _TmpConfigMixin):
+    def test_unset_sync_emits_no_provider_origin(self):
+        builder = SiteBuilder(self._make_config())
+        self.assertEqual(builder._sync_meta(), "")
+
+    def test_dropbox_meta_is_build_gated(self):
+        builder = SiteBuilder(self._make_config(
+            sync_provider="dropbox", sync_client_id="public_app_key",
+        ))
+        meta = builder._sync_meta()
+        self.assertIn('name="bm-sync-provider" content="dropbox"', meta)
+        self.assertIn('name="bm-sync-client-id" content="public_app_key"', meta)
+        self.assertNotIn("bm-sync-token-url", meta)
+        self.assertNotIn("bm-sync-content-url", meta)
+
+    def test_partial_or_unknown_sync_config_fails_loud(self):
+        with self.assertRaisesRegex(RuntimeError, "SYNC_CLIENT_ID"):
+            SiteBuilder(self._make_config(sync_provider="dropbox"))._sync_meta()
+        with self.assertRaisesRegex(RuntimeError, "SYNC_PROVIDER"):
+            SiteBuilder(self._make_config(
+                sync_provider="other", sync_client_id="key",
+            ))._sync_meta()
+
+
 class MultiSourceCalendarWindowTests(unittest.TestCase, _TmpConfigMixin):
     def test_later_source_cannot_overwrite_earlier_site_start(self):
         builder = SiteBuilder(self._make_config())
@@ -869,6 +893,7 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
                 mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
             SiteBuilder(self.config).build()
         html = self.config.site_html.read_text()
+        privacy = (self.config.site_dir / "privacy.html").read_text()
         # The Preact mount point.
         self.assertIn('id="app"', html)
         # Plaintext data payload — camp name is inside the JSON blob.
@@ -899,8 +924,24 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         self.assertIn('content="directory"', html)
         # Stub bundle was embedded.
         self.assertIn('"use strict";(()=>{', html)
+        # OAuth return works even when a privacy browser severs window.opener,
+        # and callback windows never boot the password-gated application.
+        self.assertIn("new BroadcastChannel('playa-dropbox-oauth')", html)
+        self.assertIn("window.__PLAYA_DROPBOX_OAUTH_CALLBACK__ = true", html)
+        self.assertIn("if (!window.__PLAYA_DROPBOX_OAUTH_CALLBACK__)", html)
         # Noindex still enforced.
         self.assertIn('name="robots"', html)
+        # Sync is opt-in: default builds emit no provider configuration.
+        self.assertNotIn('name="bm-sync-provider"', html)
+        self.assertNotIn('dropboxapi.com', html)
+        # Public privacy policy is a separate, payload-free page.
+        self.assertIn("Playa Camps Privacy Policy", privacy)
+        self.assertNotIn("Demo Camp", privacy)
+        self.assertNotIn("__CONTACT_EMAIL__", privacy)
+        self.assertIn("localStorage.getItem('bm-theme')", privacy)
+        for theme in ("paper", "daylight", "dusk", "night", "eclipse"):
+            self.assertIn(f'data-theme="{theme}"', privacy)
+        self.assertIn("'./privacy.html'", (self.config.site_dir / "sw.js").read_text())
 
     def test_build_fails_helpfully_when_bundle_missing(self):
         """If the client bundle hasn't been built yet, the error should

@@ -38,6 +38,8 @@ import { readString, removeKey, writeString } from './storage';
 const DB_NAME = 'playa-camps-secure';
 const DB_VERSION = 1;
 const STORE = 'keys';
+// Keep the original key ID so existing encrypted password caches remain
+// readable when the same device key begins wrapping Dropbox tokens too.
 const KEY_ID = 'pw-key';
 
 function openDb(): Promise<IDBDatabase | null> {
@@ -117,20 +119,21 @@ function b64ToBytes(s: string): Uint8Array<ArrayBuffer> {
  * private mode), the cache is silently skipped — the user re-prompts
  * next visit, but no plaintext password ever lands on disk.
  */
-export async function cachePassword(pw: string): Promise<void> {
+export async function cacheSecureValue(storageKey: string, value: string): Promise<boolean> {
   const key = await getWrappingKey();
-  if (!key) return;
+  if (!key) return false;
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
       key,
-      new TextEncoder().encode(pw),
+      new TextEncoder().encode(value),
     ),
   );
-  writeString(LS.password, JSON.stringify({
+  writeString(storageKey, JSON.stringify({
     v: 1, iv: bytesToB64(iv), ct: bytesToB64(ct),
   }));
+  return true;
 }
 
 /**
@@ -139,8 +142,8 @@ export async function cachePassword(pw: string): Promise<void> {
  * `{v, iv, ct}` is recognized — earlier sessionStorage cache is
  * migrated by the Gate, not here.
  */
-export async function loadCachedPassword(): Promise<string | null> {
-  const raw = readString(LS.password, '');
+export async function loadSecureValue(storageKey: string): Promise<string | null> {
+  const raw = readString(storageKey, '');
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as { v?: number; iv?: string; ct?: string };
@@ -156,6 +159,18 @@ export async function loadCachedPassword(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export function clearSecureValue(storageKey: string): void {
+  removeKey(storageKey);
+}
+
+export async function cachePassword(pw: string): Promise<void> {
+  await cacheSecureValue(LS.password, pw);
+}
+
+export function loadCachedPassword(): Promise<string | null> {
+  return loadSecureValue(LS.password);
 }
 
 /** Drop the cached password (LS) AND the wrapping key (IDB). The key

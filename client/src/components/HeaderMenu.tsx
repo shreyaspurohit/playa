@@ -10,6 +10,7 @@
 //  - The menu is positioned below the trigger via CSS.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Source } from '../types';
+import type { SyncStatus } from '../hooks/useSync';
 import { THEMES } from '../hooks/useTheme';
 import { InstallPrompt } from './InstallPrompt';
 import { SourceSwitcher } from './SourceSwitcher';
@@ -71,6 +72,40 @@ function MenuIcon({ name }: { name: 'info' | 'bug' | 'cloud-check' | 'refresh' }
   );
 }
 
+/** Official Dropbox glyph, used only to identify the Dropbox integration.
+ *  This is the unmodified approved brand mark (the exact box geometry Dropbox
+ *  publishes at brand.dropbox.com) in the official Dropbox Blue (#0061FF) on a
+ *  0 0 24 24 viewBox — no recolor to the app theme, no distortion. The adjacent
+ *  text names the exact function so this cannot read as the Playa Camps logo or
+ *  as a Dropbox endorsement, per the Dropbox developer branding guide. */
+function DropboxGlyph() {
+  return (
+    <svg
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      class="header-menu-dropbox-glyph"
+    >
+      <path
+        fill="#0061ff"
+        d="M6 1.807L0 5.629l6 3.822 6.001-3.822L6 1.807zM18 1.807l-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6.001-3.822L6 9.452l-6 3.822zM18 9.452l-6 3.822 6 3.822 6-3.822-6-3.822zM6 18.371l6.001 3.822 6-3.822-6-3.822L6 18.371z"
+      />
+    </svg>
+  );
+}
+
+function syncDetail(connected: boolean, status: SyncStatus): string {
+  if (status === 'checking') return 'Checking saved connection…';
+  if (status === 'connecting') return 'Opening Dropbox…';
+  if (status === 'syncing') return 'Syncing devices, browsers & tabs…';
+  if (status === 'offline') return 'Offline · local changes are safe';
+  if (status === 'expired') return 'Reconnect required';
+  if (status === 'error') return 'Check sync status';
+  if (connected) return 'Connected · tap to sync now';
+  return 'Back up, restore & keep plans aligned';
+}
+
 interface Props {
   source: Source;
   availableSources: Source[];
@@ -78,15 +113,30 @@ interface Props {
   currentTheme: string;
   onThemeChange: (name: string) => void;
   onInfoClick: () => void;
+  onSyncNow: () => void;
+  onSyncConnect: () => void;
+  onSyncDisconnect: () => void;
   infoPulse: boolean;
+  syncAvailable: boolean;
+  syncConnected: boolean;
+  syncStatus: SyncStatus;
 }
 
 export function HeaderMenu({
   source, availableSources, onSourceChange,
-  currentTheme, onThemeChange, onInfoClick, infoPulse,
+  currentTheme, onThemeChange, onInfoClick, onSyncNow, infoPulse,
+  onSyncConnect, onSyncDisconnect, syncAvailable, syncConnected, syncStatus,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [syncDisclosureOpen, setSyncDisclosureOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const mobilePanelTop = open && typeof window !== 'undefined'
+    && window.matchMedia('(max-width: 600px)').matches
+    ? `${(wrapRef.current?.getBoundingClientRect().bottom ?? 0) + 8}px`
+    : undefined;
+  const syncBusy = syncStatus === 'checking'
+    || syncStatus === 'connecting'
+    || syncStatus === 'syncing';
 
   // Close on outside click + Escape.
   useEffect(() => {
@@ -130,7 +180,11 @@ export function HeaderMenu({
         </span>
       </button>
       {open && (
-        <div class="header-menu-panel" role="menu">
+        <div
+          class="header-menu-panel"
+          role="menu"
+          style={mobilePanelTop ? { top: mobilePanelTop } : undefined}
+        >
           {/* Source switcher — kept full-width inside the menu so the
               dropdown native control isn't fighting for space. */}
           {availableSources.length > 1 && (
@@ -170,6 +224,63 @@ export function HeaderMenu({
               platforms — Apple's 🐛 in particular renders as a cute
               caterpillar that doesn't read as "report bug". */}
           <div class="header-menu-section header-menu-actions">
+            {syncAvailable && (
+              <button
+                type="button"
+                class="header-menu-item header-menu-sync"
+                role="menuitem"
+                disabled={syncBusy}
+                aria-label={syncConnected ? 'Sync now with Dropbox' : 'Open Dropbox sync settings'}
+                onClick={() => {
+                  if (syncConnected) onSyncNow();
+                  else {
+                    setSyncDisclosureOpen((value) => !value);
+                  }
+                }}
+              >
+                <DropboxGlyph />
+                <span class="header-menu-item-copy">
+                  <span>Dropbox sync</span>
+                  <span class="header-menu-item-detail">
+                    {syncDetail(syncConnected, syncStatus)}
+                  </span>
+                </span>
+              </button>
+            )}
+            {syncAvailable && !syncConnected && syncDisclosureOpen && (
+              <div class="header-menu-sync-note" role="status">
+                <div>
+                  Dropbox access is limited to this app’s private folder:
+                  <strong> Apps → Playa Camps Sync</strong>. Other Dropbox
+                  files are not accessible.
+                </div>
+                <div class="header-menu-sync-note-actions">
+                  <button
+                    type="button"
+                    class="header-menu-sync-note-continue"
+                    disabled={syncBusy}
+                    onClick={() => { onSyncConnect(); close(); }}
+                  >Continue to Dropbox</button>
+                  <button
+                    type="button"
+                    class="header-menu-sync-note-cancel"
+                    onClick={() => setSyncDisclosureOpen(false)}
+                  >Cancel</button>
+                </div>
+              </div>
+            )}
+            {syncAvailable && syncConnected && (
+              <button
+                type="button"
+                class="header-menu-item header-menu-sync-disconnect"
+                role="menuitem"
+                disabled={syncBusy}
+                onClick={() => { onSyncDisconnect(); close(); }}
+              >
+                <MenuIcon name="cloud-check" />
+                <span>Disconnect Dropbox</span>
+              </button>
+            )}
             <button
               type="button"
               class="header-menu-item"

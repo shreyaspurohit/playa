@@ -54,10 +54,12 @@ import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
 import { FoodView } from './FoodView';
 import { ShareModal } from './ShareModal';
+import { SyncModal } from './SyncModal';
 import { TabBar } from './TabBar';
 import { Toolbar } from './Toolbar';
 import { now, isMockNow, mockNowLabel, clearMockNow } from '../utils/clock';
 import { isMockGps, mockGpsLabel, clearMockGps } from '../utils/mockGps';
+import { useSync } from '../hooks/useSync';
 
 interface Meta {
   fetchedDate: string;
@@ -470,6 +472,7 @@ export function App() {
   // paint; derive the source used by visible source labels and notices so an
   // API-only unlock never flashes directory-specific copy for one frame.
   const visibleSource = sourceForDisplay(source, effectiveAvailableSources);
+  const sync = useSync(effectiveAvailableSources);
 
   // If the user's persisted source isn't in their unlocked set
   // (e.g., used to be on god-mode, now on spirit-mode), bump them
@@ -915,6 +918,7 @@ export function App() {
   const onDismissSnapshot = useCallback(() => setIncomingSnapshot(null), []);
 
   const [infoOpen, setInfoOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [infoPulse, setInfoPulse] = useState(() => {
     const n = parseInt(readString(LS.infoSeen, '0'), 10) || 0;
     if (n < 2) {
@@ -931,6 +935,7 @@ export function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && syncOpen)  { setSyncOpen(false);  return; }
       if (e.key === 'Escape' && infoOpen)  { setInfoOpen(false);  return; }
       if (e.key === 'Escape' && shareOpen) { setShareOpen(false); return; }
       const t = e.target as HTMLElement | null;
@@ -946,7 +951,7 @@ export function App() {
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [infoOpen, shareOpen, goto]);
+  }, [syncOpen, infoOpen, shareOpen, goto]);
 
   const sortedTags = useMemo<ReadonlyArray<readonly [string, number]>>(() => {
     if (!camps) return [];
@@ -1157,8 +1162,17 @@ export function App() {
               version={meta.version}
               currentTheme={theme}
               onThemeChange={setTheme}
-              onInfoClick={() => { setInfoPulse(false); setInfoOpen(true); }}
+              onInfoClick={() => {
+                setInfoPulse(false);
+                setInfoOpen(true);
+              }}
+              onSyncNow={() => { void sync.syncNow(); }}
+              onSyncConnect={() => { void sync.connect(); }}
+              onSyncDisconnect={() => { void sync.disconnect(); }}
               infoPulse={infoPulse}
+              syncAvailable={sync.available}
+              syncConnected={sync.connected}
+              syncStatus={sync.status}
               source={visibleSource}
               availableSources={effectiveAvailableSources}
               onSourceChange={setSource}
@@ -1433,10 +1447,15 @@ export function App() {
         contactEmail={meta.contactEmail}
         source={visibleSource}
         locationPolicy={locationPolicy}
-        trusted={unlockedTrusted}
+        sync={sync}
         onImport={onImportSnapshot}
         onExport={onExportSnapshot}
         onClose={() => setInfoOpen(false)}
+      />
+      <SyncModal
+        open={syncOpen}
+        sync={sync}
+        onClose={() => setSyncOpen(false)}
       />
       <ShareModal
         open={shareOpen}

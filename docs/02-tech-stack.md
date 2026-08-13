@@ -44,6 +44,13 @@ nothing and the cron keeps refreshing it."
 - **esbuild over Webpack/Rollup**: zero config, single binary, sub-100ms
   builds. The whole "build the client" step is `node esbuild.config.mjs`
   — no plugin ecosystem to babysit.
+- **Official Dropbox SDK for optional sync**: exact-pinned, MIT-licensed, and
+  bundled locally. It owns PKCE, access-token refresh, and generated Dropbox
+  file routes; the app retains its own merge and conflict semantics. Builds
+  without sync metadata never construct the adapter or contact Dropbox.
+- **Bundled license notices**: esbuild prepends the complete Preact,
+  `pwa-install`, and Dropbox SDK notices to the minified IIFE. Because the
+  builder inlines that file, the notices remain in every distributed HTML.
 
 ### Test runner — `node --test` + happy-dom + tsx
 
@@ -72,8 +79,9 @@ nothing and the cron keeps refreshing it."
 - Major bumps land as separate PRs labelled `major`, no auto-merge.
   TypeScript / esbuild / preact major jumps usually carry breaking
   changes worth a human read.
-- **No semver-tightening**: package.json uses `^` ranges, lockfile
-  pins exact versions. Reproducible builds, controlled updates.
+- **Mostly caret ranges**: the lockfile pins reproducible versions. The Dropbox
+  SDK is exact-pinned because it handles credentials and provider transport;
+  upgrades require an explicit reviewed package change.
 
 ## Mechanism
 

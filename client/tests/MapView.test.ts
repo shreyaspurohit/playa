@@ -259,6 +259,35 @@ describe('<MapView> official POIs', () => {
     assert.equal(mount.querySelectorAll('.brc-pin').length, 1);
   });
 
+  test('lists every starred camp even when only some locations are drawable', async () => {
+    const camps = [
+      {
+        id: 'mapped', name: 'Mapped Camp', location: '7:30 & E',
+        description: '', website: '', url: '', tags: [], events: [],
+      },
+      {
+        id: 'unlisted', name: 'Unlisted Camp', location: '',
+        description: '', website: '', url: '', tags: [], events: [],
+      },
+      {
+        id: 'unknown', name: 'Unknown Address Camp', location: 'somewhere near Center Camp',
+        description: '', website: '', url: '', tags: [], events: [],
+      },
+    ];
+    mountMap('directory', {
+      camps,
+      favCampIds: new Set(camps.map((camp) => camp.id)),
+    });
+    const toggle = await waitFor<HTMLButtonElement>('.map-list .map-section-toggle-btn');
+    assert.ok(toggle);
+    assert.match(toggle.textContent ?? '', /Starred camps \(3\)/);
+    toggle.click();
+    await settle();
+    assert.equal(mount.querySelectorAll('.map-pin-row').length, 3);
+    assert.equal(mount.querySelectorAll('.brc-pin').length, 1);
+    assert.match(mount.textContent ?? '', /location not listed/);
+  });
+
   test('anchors a Center Camp sub-address home tent above the official POI', async () => {
     const home = {
       id: 'center-home', name: 'Center Home', location: 'Center Camp @ 3:00',

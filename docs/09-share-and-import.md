@@ -8,7 +8,8 @@ status: current
 
 ## Overview
 
-Two transports move user state between devices and between friends:
+Two always-available offline transports move user state between devices and
+between friends:
 
 - **Share links** — a URL fragment carrying the user's starred camps,
   starred events, home camp, and meet spots. Pasteable, no server
@@ -23,6 +24,11 @@ recognition, and the same "latest snapshot replaces" semantics.
 The sender and receiver must each set a nickname before exporting or
 accepting an import. This gives every transferred state an explicit
 identity instead of creating anonymous friend records.
+
+Optional Dropbox backup/restore (ADR 16) is a third, account-based path. It
+syncs all embedded sources and propagates deletions automatically, but does not
+replace these manual transports; file import/export remains the recovery path
+when Dropbox or network access is unavailable.
 
 ## Decisions
 

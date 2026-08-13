@@ -164,6 +164,13 @@ Both call `forceRefresh()`. The only difference is the entry point:
   user-initiated, useful when a deploy has happened but polling
   hasn't fired the banner yet (or the user dismissed it).
 
+After refreshing the shell, the page reports "server propagating" only
+when the uncached `version.txt` is strictly newer than both the loaded page
+and the newest cached shell. Equal loaded, cached, and server versions mean
+the app is already current; a manual Force refresh still reloads normally.
+This distinction matters for local `make rebuild` runs and repeated refreshes
+of the latest production build.
+
 ## Failure modes & trade-offs
 
 ### The bug we fixed
@@ -212,6 +219,10 @@ force-refresh works on the first click.
 - **No controller (first-ever load, hard refresh).** forceRefresh
   skips the postMessage path and just relies on `reg.update()` +
   natural install of the new SW.
+- **Already current.** Equal loaded, cached, and server versions are
+  healthy. The app reloads instead of incorrectly showing a propagation
+  warning. That warning is reserved for a proven newer `version.txt`
+  whose shell has not reached the cache yet.
 
 ## Code references
 

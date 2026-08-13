@@ -48,7 +48,8 @@ export function Footer({ fetchedDate, contactEmail, source }: Props) {
         )}
         <p style={{ opacity: 0.7 }}>
           This app is not affiliated, endorsed, or verified by Burning Man
-          Project. Updated {fetchedDate}.
+          Project. Updated {fetchedDate}.{' '}
+          <a href="./privacy.html">Privacy Policy</a>.
         </p>
       </div>
     </footer>

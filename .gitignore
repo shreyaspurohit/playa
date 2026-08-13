@@ -35,6 +35,7 @@ data/gis/
 # site/manifest.webmanifest, site/icon.svg stay committed —
 # they're config + PWA shell assets, not data.
 site/index.html
+site/privacy.html
 site/sw.js
 site/version.txt
 

@@ -59,6 +59,23 @@ export function formatPlayaTime(when: Date): string {
   });
 }
 
+/** Human-readable playa timestamp for freshness/status labels. */
+export function formatPlayaDateTime(when: Date): string {
+  const time = when.toLocaleTimeString('en-US', {
+    timeZone: PLAYA_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+  const date = when.toLocaleDateString('en-US', {
+    timeZone: PLAYA_TIME_ZONE,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return `${time} on ${date}`;
+}
+
 // Resolved cheaply on every call (a regex + one localStorage read) so clearing
 // the override takes effect immediately and it's trivially testable. A `now=`
 // param anywhere in the URL is persisted to localStorage the first time it's
