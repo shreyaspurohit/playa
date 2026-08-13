@@ -1,0 +1,59 @@
+# Pull-request / push validation. Runs the unit suites, type-check, and the
+# client bundle build so dependency bumps (Renovate) and code changes are
+# tested BEFORE they reach main. Deliberately does NOT fetch data, use any
+# secret, or deploy — that is the scheduled refresh.yml pipeline's job. Keep
+# these steps in sync with refresh.yml's `test` job.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client deps
+        run: npm ci
+        working-directory: client
+
+      - name: Install backend (editable)
+        run: pip install -e ./backend
+
+      - name: Python unit tests
+        run: python3 -m unittest discover -s backend/tests -v
+
+      - name: TypeScript type-check
+        run: npm run typecheck
+        working-directory: client
+
+      - name: JS unit tests
+        run: npm test
+        working-directory: client
+
+      # A dependency bump (esbuild / typescript) can break the bundle even when
+      # unit tests pass, so build it here too. No data, no secrets involved.
+      - name: Client bundle build
+        run: npm run build
+        working-directory: client
