@@ -668,6 +668,14 @@ function AboutTab({
         This app is not affiliated, endorsed, or verified by Burning
         Man Project. Updated {fetchedDate}.
       </p>
+      <p class="made-by">
+        Made by{' '}
+        <a
+          href="https://shreyas.purohit.dev/link/bio/v1"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Shreyas Purohit ↗</a>
+      </p>
     </>
   );
 }
