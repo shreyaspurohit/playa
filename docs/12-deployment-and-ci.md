@@ -86,8 +86,9 @@ flowchart LR
 - Downloads each configured `api-YYYY` encrypted Release cache; a cache miss or
   explicitly requested `refresh_api_years` fetches from the API and uploads a
   replacement asset.
-- Resolves `BURN_OPEN` from manual override, burn-window dates, and optional
-  `PLAYA_GO_LIVE` before building the spirit-mode sidecar.
+- Resolves `BURN_OPEN` from the manual override or the site-unlock window
+  (`SITE_UNLOCK_START`/`SITE_UNLOCK_END`) before building the spirit-mode
+  sidecar. The unlock window is separate from the burn-week calendar (D13).
 - Verifies `openssl version`, `node --version`, etc. as a sanity
   preamble.
 - Uploads `site/` as the `github-pages` artifact via
@@ -110,11 +111,12 @@ flowchart LR
 - `CONTACT_EMAIL` — replaces the placeholder in the footer's
   takedown mailto.
 
-Repository variables: `BM_API_YEARS`, `BRC_MAP_YEAR`, `BURN_WINDOW_OPEN_FROM`,
-`BURN_WINDOW_OPEN_TO`, `CAMP_LOCATION_RELEASE_AT`,
-`ART_LOCATION_RELEASE_AT`, and optional `PLAYA_GO_LIVE`. The two location
-values are timezone-aware annual API publication cutoffs, not burn-window
-aliases. Configure the applicable
+Repository variables: `BM_API_YEARS`, `BRC_MAP_YEAR`, `SITE_UNLOCK_START`,
+`SITE_UNLOCK_END`, `BURN_WINDOW_OPEN_FROM`, `BURN_WINDOW_OPEN_TO`,
+`CAMP_LOCATION_RELEASE_AT`, `ART_LOCATION_RELEASE_AT`. `SITE_UNLOCK_*` is the
+password-free access window; `BURN_WINDOW_OPEN_*` is the burn-week calendar
+(D13); the two location values are timezone-aware annual API publication
+cutoffs, not burn-window aliases. Configure the applicable
 secrets and variables under **Settings → Secrets and variables → Actions**
 before the first production build.
 

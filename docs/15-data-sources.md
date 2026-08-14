@@ -590,6 +590,37 @@ keep the other tiers' wrappers untouched.
 - Clock-spoofing for time-locked decryption — there is no time lock,
   just file presence. Out of scope.
 
+**Amendment (2026) — the unlock window is its own pair of variables,
+`SITE_UNLOCK_START` / `SITE_UNLOCK_END`, decoupled from the burn-week
+calendar.**
+
+Originally the auto-unlock window reused `BURN_WINDOW_OPEN_FROM` /
+`BURN_WINDOW_OPEN_TO`. But those two variables also feed
+`Config.burn_start` / `burn_end` (`config.py`), which drive the schedule
+week-map, event-date derivation, and the client's Food/Schedule "now"
+logic. That overload meant you could not open the site on a different
+schedule than the burn week without distorting the calendar — and it
+forced a boolean escape hatch, `PLAYA_GO_LIVE`, whose only job was to
+open access *before* the calendar's `FROM`.
+
+Resolution:
+
+- **`SITE_UNLOCK_START` / `SITE_UNLOCK_END`** (new repo variables) are the
+  *only* inputs to `BURN_OPEN` resolution — the password-free access
+  window. They can be any dates (e.g., open a week before the burn,
+  close at year-end) without touching the calendar.
+- **`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`** keep their original
+  meaning — the burn-week calendar (`burn_start`/`burn_end`) — and are
+  documented with the schedule, not here. They no longer affect access.
+- **`PLAYA_GO_LIVE` is removed.** "Open early" is now just an earlier
+  `SITE_UNLOCK_START`; ad-hoc "open/close right now" stays covered by the
+  `workflow_dispatch` `burn_open` input, which still wins over the dates.
+
+The location embargoes (`CAMP_LOCATION_RELEASE_AT` /
+`ART_LOCATION_RELEASE_AT`, D8) remain independent of both pairs: spirit
+users can be let in by `SITE_UNLOCK_START` while camp/art locations stay
+masked until their own timestamps.
+
 **Operational config — set-once-forget by design**:
 
 The intended operator experience is: set the window dates **once per
@@ -600,12 +631,16 @@ No human in the loop at burn-start or burn-end.
 
 | Knob                       | Where                | Effect                                                                                |
 |----------------------------|----------------------|---------------------------------------------------------------------------------------|
-| `BURN_WINDOW_OPEN_FROM`    | repo *variable*      | ISO date (e.g., `2026-08-30`). Workflow auto-includes `burn-key.json` from this day.  |
-| `BURN_WINDOW_OPEN_TO`      | repo *variable*      | ISO date (e.g., `2026-09-07`). Workflow auto-removes after this day (UTC end-of-day). |
-| `CAMP_LOCATION_RELEASE_AT` | repo *variable*      | Timezone-aware current-year camp public-release timestamp (2026: `2026-08-23T00:00:00-07:00`). |
-| `ART_LOCATION_RELEASE_AT`  | repo *variable*      | Timezone-aware current-year art public-release timestamp (2026: `2026-08-30T00:00:00-07:00`). |
+| `SITE_UNLOCK_START`        | repo *variable*      | ISO date (e.g., `2026-08-22`). Workflow auto-includes `burn-key.json` from this day.  |
+| `SITE_UNLOCK_END`          | repo *variable*      | ISO date (e.g., `2026-12-31`). Workflow auto-removes after this day (UTC end-of-day). |
+| `CAMP_LOCATION_RELEASE_AT` | repo *variable*      | Timezone-aware current-year camp public-release timestamp (2026: `2026-08-23T00:00:00-07:00`). Independent of the unlock window. |
+| `ART_LOCATION_RELEASE_AT`  | repo *variable*      | Timezone-aware current-year art public-release timestamp (2026: `2026-08-30T00:00:00-07:00`). Independent of the unlock window. |
 | `BURN_OPEN=0\|1`           | `workflow_dispatch` input | Manual override for "open it now" / "close it now". Wins over the date check.    |
-| `PLAYA_GO_LIVE`            | repo *variable*      | Truthy value opens spirit before `OPEN_FROM`, but never after `OPEN_TO`; it does not bypass either location timestamp. |
+
+`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` are **not** in this table:
+they are the burn-week calendar (`Config.burn_start`/`burn_end`) and no
+longer affect access. Set them to the real burn week (2026:
+`2026-08-30` / `2026-09-07`).
 
 **Window evaluation** (inside `refresh.yml`):
 
@@ -613,21 +648,17 @@ No human in the loop at burn-start or burn-end.
 # Pseudocode for the resolution step.
 if [[ -n "$dispatch_input_BURN_OPEN" ]]; then
   effective_burn_open="$dispatch_input_BURN_OPEN"        # manual wins
-elif [[ -n "$BURN_WINDOW_OPEN_FROM" && -n "$BURN_WINDOW_OPEN_TO" ]]; then
+elif [[ -n "$SITE_UNLOCK_START" && -n "$SITE_UNLOCK_END" ]]; then
   today_utc="$(date -u +%Y-%m-%d)"
-  if [[ "$today_utc" > "$BURN_WINDOW_OPEN_TO" ]]; then
-    effective_burn_open=0
-  elif [[ ! "$today_utc" < "$BURN_WINDOW_OPEN_FROM" ]]; then
-    effective_burn_open=1
-  elif is_truthy "$PLAYA_GO_LIVE"; then
-    effective_burn_open=1
+  if [[ "$today_utc" > "$SITE_UNLOCK_END" ]]; then
+    effective_burn_open=0          # past the window → re-locked
+  elif [[ ! "$today_utc" < "$SITE_UNLOCK_START" ]]; then
+    effective_burn_open=1          # inside [START, END]
   else
-    effective_burn_open=0
+    effective_burn_open=0          # before START → still gated
   fi
-elif is_truthy "$PLAYA_GO_LIVE"; then
-  effective_burn_open=1
 else
-  effective_burn_open=0   # no vars + no input = closed
+  effective_burn_open=0   # no window vars + no input = closed
 fi
 ```
 
@@ -648,30 +679,36 @@ post-burn the slop is harmless.
 
 **Failsafe behaviors**:
 
-- Both window vars unset and no manual input → `effective_burn_open=0`
+- Both unlock vars unset and no manual input → `effective_burn_open=0`
   (closed). Site behaves like today. Default-deny.
 - Cron misses a day (GitHub Actions outage): no problem on the next
   run — `burn-key.json` either appears or disappears one day late.
-- One of the two required window vars missing → the workflow resolution remains
-  default-closed unless `PLAYA_GO_LIVE` is truthy, and the subsequent build
-  fails its required-date validation. Fix the repository variables; do not add
-  code-side year defaults.
-- `BURN_WINDOW_OPEN_FROM > BURN_WINDOW_OPEN_TO` → workflow fails loud
-  (already listed under build-time sanity checks).
+- Only one of `SITE_UNLOCK_START` / `SITE_UNLOCK_END` set → the resolution
+  is default-closed (the `-n && -n` guard requires both). Set both.
+- `SITE_UNLOCK_START > SITE_UNLOCK_END` → workflow fails loud (an unlock
+  window that never opens is always an operator mistake).
+- The burn-week calendar (`BURN_WINDOW_OPEN_FROM/TO`) is validated
+  separately at build time and no longer touches this path.
 
 **Setup walkthrough for the operator** (one-time per burn year):
 
 1. Settings → Secrets and variables → Actions → Variables tab.
-2. New repository variable: `BURN_WINDOW_OPEN_FROM` = `2026-08-30`.
-3. New repository variable: `BURN_WINDOW_OPEN_TO`   = `2026-09-07`.
-4. Set `CAMP_LOCATION_RELEASE_AT` = `2026-08-23T00:00:00-07:00` and
+2. Repository variable: `SITE_UNLOCK_START` = `2026-08-22` (when the
+   password-free window opens).
+3. Repository variable: `SITE_UNLOCK_END` = `2026-12-31` (when it
+   re-locks — the day after is password-gated again).
+4. Repository variables `BURN_WINDOW_OPEN_FROM` = `2026-08-30` and
+   `BURN_WINDOW_OPEN_TO` = `2026-09-07` — the real burn week (calendar).
+   Leave these on the burn dates even though the site unlocks earlier.
+5. Set `CAMP_LOCATION_RELEASE_AT` = `2026-08-23T00:00:00-07:00` and
    `ART_LOCATION_RELEASE_AT` = `2026-08-30T00:00:00-07:00` from the
    official annual API schedule. These do not control `burn-key.json`.
-5. Done. Next nightly cron after Aug 30 deploys with `burn-key.json`;
-   first cron after Sep 7 removes it.
+6. Done. Next nightly cron on/after `SITE_UNLOCK_START` deploys with
+   `burn-key.json`; the first cron after `SITE_UNLOCK_END` removes it.
 
-For the next year (2027): bump all four annual date variables. No code change;
-the current-year API build rejects stale-year location timestamps.
+For the next year (2027): bump the unlock pair, the burn-week pair, and the two
+location timestamps. No code change; the current-year API build rejects
+stale-year location timestamps.
 
 **Build flow change** (delta on D10):
 
