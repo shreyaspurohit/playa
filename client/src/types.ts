@@ -205,3 +205,42 @@ export interface MeetSpot {
   address: string;                // e.g., "12:00 & Esplanade"
   when?: string;                  // free-form; "Wed 9pm"
 }
+
+/** Offline journal (ADR 20). Private, text-only memories. A journal entry
+ *  may stand alone or carry a small display-name snapshot of the camp,
+ *  event, or Food item it was created from — never a source ID or link, so
+ *  old entries stay meaningful after source data changes. */
+export type JournalContextKind = 'camp' | 'event' | 'food' | 'art';
+
+export interface JournalContext {
+  kind: JournalContextKind;
+  title: string;                  // camp name, event/art title, or Food offering title
+  campName?: string;              // host camp for event/Food context (unused for art)
+}
+
+export interface JournalEntryValue {
+  burnYear: number;               // edition ownership, e.g. 2026 (from BRC_MAP_YEAR)
+  occurredAt: string;             // BRC wall time: 'YYYY-MM-DDTHH:mm'
+  createdAt: number;              // immutable epoch milliseconds
+  title?: string;                 // optional short heading; card falls back to first line of text
+  text: string;                   // plain text
+  mood?: string;                  // optional mood key from the D18 allowlist
+  context?: JournalContext;
+}
+
+/** One record per entry: the single current value, or a tombstone. Merge is
+ *  per-entry last-write-wins by (modifiedAt, writeToken); a tombstone wins
+ *  permanently. Editing overwrites in place — no version history (ADR 20 D2/D10). */
+export interface JournalEntry {
+  entryId: string;                // stable identity (crypto.randomUUID())
+  modifiedAt: number;             // Lamport clock: max(Date.now(), knownMax + 1)
+  writeToken: string;             // random per-save UUID; deterministic tie-break
+  deleted?: 1;                    // tombstone (no value)
+  value?: JournalEntryValue;      // present iff not deleted
+}
+
+/** The Dropbox / export document: one record per entryId. */
+export interface JournalDocument {
+  schema: 'playa-journal-v1';
+  entries: Record<string, JournalEntry>;
+}

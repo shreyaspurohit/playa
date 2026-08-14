@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { LS, SS, type Source } from '../types';
 import { removeKey } from '../utils/storage';
 import { clearCachedPassword } from '../utils/secureStore';
+import { clearJournal } from '../hooks/useJournal';
 import { forceRefresh } from '../utils/refresh';
 import type { LocationReleasePolicy } from '../utils/embargo';
 import type { SyncController } from '../hooks/useSync';
@@ -91,6 +92,7 @@ export function InfoModal({
       "  • starred camps, events, and art (across all data sources)",
       "  • your home camp + meet spots + imported friends' lists",
       "  • theme, map-layer, distance-unit, and last-viewed-tab preferences",
+      "  • your private journal on this device (any Dropbox journal backup is kept)",
       "  • the password cached for this device",
       ...(sync.available ? ["  • this device's Dropbox connection (the Dropbox backup is kept)"] : []),
       '',
@@ -158,6 +160,9 @@ export function InfoModal({
     try {
       navigator.serviceWorker?.controller?.postMessage('CLEAR_IMAGE_CACHE');
     } catch { /* no SW or messaging blocked */ }
+    // Delete the private journal database too (ADR 20 D12). Best-effort; the
+    // reload supersedes. The Dropbox journal copy is intentionally kept.
+    try { await clearJournal(); } catch { /* ignore */ }
     location.reload();
   }
 
@@ -397,7 +402,28 @@ export function GuideTab() {
       </section>
 
       <section class="guide-section">
-        <h3>7. Install, scroll &amp; use offline</h3>
+        <h3>7. Journal</h3>
+        <p>
+          The <strong>Journal</strong> tab is a private, text-only place for
+          memories &mdash; before, during, and after the burn. Entries are saved
+          on this device first and work fully offline; add one from the Journal
+          tab or from any camp, event, or Food item (it remembers the name).
+          Editing overwrites an entry and deleting removes it &mdash; there is no
+          version history. Your journal stays available even if the site password
+          is rotated later.
+        </p>
+        <p class="guide-subtle">
+          Durability on iPhone: browser storage is cleared after about a week of
+          not opening the site, so <strong>Add to Home Screen</strong> and, if you
+          want a backup, <strong>Connect Dropbox</strong> from the Journal tab.
+          Only entries that have synced to Dropbox or been exported are
+          guaranteed to survive. When Dropbox is connected, your journal text is
+          stored as readable JSON in the app's private Dropbox folder.
+        </p>
+      </section>
+
+      <section class="guide-section">
+        <h3>8. Install, scroll &amp; use offline</h3>
         <p>
           Open the top-right menu and tap <strong>Install app</strong> (Chrome /
           Android / Edge), or on iPhone open this page in Safari &rarr;{' '}

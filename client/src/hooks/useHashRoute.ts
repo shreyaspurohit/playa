@@ -8,8 +8,8 @@
 // (the default) and let the import banner handle it on top.
 import { useCallback, useEffect, useState } from 'preact/hooks';
 
-const VALID = new Set(['camps', 'schedule', 'art', 'map', 'food']);
-export type View = 'camps' | 'schedule' | 'art' | 'map' | 'food';
+const VALID = new Set(['camps', 'schedule', 'art', 'map', 'food', 'journal']);
+export type View = 'camps' | 'schedule' | 'art' | 'map' | 'food' | 'journal';
 
 function currentView(): View {
   const frag = location.hash.slice(1);

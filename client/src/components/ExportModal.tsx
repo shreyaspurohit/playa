@@ -12,6 +12,8 @@ import { LS } from '../types';
 import { readString } from '../utils/storage';
 import { buildSnapshot, downloadSnapshot } from '../utils/exportImport';
 import type { Snapshot } from '../utils/exportImport';
+import { loadDocument } from '../utils/journalDb';
+import { activeEntries } from '../utils/journalStore';
 import { IncludePicker } from './IncludePicker';
 
 interface Props {
@@ -45,6 +47,8 @@ export function ExportModal({
   );
   const [includeMyCamp, setIncludeMyCamp] = useState(true);
   const [includeFriends, setIncludeFriends] = useState(true);
+  const [includeJournal, setIncludeJournal] = useState(true);
+  const [journalCount, setJournalCount] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +58,23 @@ export function ExportModal({
     setPickedMeetIdxs(new Set(meetSpots.map((_, i) => String(i))));
     setIncludeMyCamp(true);
     setIncludeFriends(true);
+    setIncludeJournal(true);
+    let cancelled = false;
+    loadDocument()
+      .then((doc) => { if (!cancelled) setJournalCount(activeEntries(doc).length); })
+      .catch(() => { if (!cancelled) setJournalCount(0); });   // no IndexedDB → no journal option
+    return () => { cancelled = true; };
   }, [open, campIds, eventIds, artIds, meetSpots]);
+
+  function selectAll(on: boolean) {
+    setPickedCamps(on ? new Set(campIds) : new Set());
+    setPickedEvents(on ? new Set(eventIds) : new Set());
+    setPickedArt(on ? new Set(artIds) : new Set());
+    setPickedMeetIdxs(on ? new Set(meetSpots.map((_, i) => String(i))) : new Set());
+    setIncludeMyCamp(on);
+    setIncludeFriends(on);
+    setIncludeJournal(on);
+  }
 
   const campById = useMemo(() => {
     const m = new Map<string, Camp>();
@@ -118,16 +138,10 @@ export function ExportModal({
     if (e.target === e.currentTarget) onClose();
   }
 
-  function exportNow() {
-    // Read the full snapshot, then mask out anything the user
-    // unchecked. Nickname is mandatory and cannot be masked out.
+  async function exportNow() {
+    // Read the full snapshot, then mask out anything the user unchecked.
     const full = buildSnapshot(source);
     const nickname = full.nickname.trim();
-    if (!nickname) {
-      alert('Set your nickname in the header before exporting your data.');
-      onClose();
-      return;
-    }
     const filtered: Snapshot = {
       ...full,
       nickname,
@@ -140,6 +154,23 @@ export function ExportModal({
     };
     if (!filtered.artFavs || filtered.artFavs.length === 0) {
       delete filtered.artFavs;
+    }
+    // A nickname is the snapshot's shareable identity + filename. Require it only
+    // when the user selected shareable data; a journal-only backup does not need
+    // one. Based on the user's selections (not the filtered LS output) and
+    // checked before any await so the guard stays synchronous.
+    const hasShareable = pickedCamps.size || pickedEvents.size || pickedArt.size
+      || pickedMeetIdxs.size || (includeMyCamp && !!myCampId) || (includeFriends && friendCount > 0);
+    if (!nickname && hasShareable) {
+      alert('Set your nickname in the header before exporting your data.');
+      onClose();
+      return;
+    }
+    // The journal is private and self-restore only (D12) — attached as a
+    // sibling the friend-import path never reads.
+    if (includeJournal && journalCount > 0) {
+      const doc = await loadDocument();
+      if (Object.keys(doc.entries).length > 0) filtered.journal = doc;
     }
     downloadSnapshot(filtered);
     onClose();
@@ -175,6 +206,10 @@ export function ExportModal({
             device. Pick what to include — defaults to everything for
             the active source ({source}).
           </p>
+          <div class="share-select-all">
+            <button type="button" class="subtle-btn" onClick={() => selectAll(true)}>Select all</button>
+            <button type="button" class="subtle-btn" onClick={() => selectAll(false)}>Deselect all</button>
+          </div>
           <div class="share-manifest">
             <IncludePicker
               title="Starred camps"
@@ -245,12 +280,29 @@ export function ExportModal({
                 </span>
               </label>
             )}
+            {journalCount > 0 && (
+              <label class="include-row">
+                <input
+                  type="checkbox"
+                  checked={includeJournal}
+                  onChange={() => setIncludeJournal((v) => !v)}
+                />
+                <span class="include-row-body">
+                  <span class="include-row-name">
+                    Journal ({journalCount} {journalCount === 1 ? 'entry' : 'entries'})
+                  </span>
+                  <span class="include-row-subtitle">
+                    Private. Restored only when you import to your own device — never shared with friends.
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
           <p>
             <button
               class="primary-btn"
               type="button"
-              onClick={exportNow}
+              onClick={() => void exportNow()}
             >
               Download snapshot{willExport > 0 ? ` (${willExport} item${willExport === 1 ? '' : 's'})` : ''}
             </button>

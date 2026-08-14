@@ -9,9 +9,10 @@
 // they apply (BAD_CHARS, ID_RE, length caps), and add per-key shape
 // checks for hiddenDays + the friends map.
 
-import type { FriendFavs, MeetSpot } from '../types';
+import type { FriendFavs, JournalDocument, MeetSpot } from '../types';
 import { LS } from '../types';
 import { readString, writeString } from './storage';
+import { parseJournalDocument } from './journalStore';
 
 /** Bumped any time the on-disk format changes incompatibly. We accept
  *  the current version + a small whitelist of known older ones (none
@@ -56,6 +57,10 @@ export interface Snapshot {
   meetSpots: MeetSpot[];
   hiddenDays: string[];           // composite "id|YYYY-MM-DD" keys
   friends: Record<string, FriendFavs>;
+  /** Optional, private, SELF-RESTORE ONLY (ADR 20 D12). The friend-import path
+   *  never reads this, so the journal is never carried into another person's
+   *  data. Absent unless the user opted to include it when exporting. */
+  journal?: JournalDocument;
 }
 
 // === Validation helpers ==============================================
@@ -231,7 +236,16 @@ export function parseSnapshot(text: string): Snapshot | null {
     meetSpots: cleanMeetSpots(r.meetSpots),
     hiddenDays: cleanHiddenDays(r.hiddenDays),
     friends: cleanFriends(r.friends),
+    ...(cleanJournal(r.journal) ? { journal: cleanJournal(r.journal)! } : {}),
   };
+}
+
+/** Validate an embedded journal document through the journal's own strict
+ *  parser (D13). Returns null when absent or invalid — an invalid journal never
+ *  aborts the rest of the snapshot restore. */
+function cleanJournal(raw: unknown): JournalDocument | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  try { return parseJournalDocument(JSON.stringify(raw)); } catch { return null; }
 }
 
 /**

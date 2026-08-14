@@ -3,6 +3,7 @@
 import type { Event } from '../types';
 import { highlight } from '../utils/highlight';
 import { friendChipStyle } from '../utils/friendColor';
+import { AddJournalButton } from './AddJournalButton';
 
 interface Props {
   event: Event;
@@ -13,10 +14,11 @@ interface Props {
   /** Remove a specific friend's star on THIS event. Called from the
    *  × button inside their chip. */
   onRemoveFriendStar: (friendName: string) => void;
+  campName?: string;          // host camp, for journal-entry context
 }
 
 export function EventItem({
-  event, query, isFav, friends, onToggleFav, onRemoveFriendStar,
+  event, query, isFav, friends, onToggleFav, onRemoveFriendStar, campName,
 }: Props) {
   const evUrl = `https://directory.burningman.org/events/${encodeURIComponent(event.id)}/`;
   const when = event.display_time || event.time || '';
@@ -43,6 +45,9 @@ export function EventItem({
         >
           {isFav ? '★' : '☆'}
         </button>
+        <AddJournalButton compact context={{
+          kind: 'event', title: event.name, ...(campName ? { campName } : {}),
+        }} />
       </div>
       {when && <span class="evtime">{when}</span>}
       {friends.length > 0 && (

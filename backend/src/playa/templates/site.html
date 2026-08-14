@@ -296,6 +296,13 @@ __SYNC_META__
   .install-steps li { margin-bottom: 4px; }
   .tagcloud { padding: 10px 24px 14px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px; background: var(--bg); max-height: 140px; overflow-y: auto; transition: max-height 0.2s; }
   .tagcloud.expanded { max-height: 400px; }
+  .tagcloud-filter {
+    flex: 1 1 100%; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 12px; background: var(--card); color: var(--text);
+    position: sticky; top: 0; z-index: 1;
+  }
+  .tagcloud-filter:focus { outline: none; border-color: var(--accent); }
+  .tagcloud-empty { align-self: center; padding: 4px 6px; font-size: 12px; color: var(--muted); }
   .tag {
     background: var(--chip-bg); color: var(--text); border: 1px solid transparent;
     padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
@@ -1057,7 +1064,7 @@ __SYNC_META__
   .sched-row { border-left: 2px solid var(--accent-soft); padding: 4px 0 4px 8px; }
   .sched-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 500; }
   .sched-dash { opacity: 0.5; padding: 0 2px; }
-  .sched-evname { font-weight: 600; font-size: 13px; color: var(--text); text-decoration: none; display: inline-block; margin-top: 2px; }
+  .sched-evname { font-weight: 600; font-size: 13px; color: var(--text); text-decoration: none; display: inline-block; flex: 1; min-width: 0; }
   .sched-evname:hover { color: var(--accent); }
   .sched-meta { font-size: 12px; color: var(--muted); }
   .sched-meta a { color: var(--accent); text-decoration: none; }
@@ -1082,7 +1089,7 @@ __SYNC_META__
      name. The row itself fades out when rendered in the "hidden"
      disclosure so the restore action reads as "bring this back". */
   .sched-row-head {
-    display: flex; align-items: flex-start; gap: 6px;
+    display: flex; align-items: center; gap: 6px;
     justify-content: space-between;
   }
   .sched-hide-btn {
@@ -2317,9 +2324,17 @@ __SYNC_META__
       padding: 8px 14px 10px;
     }
     .map-layer-toggle { min-height: 44px; padding: 9px 13px; }
-    .tabs { gap: 2px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    /* Bumped from padding:8px to hit Apple's 44px minimum tap target. */
-    .tab { padding: 12px 14px; font-size: 14px; }
+    /* Phones: fit all tabs across the width — icon over a small label, equal
+       shares, no sideways scroll. */
+    .tabs { gap: 2px; }
+    .tab {
+      flex: 1 1 0; min-width: 0;
+      flex-direction: column; gap: 3px;
+      padding: 7px 2px; font-size: 10px; line-height: 1.1;
+      justify-content: center; text-align: center; min-height: 46px;
+    }
+    .tab-icon { font-size: 18px; }
+    .tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 
   /* Touch devices (phones, touch laptops) — bump small controls to 40+px
@@ -2354,6 +2369,172 @@ __SYNC_META__
     .site-chrome-primary-shell,
     .site-chrome-primary { transition: none; }
   }
+  /* ---- Journal (ADR 20) ---- */
+  .journal-wrap { max-width: 760px; margin: 0 auto; padding: 8px 14px 64px; }
+  .journal-topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .journal-topline h2 { margin: 0; font-size: 1.3rem; display: flex; align-items: baseline; gap: 8px; }
+  .journal-year { font-size: 0.8rem; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 10px; }
+  .journal-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .journal-search { width: 100%; margin: 12px 0; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: inherit; font: inherit; }
+  .journal-quote {
+    margin: 0 2px 4px; padding: 0; color: var(--muted);
+    font-style: italic; font-size: 0.92rem; line-height: 1.5;
+  }
+  .journal-quote-by {
+    display: block; margin-top: 2px; font-style: normal;
+    font-size: 0.8rem; font-weight: 500; opacity: 0.85;
+  }
+  .journal-year-group { margin-top: 20px; }
+  .journal-year-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    position: sticky; top: 0; margin: 0 0 8px; background: var(--bg);
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+  }
+  .journal-year-title { margin: 0; font-size: 1.05rem; font-weight: 600; color: var(--muted); }
+  .journal-card { border: 1px solid var(--border); border-radius: 12px; background: var(--card); margin-bottom: 8px; overflow: hidden; }
+  .journal-card-summary { display: flex; align-items: baseline; gap: 8px; padding: 11px 14px; cursor: pointer; list-style: none; }
+  .journal-card-summary::-webkit-details-marker { display: none; }
+  .journal-card-summary:hover { background: var(--chip-bg); }
+  .journal-card-caret { color: var(--muted); font-size: 0.8em; transition: transform 0.15s; align-self: center; flex-shrink: 0; }
+  .journal-card[open] .journal-card-caret { transform: rotate(90deg); }
+  .journal-card-title { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+  .journal-card-when { color: var(--muted); font-size: 0.82rem; white-space: nowrap; flex-shrink: 0; }
+  .journal-card-body { padding: 0 14px 12px 34px; }
+  .journal-card-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .journal-card-context { margin-top: 2px; font-size: 0.85rem; color: var(--accent); }
+  .journal-card-text { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+  .journal-editor { border: 1px solid var(--accent); border-radius: 12px; background: var(--card); padding: 14px; margin: 12px 0; }
+  .journal-editor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .journal-title-input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: inherit; font: inherit; font-weight: 600; padding: 9px 10px; margin-bottom: 8px; }
+  .journal-textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: inherit; font: inherit; padding: 10px; resize: vertical; min-height: 120px; }
+  .journal-editor-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 0.85rem; color: var(--muted); }
+  .journal-editor-meta label { display: flex; flex-direction: column; gap: 4px; }
+  .journal-editor-meta input { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: inherit; font: inherit; padding: 6px 8px; }
+  .journal-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+  .journal-count { font-size: 0.8rem; color: var(--muted); }
+  .journal-count.over { color: #c0392b; }
+  .journal-context-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 4px 10px; font-size: 0.85rem; margin-bottom: 10px; }
+  .journal-undo-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; margin: 8px 0; font-size: 0.9rem; }
+  .journal-backup-banner { position: relative; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 8px 0; font-size: 0.9rem; }
+  .journal-backup-text { margin: 0 28px 10px 0; }
+  .journal-backup-dismiss { position: absolute; top: 6px; right: 6px; background: transparent; border: 0; cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; padding: 6px; border-radius: 6px; -webkit-tap-highlight-color: transparent; }
+  .journal-backup-dismiss:hover, .journal-backup-dismiss:focus-visible { color: var(--accent); background: var(--chip-bg); outline: none; }
+  .journal-empty, .journal-note, .journal-error { padding: 10px 2px; color: var(--muted); }
+  .journal-error { color: #c0392b; }
+  /* Journal-add icon button — sits beside the favorite star on cards/rows.
+     Sized to match .fav-btn so the two align on the same baseline. */
+  .journal-add-btn {
+    width: 36px; height: 36px; flex-shrink: 0; padding: 0; border: 0;
+    background: transparent; cursor: pointer; color: var(--muted);
+    border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.15s, background 0.15s, transform 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .journal-add-btn:hover, .journal-add-btn:focus-visible {
+    color: var(--accent); background: var(--chip-bg); transform: scale(1.08); outline: none;
+  }
+  /* Compact variant for inline rows (events / schedule / food) */
+  .journal-add-btn.compact { width: 28px; height: 28px; }
+  .journal-icon { display: block; }
+  .food-journal { align-self: center; margin-left: 2px; }
+  .header-year {
+    font-size: 0.6em; font-weight: 700; color: var(--accent); background: var(--accent-soft);
+    border-radius: 999px; padding: 2px 8px; margin-left: 8px; vertical-align: middle;
+    letter-spacing: 0.02em;
+  }
+  /* ---- Journal delight layer (ADR 20 D18) ---- */
+  /* Day sub-grouping */
+  .journal-day-group { margin-top: 12px; }
+  .journal-day-head {
+    display: flex; align-items: center; gap: 6px;
+    margin: 0 0 6px 2px; padding: 3px 2px;
+    font-size: 0.85rem; font-weight: 600; color: var(--muted);
+    cursor: pointer; list-style: none; user-select: none;
+  }
+  .journal-day-head::-webkit-details-marker { display: none; }
+  .journal-day-head:hover { color: var(--text); }
+  .journal-day-caret {
+    font-size: 1.15rem; line-height: 1; color: var(--accent);
+    transition: transform 0.15s; flex-shrink: 0; width: 1em; text-align: center;
+  }
+  .journal-day-group[open] > .journal-day-head .journal-day-caret { transform: rotate(90deg); }
+  .journal-day-count {
+    font-weight: 500; font-size: 0.72rem; color: var(--muted);
+    background: var(--chip-bg); border-radius: 999px; padding: 0 7px; line-height: 1.5;
+  }
+  /* Icon controls that act on the day list — sit tight above it, right-aligned,
+     and visually distinct from the search/toolbar buttons. */
+  .journal-list-controls { display: flex; gap: 4px; }
+  .journal-collapse-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; padding: 0; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card); color: var(--muted); cursor: pointer;
+  }
+  .journal-collapse-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .journal-collapse-btn svg { width: 18px; height: 18px; display: block; }
+  /* Summary extras: time-of-day glyph, mood, time-only */
+  .journal-tod { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--muted); }
+  .journal-mood { font-size: 15px; line-height: 1; flex-shrink: 0; }
+  .journal-card.tod-dawn { box-shadow: inset 4px 0 0 #f2a97a; }
+  .journal-card.tod-dawn .journal-tod { color: #e58e5c; }
+  .journal-card.tod-morning { box-shadow: inset 4px 0 0 #7cb8dd; }
+  .journal-card.tod-morning .journal-tod { color: #5aa3ce; }
+  .journal-card.tod-afternoon { box-shadow: inset 4px 0 0 #e8b74e; }
+  .journal-card.tod-afternoon .journal-tod { color: #d19a2a; }
+  .journal-card.tod-dusk { box-shadow: inset 4px 0 0 #e88a5a; }
+  .journal-card.tod-dusk .journal-tod { color: #db6f3a; }
+  .journal-card.tod-night { box-shadow: inset 4px 0 0 #7b7fc0; }
+  .journal-card.tod-night .journal-tod { color: #6b6fb8; }
+  /* Mood picker (editor) — labeled chips so the mood is unmistakable */
+  .journal-mood-block { margin: 2px 0 10px; }
+  .journal-mood-label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 5px; }
+  .journal-mood-optional { opacity: 0.7; }
+  .journal-mood-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+  .journal-mood-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: inherit; cursor: pointer; transition: border-color 0.12s, background 0.12s; -webkit-tap-highlight-color: transparent; }
+  .journal-mood-opt .mood-emoji { font-size: 14px; line-height: 1; }
+  .journal-mood-opt:hover, .journal-mood-opt:focus-visible { border-color: var(--accent); outline: none; }
+  .journal-mood-opt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  /* Playful empty state */
+  .journal-empty-prompt { font-size: 1.15rem; font-weight: 700; color: var(--accent); margin: 0 0 6px; }
+  /* Time-of-day hero banner */
+  .journal-hero { position: relative; height: 66px; border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
+  .journal-hero-orb { position: absolute; top: 13px; right: 28px; width: 26px; height: 26px; border-radius: 50%; box-shadow: 0 0 14px rgba(255,255,255,0.35); }
+  .journal-hero-silhouette { position: absolute; left: 0; bottom: 0; width: 100%; height: 22px; display: block; fill: rgba(35,28,22,0.5); }
+  .journal-hero-stars { position: absolute; inset: 0; background-image: radial-gradient(#fff 0.6px, transparent 1.2px); background-size: 26px 20px; opacity: 0.5; }
+  .journal-sky-dawn { background: linear-gradient(#ffd9c2, #ffeede); }
+  .journal-sky-dawn .journal-hero-orb { background: #ffb26b; }
+  .journal-sky-morning { background: linear-gradient(#cfe9f7, #eef8ff); }
+  .journal-sky-morning .journal-hero-orb { background: #ffd85e; }
+  .journal-sky-afternoon { background: linear-gradient(#ffe9a8, #fff6d6); }
+  .journal-sky-afternoon .journal-hero-orb { background: #ffcf3d; }
+  .journal-sky-dusk { background: linear-gradient(#f6b98a, #fbd9b0); }
+  .journal-sky-dusk .journal-hero-orb { background: #ff9147; }
+  .journal-sky-night { background: linear-gradient(#2b2f57, #171a33); }
+  .journal-sky-night .journal-hero-orb { background: #e8e6f0; box-shadow: 0 0 12px rgba(232,230,240,0.5); }
+  .journal-sky-night .journal-hero-silhouette { fill: rgba(8,8,18,0.72); }
+  /* Floating back-to-top (camps / art long lists) */
+  .scroll-top-btn {
+    position: fixed; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    z-index: 60; width: 46px; height: 46px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--accent); color: #fff; font-size: 22px; line-height: 1; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+    display: inline-flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .scroll-top-btn:hover, .scroll-top-btn:focus-visible { filter: brightness(1.06); outline: none; }
+  .share-select-all { display: flex; gap: 8px; margin: 4px 0 10px; }
+  /* Locked: Journal is the one surface reachable without the password (D16). No
+     tabs are exposed before unlocking — just the gate + a single journal link. */
+  .locked-journal { max-width: 760px; margin: 0 auto; padding: 12px 16px; }
+  .locked-journal-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .locked-shell-title { font-size: 1.1rem; }
+  .gate-journal-link {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 101;
+    background: var(--card); border: 1px solid var(--border); border-radius: 999px;
+    padding: 10px 18px; font: inherit; color: var(--accent); cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.14); -webkit-tap-highlight-color: transparent;
+  }
+  .gate-journal-link:hover, .gate-journal-link:focus-visible { border-color: var(--accent); outline: none; }
 </style>
 <script>
   // Dropbox redirects its popup back to this same single-file app. Relay the

@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { Camp, Event } from '../types';
 import { friendChipStyle } from '../utils/friendColor';
+import { AddJournalButton } from './AddJournalButton';
 import { EyeIcon } from './EyeIcon';
 import { useGeolocation } from '../hooks/useGeolocation';
 import { addressToLatLng, haversineMeters } from '../map/address';
@@ -239,8 +240,9 @@ function collectSchedule(
   return { byCell, hiddenByCell, unscheduled };
 }
 
-function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
+function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, isDirectory }: {
   e: ScheduleEntry;
+  isDirectory: boolean;
   onGotoCamp: (id: string) => void;
   youLabel: string;
   /** Called with no args — the parent already knows the (eventId, iso)
@@ -262,9 +264,14 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
       </div>
       <div class="sched-main">
         <div class="sched-row-head">
-          <a class="sched-evname" href={evUrl} target="_blank" rel="noopener">
-            {e.event.name}
-          </a>
+          {isDirectory ? (
+            <a class="sched-evname" href={evUrl} target="_blank" rel="noopener">
+              {e.event.name}
+            </a>
+          ) : (
+            <span class="sched-evname">{e.event.name}</span>
+          )}
+          <AddJournalButton compact context={{ kind: 'event', title: e.event.name, campName: e.camp.name }} />
           {onToggleHide && (
             <button
               class="sched-hide-btn"
@@ -303,7 +310,7 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
 }
 
 function DayColumn({
-  cell, entries, hiddenEntries, onGotoCamp, youLabel, onToggleHide,
+  cell, entries, hiddenEntries, onGotoCamp, youLabel, onToggleHide, isDirectory,
 }: {
   cell: DayCell;
   entries: ScheduleEntry[];
@@ -311,6 +318,7 @@ function DayColumn({
   onGotoCamp: (id: string) => void;
   youLabel: string;
   onToggleHide: (eventId: string, iso: string) => void;
+  isDirectory: boolean;
 }) {
   return (
     <section class="sched-day">
@@ -324,7 +332,7 @@ function DayColumn({
         <ul class="sched-list">
           {entries.map((e) =>
             <EventRow
-              key={`${cell.iso}:${e.event.id}`} e={e}
+              key={`${cell.iso}:${e.event.id}`} e={e} isDirectory={isDirectory}
               onGotoCamp={onGotoCamp} youLabel={youLabel}
               onToggleHide={() => onToggleHide(e.event.id, cell.iso)}
             />)}
@@ -338,7 +346,7 @@ function DayColumn({
           <ul class="sched-list">
             {hiddenEntries.map((e) =>
               <EventRow
-                key={`${cell.iso}:hidden:${e.event.id}`} e={e}
+                key={`${cell.iso}:hidden:${e.event.id}`} e={e} isDirectory={isDirectory}
                 onGotoCamp={onGotoCamp} youLabel={youLabel}
                 onToggleHide={() => onToggleHide(e.event.id, cell.iso)}
                 hidden
@@ -357,6 +365,9 @@ export function ScheduleView({
   source, nowSnapshot,
 }: Props) {
   const brc = useMemo(() => brcForSource(source), [source]);
+  // Only directory events have a canonical directory.burningman.org page; API
+  // events do not, so their names render as plain text (no dead hyperlink).
+  const isDirectory = source === 'directory';
   const cells = useMemo(
     () => buildCalendarCells(burnStart ?? '', burnEnd ?? ''),
     [burnStart, burnEnd],
@@ -617,6 +628,7 @@ export function ScheduleView({
                 hiddenEntries={hiddenByCell.get(c.iso) ?? []}
                 onGotoCamp={onGotoCamp} youLabel={youLabel}
                 onToggleHide={onToggleDayHidden}
+                isDirectory={isDirectory}
               />
             ))}
           </div>
@@ -646,7 +658,7 @@ export function ScheduleView({
                   <ul class="sched-list">
                     {entries.map((e) =>
                       <EventRow
-                        key={`${c.iso}:${e.event.id}`} e={e}
+                        key={`${c.iso}:${e.event.id}`} e={e} isDirectory={isDirectory}
                         onGotoCamp={onGotoCamp} youLabel={youLabel}
                         onToggleHide={() => onToggleDayHidden(e.event.id, c.iso)}
                       />)}
@@ -657,7 +669,7 @@ export function ScheduleView({
                       <ul class="sched-list">
                         {hidden.map((e) =>
                           <EventRow
-                            key={`${c.iso}:hidden:${e.event.id}`} e={e}
+                            key={`${c.iso}:hidden:${e.event.id}`} e={e} isDirectory={isDirectory}
                             onGotoCamp={onGotoCamp} youLabel={youLabel}
                             onToggleHide={() => onToggleDayHidden(e.event.id, c.iso)}
                             hidden
@@ -684,7 +696,7 @@ export function ScheduleView({
               <ul class="sched-list">
                 {unscheduled.map((e) =>
                   <EventRow
-                    key={`uns:${e.event.id}`} e={e}
+                    key={`uns:${e.event.id}`} e={e} isDirectory={isDirectory}
                     onGotoCamp={onGotoCamp} youLabel={youLabel}
                   />,
                 )}

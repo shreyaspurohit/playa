@@ -141,4 +141,33 @@ describe('applySnapshot + buildSnapshot round-trip', () => {
     assert.deepEqual(out.meetSpots, []);
     assert.deepEqual(out.friends, {});
   });
+
+  test('a valid embedded journal is carried on parse (self-restore only)', () => {
+    const journal = {
+      schema: 'playa-journal-v1',
+      entries: {
+        '00000000-0000-4000-8000-000000000001': {
+          entryId: '00000000-0000-4000-8000-000000000001',
+          modifiedAt: 1, writeToken: '00000000-0000-4000-8000-0000000000aa',
+          value: { burnYear: 2026, occurredAt: '2026-08-28T22:30', createdAt: 1, text: 'secret note' },
+        },
+      },
+    };
+    const snap = parseSnapshot(JSON.stringify({
+      schema: SNAPSHOT_SCHEMA, exportedAt: '2026-08-28T00:00:00Z', nickname: 'me',
+      campFavs: [], eventFavs: [], myCampId: '', meetSpots: [], hiddenDays: [], friends: {}, journal,
+    }));
+    assert.ok(snap);
+    assert.equal(Object.keys(snap!.journal!.entries).length, 1);
+  });
+
+  test('an invalid embedded journal is dropped without failing the snapshot', () => {
+    const snap = parseSnapshot(JSON.stringify({
+      schema: SNAPSHOT_SCHEMA, exportedAt: '2026-08-28T00:00:00Z', nickname: 'me',
+      campFavs: [], eventFavs: [], myCampId: '', meetSpots: [], hiddenDays: [], friends: {},
+      journal: { schema: 'wrong', entries: {} },
+    }));
+    assert.ok(snap);
+    assert.equal(snap!.journal, undefined);
+  });
 });

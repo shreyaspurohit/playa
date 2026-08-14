@@ -10,6 +10,14 @@ import {
 } from './SyncBackend';
 
 const SYNC_PATH = '/playa-sync.json';
+export const JOURNAL_PATH = '/playa-journal.json';
+// The transport accepts only these fixed App-folder paths — never an arbitrary
+// caller-supplied path (ADR 20 D9).
+const ALLOWED_PATHS = new Set([SYNC_PATH, JOURNAL_PATH]);
+function allowlistedPath(path: string): string {
+  if (!ALLOWED_PATHS.has(path)) throw new Error(`Refusing non-allowlisted sync path: ${path}`);
+  return path;
+}
 const OAUTH_MESSAGE = 'PLAYA_DROPBOX_OAUTH';
 const OAUTH_CHANNEL = 'playa-dropbox-oauth';
 const OAUTH_TIMEOUT_MS = 5 * 60_000;
@@ -436,9 +444,10 @@ export class DropboxBackend implements SyncBackend {
     return true;
   }
 
-  async readFile(): Promise<RemoteSyncFile> {
+  async readFile(path: string = SYNC_PATH): Promise<RemoteSyncFile> {
+    const target = allowlistedPath(path);
     try {
-      const response = await (await this.authenticatedClient()).filesDownload({ path: SYNC_PATH });
+      const response = await (await this.authenticatedClient()).filesDownload({ path: target });
       const result = response.result;
       // The SDK always returns a Blob in a browser/worker (isWindowOrWorker());
       // the Node Buffer path (fileBinary) never runs in this app.
@@ -460,10 +469,11 @@ export class DropboxBackend implements SyncBackend {
     }
   }
 
-  async writeFile(text: string, revision: string | null): Promise<string> {
+  async writeFile(text: string, revision: string | null, path: string = SYNC_PATH): Promise<string> {
+    const target = allowlistedPath(path);
     try {
       const response = await (await this.authenticatedClient()).filesUpload({
-        path: SYNC_PATH,
+        path: target,
         mode: revision ? { '.tag': 'update', update: revision } : { '.tag': 'add' },
         autorename: false,
         mute: true,
