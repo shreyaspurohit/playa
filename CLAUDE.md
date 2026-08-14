@@ -1331,12 +1331,15 @@ documented operator decisions are active requirements; none are optional.
 
 ## Likely future extensions
 
-- Per-tag landing pages or tag co-occurrence view.
+See [docs/roadmap.md](docs/roadmap.md) for the current active list and the
+explicit **Won't do (decided 2026)** section (event-only search, tag
+co-occurrence, extra map overlays, sync content encryption, favorite migration,
+mid-session tier-up, mutant vehicles, per-year denylists). Still open:
+
+- Per-tag landing pages.
 - Pull organizer URLs / social links from `/events/{id}/` pages (not yet
   fetched — only camp pages are fetched).
-- "Search events only" toggle in the UI.
-- Year-over-year diffing if the user wants to track camp changes across
-  burns — current fetch is a single snapshot. Now easy: `playa.archive`
-  (see "Official BM APIs + datasets" above) gives us 2015–2025 for free.
+- Year dropdown / year-over-year diffing — revisit at 2027 prep; design to
+  auto-relegate the prior year via `BRC_MAP_YEAR` (roadmap).
 - Replace the shared-password gate with Cloudflare Access (free for ≤50
   users) if you want per-friend access control + audit log.

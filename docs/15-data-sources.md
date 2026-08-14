@@ -35,7 +35,8 @@ the active source**. Switching sources is instant: every source's payload
 is already embedded in `index.html` at build time.
 
 Scope of this ADR: **camps, events, and art.** Art is implemented as a parallel
-payload and UI surface (D14). Mutant vehicles remain deferred.
+payload and UI surface (D14). Mutant vehicles are a **won't-do** (roadmap):
+art cars move and have no fixed location, so there is nothing to map or plan.
 
 ## Decisions
 
@@ -285,8 +286,9 @@ those entries. The implemented files are:
 
 All contain IDs only and are committed per the existing removal pattern.
 
-Future enhancement: per-year-source denylists. Today, treat all API
-sources as sharing one denylist — a camp removed in 2024 stays removed
+Per-year-source denylists are a **won't-do unless required** (roadmap):
+build one only if a specific year's takedown ever needs it. Today, treat all
+API sources as sharing one denylist — a camp removed in 2024 stays removed
 across all API years (typically what we want, since it's the same camp).
 
 ### D10 — Tiered access via envelope encryption
@@ -565,8 +567,9 @@ keep the other tiers' wrappers untouched.
      app on `spirit-mode`.
    - `404` / network error → fall through to today's password gate.
 6. The current UI enters directly with the spirit source set and does not show
-   a mid-session tier-up password affordance. Adding that affordance remains a
-   possible enhancement; do not describe it as implemented.
+   a mid-session tier-up password affordance. That affordance is a **won't-do**
+   (roadmap): all real users are spirit-mode, and higher tiers exist only for
+   the operator to test/compare.
 
 **What this gets**:
 
@@ -946,7 +949,8 @@ playa all --sources directory   # nightly default — no API hits unless asked
   switches to `api-2025` and sees zero stars. By design — different IDs
   for the same camp, different city plan, different events. The
   empty-state copy in CampsView calls this out. A name-based bridge
-  ("port my directory favs to API 2025") is a future enhancement.
+  ("port my directory favs to API 2025") is a **won't-do** (roadmap): users
+  don't switch sources — the switch is operator-only for testing/history.
 
 - **Migration window**: bare LS keys left in place for one build. A user
   loading the new bundle, then opening an OLD cached bundle from another
