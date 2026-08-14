@@ -280,10 +280,14 @@ row and modal with the rest of the sync UI (D1).
 ### D11 — Plaintext content, wrapped credential
 
 Per owner decision, `playa-sync.json` is readable JSON in the user's private
-Dropbox app folder. Optional content encryption is future work: it adds a
-separate passphrase/recovery problem for relatively low-sensitivity plan data.
-The Dropbox access and refresh tokens are different—they grant access—so both
-are always wrapped at rest (D5).
+Dropbox app folder. **Content encryption is a deliberate won't-do**, not
+deferred work: the file lives in the user's own Dropbox account, which already
+protects it (account auth, encryption in transit and at rest), and the owner
+wants the synced data to stay plainly readable/usable there rather than locked
+behind an app passphrase. App-side encryption would only add a separate
+passphrase/recovery burden for relatively low-sensitivity plan data. The
+Dropbox access and refresh tokens are different—they grant access—so both are
+always wrapped at rest (D5).
 
 ### D12 — Manual transfer remains supported
 
