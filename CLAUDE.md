@@ -264,10 +264,10 @@ wrapping them in classes would have been pure ceremony.
 | `BM_GIS_BASE_URL`    | official GitHub raw URL       | Override the annual GIS repository base for testing                                               |
 | `BM_GIS_TIMEOUT`     | `30`                          | Timeout in seconds for each official GIS request                                                  |
 | `SITE_TIERS`         | *(unset)*                     | Multi-tier access. Format: `name1:pw1=src1+src2,name2:pw2=src3,…`. Each tier (name + password) unlocks its source list via per-source envelope encryption. Tier names required — `spirit-mode` is the reserved name D13 looks up for burn-key.json; `god-mode` is the reserved name D8 looks up to flag wrappers as trusted (location-embargo bypass). Conventional shape: `god-mode:$GOD_PW=directory+api-2025+api-2026,demigod-mode:$DEMIGOD_PW=api-2025+api-2026,spirit-mode:$SPIRIT_PW=api-2026`. Unset → falls through to single-tier `SITE_PASSWORD`. See ADR D10. |
-| `BURN_OPEN`          | `0` / unset                   | `workflow_dispatch` override for D13 burn-window auto-unlock. When `1`, deploys `site/burn-key.json` alongside `index.html` so the client auto-unlocks `spirit-mode` without a password. `god-mode` / `demigod-mode` stay password-gated. |
-| `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` | unset | Repo *variables* (Settings → Secrets and variables → Actions → Variables). ISO dates. When both set, the nightly cron evaluates today-in-window and auto-includes / auto-removes `burn-key.json` — set-once-forget, no manual flip per burn. Manual `BURN_OPEN` input always wins. See ADR D13. |
+| `BURN_OPEN`          | `0` / unset                   | `workflow_dispatch` override for D13 site-unlock. When `1`, deploys `site/burn-key.json` alongside `index.html` so the client auto-unlocks `spirit-mode` without a password. `god-mode` / `demigod-mode` stay password-gated. |
+| `SITE_UNLOCK_START` / `SITE_UNLOCK_END` | unset | Repo *variables* (Settings → Secrets and variables → Actions → Variables). ISO dates. The **password-free access window**, decoupled from the burn-week calendar (D13 amendment). When both set, the nightly cron evaluates today-in-window and auto-includes / auto-removes `burn-key.json` — set-once-forget. `SITE_UNLOCK_START > SITE_UNLOCK_END` fails the build loud. Manual `BURN_OPEN` input always wins. See ADR D13. |
+| `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` | unset | Repo *variables*. ISO dates for the **burn-week calendar** only (`Config.burn_start`/`burn_end` → schedule week-map, event dates, Food/Schedule "now"). Set to the real burn week (2026: `2026-08-30` / `2026-09-07`). Since the D13 amendment these no longer affect site access. Required by the build; `FROM > TO` fails loud. |
 | `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT` | unset | Repo *variables*. Timezone-aware ISO-8601 public release timestamps for the current API year's camp and art location fields (2026: `2026-08-23T00:00:00-07:00` / `2026-08-30T00:00:00-07:00`). Required when `api-<BRC_MAP_YEAR>` is embedded; independent of the burn/spirit-access window. See ADR D8. |
-| `PLAYA_GO_LIVE`      | unset / `false`               | Repo *variable* (truthy/falsy). Forces `BURN_OPEN=1` on builds whose date is BEFORE `BURN_WINDOW_OPEN_FROM` so spirit-mode auto-unlocks ahead of the burn week (e.g., for early stress-testing or operator preview). Past `BURN_WINDOW_OPEN_TO` the flag is ignored — the deploy closes regardless. Manual `workflow_dispatch` `burn_open` input still wins over this. |
 | `MIN_CAMPS`          | `500`                         | Primary-source build safety rail. `0` is for intentionally small local fixtures only; never set it in CI. |
 | `SYNC_PROVIDER`      | *(unset)*                     | Optional cloud backup provider. Set to `dropbox` with `SYNC_CLIENT_ID`; unset emits no sync UI or provider traffic. |
 | `SYNC_CLIENT_ID`     | *(unset)*                     | Public Dropbox App key for PKCE; configure an App-folder app and register the deployed/local redirect URI. |
@@ -938,9 +938,9 @@ One-time setup in the repo:
    - `SITE_TIERS` — production envelope tier/password/source manifest.
    - `BM_API_KEY` and `BM_CACHE_PASSWORD` — API refresh + encrypted cache.
    - `CONTACT_EMAIL` — where takedown mail should go.
-   Add repository variables `BM_API_YEARS`, `BRC_MAP_YEAR`, `BURN_WINDOW_OPEN_FROM`,
-   `BURN_WINDOW_OPEN_TO`, `CAMP_LOCATION_RELEASE_AT`,
-   `ART_LOCATION_RELEASE_AT`, and optionally `PLAYA_GO_LIVE`.
+   Add repository variables `BM_API_YEARS`, `BRC_MAP_YEAR`, `SITE_UNLOCK_START`,
+   `SITE_UNLOCK_END`, `BURN_WINDOW_OPEN_FROM`, `BURN_WINDOW_OPEN_TO`,
+   `CAMP_LOCATION_RELEASE_AT`, and `ART_LOCATION_RELEASE_AT`.
 4. Custom domain: `site/CNAME` is already committed with
    `playa.purohit.dev`. Add a `CNAME` DNS record for `playa` at
    `purohit.dev` pointing to `<github-user>.github.io`. **Settings →
