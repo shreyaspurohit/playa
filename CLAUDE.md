@@ -40,6 +40,7 @@ change touches one of these subsystems.
 - [`docs/17-food-tab.md`](docs/17-food-tab.md) — food classification, live availability, filters, favorites, and Near Me behavior
 - [`docs/18-mobile-scroll-chrome.md`](docs/18-mobile-scroll-chrome.md) — contextual sticky controls + direction-aware mobile header collapse
 - [`docs/19-food-classification-audit.md`](docs/19-food-classification-audit.md) — local Ollama semantic audit + ID-only Food exclusion proposals
+- [`docs/20-journal.md`](docs/20-journal.md) — accepted design for a year-owned offline journal, contextual notes, timeline/search, and Dropbox archive
 - [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
 - [`docs/dev/client-architecture.md`](docs/dev/client-architecture.md) — compact client implementation reference
 - [`docs/dev/html-scraping-patterns.md`](docs/dev/html-scraping-patterns.md) — directory HTML parser patterns

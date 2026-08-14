@@ -1,7 +1,7 @@
 // Root: holds all cross-component state (query, active tags, favorites,
 // fav-only filter, theme, info modal, current tab, map target, etc.)
 // and wires it up.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Art, Camp, EncryptedPayload, Source } from '../types';
 import { LS, scopedKey } from '../types';
 import {
@@ -56,6 +56,10 @@ import { FoodView } from './FoodView';
 import { ShareModal } from './ShareModal';
 import { SyncModal } from './SyncModal';
 import { TabBar } from './TabBar';
+import { JournalView } from './JournalView';
+import { ScrollToTop } from './ScrollToTop';
+import { importJournalJson } from '../sync/journalSync';
+import { serializeJournalDocument } from '../utils/journalStore';
 import { Toolbar } from './Toolbar';
 import { now, isMockNow, mockNowLabel, clearMockNow } from '../utils/clock';
 import { isMockGps, mockGpsLabel, clearMockGps } from '../utils/mockGps';
@@ -250,14 +254,20 @@ export function App() {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
-  useEffect(() => {
+  // Layout effect (not a plain effect): it must set `restoringScrollRef` and
+  // `activeViewRef` synchronously after the DOM swap, before the browser fires
+  // the async scroll event that a *shorter* incoming view (e.g. Journal) causes
+  // by clamping scrollY. Otherwise that clamp overwrites the outgoing view's
+  // saved position and switching back loses the scroll.
+  useLayoutEffect(() => {
     const target = scrollByView.current[view] ?? 0;
     activeViewRef.current = view;
+    restoringScrollRef.current = true;
     if (navScrollTargetRef.current === view) {
       navScrollTargetRef.current = null;   // explicit scroll-to target wins
+      requestAnimationFrame(() => { restoringScrollRef.current = false; });
       return;
     }
-    restoringScrollRef.current = true;
     requestAnimationFrame(() => {
       window.scrollTo(0, target);
       requestAnimationFrame(() => { restoringScrollRef.current = false; });
@@ -867,15 +877,17 @@ export function App() {
    * `incomingShare` drives ImportBanner.
    */
   const [exportOpen, setExportOpen] = useState(false);
+  // No nickname gate on open: ExportModal requires one only when shareable data
+  // is included, so a nickname-free journal-only backup stays reachable (D15).
   const onExportSnapshot = useCallback(() => {
-    if (!requireNickname('exporting your data')) return;
     setExportOpen(true);
-  }, [requireNickname]);
+  }, []);
 
   const [incomingSnapshot, setIncomingSnapshot] = useState<Snapshot | null>(null);
 
+  // The self-restore / friend-import decision re-checks the nickname where it
+  // actually matters, so picking a file to import needs no nickname up front.
   const onImportSnapshot = useCallback(async () => {
-    if (!requireNickname('importing a snapshot')) return;
     const snap = await pickSnapshotFile();
     if (!snap) {
       alert("Couldn't read that file. Make sure it's a Playa Camps export.");
@@ -884,7 +896,7 @@ export function App() {
     setIncomingSnapshot(snap);
   }, [requireNickname]);
 
-  const onApplySnapshotSelf = useCallback(() => {
+  const onApplySnapshotSelf = useCallback(async () => {
     if (!incomingSnapshot) return;
     const ownNickname = requireNickname('restoring your snapshot');
     if (!ownNickname) return;
@@ -896,6 +908,11 @@ export function App() {
         : { ...incomingSnapshot, nickname: ownNickname },
       source,
     );
+    // A private journal in the snapshot is merged into the local journal DB —
+    // self-restore only (D12). The friend-import path never reaches here.
+    if (incomingSnapshot.journal) {
+      try { await importJournalJson(serializeJournalDocument(incomingSnapshot.journal)); } catch { /* ignore */ }
+    }
     setIncomingSnapshot(null);
     location.reload();
   }, [incomingSnapshot, source, requireNickname]);
@@ -1135,16 +1152,49 @@ export function App() {
   // unlocks at least one source. Once unlocked, fall through to the
   // main app — `unlockedDeks` survives the re-render and drives the
   // source switcher's effective list.
-  if (envelopeSources && !unlockedDeks) {
-    return (
-      <EnvelopeGate
-        sources={envelopeSources}
-        onUnlock={(deks, trusted) => setUnlocked({ deks, trusted })}
-      />
+  // Locked shell (ADR 20 D16): while the site password gates the source data,
+  // the Journal stays reachable — it reads only its own IndexedDB and can even
+  // reconnect Dropbox without the site password. Data views show the gate; the
+  // tab bar lets the user reach their journal.
+  const locked = (envelopeSources && !unlockedDeks) || !!encEnvelope;
+  if (locked) {
+    // Journal is the one surface reachable without the password (D16). Keep the
+    // gate mounted hidden here so a cached password still auto-unlocks the app.
+    const hiddenGate = (
+      <div hidden>
+        {envelopeSources && !unlockedDeks ? (
+          <EnvelopeGate sources={envelopeSources} onUnlock={(deks, trusted) => setUnlocked({ deks, trusted })} />
+        ) : encEnvelope ? (
+          <Gate enc={encEnvelope} onUnlock={onUnlock} />
+        ) : null}
+      </div>
     );
-  }
-  if (encEnvelope) {
-    return <Gate enc={encEnvelope} onUnlock={onUnlock} />;
+    if (view === 'journal') {
+      return (
+        <div class="locked-journal">
+          <div class="locked-journal-bar">
+            <strong class="locked-shell-title">Playa Camps</strong>
+            <button type="button" class="subtle-btn" onClick={() => goto('camps')}>🔒 Enter password</button>
+          </div>
+          <JournalView standalone />
+          {hiddenGate}
+        </div>
+      );
+    }
+    // Everything else stays fully gated — no tabs exposed. A single, subtle link
+    // lets a friend without the password reach their own journal.
+    return (
+      <>
+        {envelopeSources && !unlockedDeks ? (
+          <EnvelopeGate sources={envelopeSources} onUnlock={(deks, trusted) => setUnlocked({ deks, trusted })} />
+        ) : (
+          <Gate enc={encEnvelope!} onUnlock={onUnlock} />
+        )}
+        <button type="button" class="gate-journal-link" onClick={() => goto('journal')}>
+          📓 Open your journal — no password needed
+        </button>
+      </>
+    );
   }
 
   return (
@@ -1444,8 +1494,13 @@ export function App() {
               source={source}
             />
           </div>
+          <div hidden={view !== 'journal'}>
+            <JournalView />
+          </div>
         </>
       )}
+
+      {(view === 'camps' || view === 'art') && <ScrollToTop />}
 
       <Footer
         fetchedDate={meta.fetchedDate}

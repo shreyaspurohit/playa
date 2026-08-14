@@ -11,6 +11,7 @@ const TABS: Array<[View, string, string]> = [
   ['food',     '🍽',  'Food'],
   ['art',      '🎨', 'Art'],
   ['map',      '🗺️', 'Map'],
+  ['journal',  '📓', 'Journal'],
 ];
 
 export function TabBar({ view, onGoto }: Props) {

@@ -4,6 +4,7 @@
 // by" chip row appears below the meta.
 import type { Camp } from '../types';
 import { highlight } from '../utils/highlight';
+import { AddJournalButton } from './AddJournalButton';
 import { EventItem } from './EventItem';
 import { FriendChip } from './FriendChip';
 import { TentIcon } from './TentIcon';
@@ -67,6 +68,7 @@ export function CampCard({
         >
           {isFav ? '★' : '☆'}
         </button>
+        <AddJournalButton context={{ kind: 'camp', title: camp.name }} />
       </div>
       <div class="meta">
         <span>{camp.location || '—'}</span>
@@ -167,6 +169,7 @@ export function CampCard({
                 onRemoveFriendStar={(friendName) =>
                   onRemoveFriendEventStar(friendName, e.id)
                 }
+                campName={camp.name}
               />
             ))}
           </ul>

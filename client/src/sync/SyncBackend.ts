@@ -16,8 +16,11 @@ export interface SyncBackend {
    *  its callback. Returns true when it connected, false when nothing was
    *  pending. Throws on a failed/denied authorization (after clearing state). */
   completeRedirectAuth(): Promise<boolean>;
-  readFile(): Promise<RemoteSyncFile>;
-  writeFile(text: string, revision: string | null): Promise<string>;
+  /** Read an allowlisted App-folder file. Defaults to the plan-state file;
+   *  the journal (ADR 20) passes its own fixed path. Unknown paths are rejected
+   *  by the backend — arbitrary user paths are never accepted. */
+  readFile(path?: string): Promise<RemoteSyncFile>;
+  writeFile(text: string, revision: string | null, path?: string): Promise<string>;
   disconnect(): Promise<void>;
 }
 

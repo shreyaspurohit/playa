@@ -8,6 +8,8 @@ import {
   SyncAuthExpiredError, SyncAuthorizationCancelledError, SyncPopupBlockedError,
 } from '../sync/SyncBackend';
 import { syncOnce } from '../sync/syncEngine';
+import { syncJournalOnce } from '../sync/journalSync';
+import { notifyJournalChanged } from '../utils/journalEntryBus';
 import { isStandaloneDisplay } from '../utils/standalone';
 
 export type SyncStatus =
@@ -69,7 +71,20 @@ export function useSync(sources: readonly Source[]): SyncController {
         connectedRef.current = true;
         setStatus('synced');
         setLastSyncedAt(Date.now());
-        setMessage(outcome.restoredFromCloud ? 'Dropbox backup restored and merged.' : 'Dropbox is up to date.');
+        // Sync the journal on the same trigger (its own file, best-effort — a
+        // journal failure must never flip the plan-state *status*, D11 — but the
+        // message must not claim the journal is backed up when it isn't).
+        let journalFailed = false;
+        try {
+          const journalOutcome = await syncJournalOnce(backend);
+          if (journalOutcome.localChanged) notifyJournalChanged();
+        } catch { journalFailed = true; }
+        if (epoch !== syncEpochRef.current) return;
+        setMessage(
+          journalFailed
+            ? 'Plans synced. Journal backup didn’t finish — it will retry.'
+            : outcome.restoredFromCloud ? 'Dropbox backup restored and merged.' : 'Dropbox is up to date.',
+        );
         if (outcome.localChanged && reload) location.reload();
       } catch (error) {
         if (epoch !== syncEpochRef.current) return;

@@ -5,6 +5,7 @@
 import { useState } from 'preact/hooks';
 import type { Art } from '../types';
 import { highlight } from '../utils/highlight';
+import { AddJournalButton } from './AddJournalButton';
 import { FriendChip } from './FriendChip';
 
 interface Props {
@@ -49,6 +50,7 @@ export function ArtCard({
         >
           {isFav ? '★' : '☆'}
         </button>
+        <AddJournalButton context={{ kind: 'art', title: art.name }} />
       </div>
       {art.artist && (
         <div class="art-byline">by {highlight(art.artist, query)}{art.hometown && ` · ${art.hometown}`}</div>

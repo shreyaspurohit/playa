@@ -117,6 +117,21 @@
     keys, camp descriptions, or event descriptions.
   </p>
 
+  <h2>Journal</h2>
+  <p>
+    The optional Journal is private, text-only notes you write. Journal entries
+    live on your device in the browser's IndexedDB and are never included in
+    friend shares or the general state snapshot. If you connect Dropbox and use
+    the Journal's sync, its entries — the text you wrote and, when you added an
+    entry from a listing, a saved camp/event/Food display name — are stored as a
+    separate readable JSON file (<code>/playa-journal.json</code>) in the same
+    private Dropbox App folder. It is not additionally encrypted by the app.
+    Editing overwrites an entry and deleting removes it; there is no version
+    history. You can export your journal to a file at any time, and “Clear all
+    local data” deletes the on-device journal while leaving any Dropbox copy in
+    place.
+  </p>
+
   <h2>How the information is used</h2>
   <p>
     The app uses the backup only to restore your state and merge changes across

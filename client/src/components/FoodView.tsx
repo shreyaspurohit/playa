@@ -17,6 +17,7 @@ import { useGeolocation } from '../hooks/useGeolocation';
 import { addressToLatLng, haversineMeters } from '../map/address';
 import { brcForSource } from '../hooks/useSource';
 import { formatPlayaDateTime, now } from '../utils/clock';
+import { AddJournalButton } from './AddJournalButton';
 
 /** ~1 km ≈ 15-min walk — same cutoff ScheduleView's "Near me" uses. */
 const NEAR_ME_METERS = 1000;
@@ -295,6 +296,11 @@ export function FoodView({
             onClick={(se) => { se.stopPropagation(); onToggleEventFav(ev.id); }}
           >{fav ? '★' : '☆'}</button>
         )}
+        <AddJournalButton
+          compact
+          className="food-journal"
+          context={{ kind: 'food', title: ev ? ev.name : e.camp.name, campName: e.camp.name }}
+        />
         <div class="food-row-body">
           <button
             type="button"

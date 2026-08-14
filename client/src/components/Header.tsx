@@ -6,6 +6,7 @@
 import type { Source } from '../types';
 import type { View } from '../hooks/useHashRoute';
 import type { SyncStatus } from '../hooks/useSync';
+import { yearForSource } from '../hooks/useSource';
 import { HeaderMenu } from './HeaderMenu';
 import { NicknamePill } from './NicknamePill';
 
@@ -49,7 +50,10 @@ export function Header({
     <header>
       <div class="topline">
         <div class="titleblock">
-          <h1>Playa Camps</h1>
+          <h1>
+            Playa Camps
+            <span class="header-year" title="Burn year you're viewing">{yearForSource(source)}</span>
+          </h1>
           <span
             class="version"
             title={`Directory last fetched ${fetchedAt} UTC`}
