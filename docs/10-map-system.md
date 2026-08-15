@@ -75,8 +75,10 @@ visibly labeled until “Use real location” clears it.
 ## Accepted extension: official GIS landmarks and services
 
 **Decision date:** 2026-08-06<br>
-**Implementation status:** core scope implemented and verified 2026-08-07;
-accepted Gate Road and DMZ overlays remain optional backlog
+**Implementation status:** core scope implemented and verified 2026-08-07.
+The Gate Road, DMZ/Sound-zone, and D-Lot overlays are **out of scope
+(won't-do)** by owner decision, not deferred backlog — see the layer notes
+below.
 
 The map adds a curated set of official, year-specific Black Rock City
 landmarks, participant services, safety resources, transport points, portable
@@ -135,8 +137,8 @@ updates a file in place.
 | `toilets.geojson` | 22,036 B | Portable-toilet bank footprints | In scope |
 | `trash_fence.geojson` | 626 B | Actual city/perimeter boundary | Annual base-geometry review input; compiled vertices live in `data.ts`, not the GIS payload |
 | `plazas.geojson` | 31,029 B | Authoritative plaza shapes/centers | In scope; Center Camp footprint normalized annually |
-| `dmz.geojson` | 1,351 B | Deep-Playa Music Zone boundary | Accepted optional backlog; not fetched/rendered |
-| `gate_road.geojson` | 18,439 B | Arrival/exodus orientation | Accepted optional backlog; not fetched/rendered |
+| `dmz.geojson` | 1,351 B | Deep-Playa Music Zone boundary | Out of scope (won't-do); not fetched/rendered |
+| `gate_road.geojson` | 18,439 B | Arrival/exodus orientation | Out of scope (won't-do); not fetched/rendered |
 | `street_lines.geojson` | 236,258 B | Exact street centerlines/radial ranges | Annual `map-audit` input; derive reviewed constants, do not embed raw |
 | `city_blocks.geojson` | 1,520,547 B | Block polygons | Out of scope |
 | `street_outlines.geojson` | 1,629,109 B | Detailed street polygons | Out of scope |
@@ -268,11 +270,10 @@ physical separation.
 - Gate and Greeters
 - Box Office and Will Call
 
-D-Lot remains a review item rather than an implemented destination: the current
-allowlist has no verified participant-facing CPN mapping for it. Gate Road is
-also not a point marker; its official line geometry belongs to the accepted
-optional overlay backlog. Do not imply either is present until its annual
-source and participant guidance have been reviewed.
+D-Lot and Gate Road are **out of scope (won't-do)** by owner decision, not
+implemented destinations: the current allowlist has no verified participant-
+facing CPN mapping for D-Lot, and Gate Road's official line geometry is a
+deliberately dropped overlay. Do not add either.
 
 These features sit well outside the compact city grid. Hidden transport points
 must not expand the default SVG `viewBox`; otherwise the city becomes tiny to
@@ -306,7 +307,7 @@ The intended controls are:
 | Services | Off | Playa Info/Placement/Lost & Found, ARTery, recycling, bikes |
 | Transport | Off | Airport and bus depot |
 | Arrival | Off | Gate/Greeters, Box Office/Will Call, DMV, Media Mecca |
-| Sound zones *(accepted backlog)* | Off | DMZ boundary/label; control not implemented yet |
+| ~~Sound zones~~ *(won't-do)* | — | DMZ boundary/label — deliberately dropped; not a shipped control |
 
 Layer preferences should persist locally under a versioned key such as
 `bm-map-layers/v1`. The version suffix gives us a clean default reset if layers
@@ -610,9 +611,10 @@ Implement in small, independently reviewable stages:
    ice; default-off toilet-bank centroids/footprints; legend and details.
 4. **Completed for shipped layers — controls:** persisted Boundary, Toilets,
    Essentials, Services, Transport, and Arrival controls plus selection,
-   accessibility, and mobile-density review. Sound remains accepted backlog.
-5. **Partially completed — optional layers:** Services and Transport ship.
-   Gate Road and DMZ/Sound remain accepted backlog; D-Lot needs source review.
+   accessibility, and mobile-density review. Sound zones are out of scope
+   (won't-do).
+5. **Shipped optional layers:** Services and Transport ship. Gate Road,
+   DMZ/Sound, and D-Lot are out of scope (won't-do) — deliberately dropped.
 6. **Completed — annual workflow foundation:** `/update-map`, the canonical
    runbook, CI/cache validation, mobile testing, and the read-only `map-audit`
    geometry extractor/report. Annual human review remains mandatory.
