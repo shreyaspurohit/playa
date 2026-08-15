@@ -1533,6 +1533,7 @@ export function App() {
         }}
         onGotoCamp={onGotoCamp}
         onGotoArt={onGotoArt}
+        onGotoJournal={() => goto('journal')}
       />
       <SyncModal
         open={syncOpen}

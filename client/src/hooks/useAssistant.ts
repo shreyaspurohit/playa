@@ -5,8 +5,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { detectCapabilities, type AssistantTier } from '../assistant/capabilities';
-import { retrieve, type AskCorpus, type GroundingItem, type Retrieval } from '../assistant/retrieval';
+import { retrieve, type AskCorpus, type GroundingItem, type JournalNote, type Retrieval } from '../assistant/retrieval';
 import { AssistantSession, createBuiltinBackend } from '../assistant/session';
+import { loadDocument } from '../utils/journalDb';
+import { activeEntries } from '../utils/journalStore';
+
+/** The corpus the caller supplies (camps/art/favorites). The hook adds the
+ *  user's journal notes from IndexedDB on its own. */
+export type BaseCorpus = Omit<AskCorpus, 'journal'>;
 
 export interface AssistantController {
   ready: boolean;
@@ -33,7 +39,7 @@ function retrievalSummary(r: Retrieval): string {
   return `${lead} Top matches: ${names}.`;
 }
 
-export function useAssistant(corpus: AskCorpus, active: boolean): AssistantController {
+export function useAssistant(base: BaseCorpus, active: boolean): AssistantController {
   const [ready, setReady] = useState(false);
   const [tier, setTier] = useState<AssistantTier>('retrieval-only');
   const [webgpuDownloadPossible, setWebgpu] = useState(false);
@@ -43,11 +49,29 @@ export function useAssistant(corpus: AskCorpus, active: boolean): AssistantContr
   const [facts, setFacts] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep the latest corpus without re-detecting or re-binding `ask`.
-  const corpusRef = useRef(corpus);
-  corpusRef.current = corpus;
+  // Keep the latest corpus (camps/art/favs from props + journal from IndexedDB)
+  // without re-detecting or re-binding `ask`.
+  const journalRef = useRef<JournalNote[]>([]);
+  const corpusRef = useRef<AskCorpus>({ ...base, journal: journalRef.current });
+  corpusRef.current = { ...base, journal: journalRef.current };
   const sessionRef = useRef<AssistantSession | null>(null);
   const detectedRef = useRef(false);
+
+  // Pull the user's own journal notes into the corpus when the surface opens.
+  // Private and on-device — the assistant is on-device too, so nothing leaves.
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void loadDocument()
+      .then((doc) => {
+        if (cancelled) return;
+        journalRef.current = activeEntries(doc).map((e) => ({
+          id: e.entryId, title: e.value?.title ?? '', text: e.value?.text ?? '',
+        }));
+      })
+      .catch(() => { if (!cancelled) journalRef.current = []; });
+    return () => { cancelled = true; };
+  }, [active]);
 
   // Detect capabilities the first time the surface is opened (never at boot).
   useEffect(() => {

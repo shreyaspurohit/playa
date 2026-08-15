@@ -3,15 +3,16 @@
 // grounded in the app's data and cite the real cards.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { useAssistant } from '../hooks/useAssistant';
-import type { AskCorpus, GroundingItem } from '../assistant/retrieval';
+import { useAssistant, type BaseCorpus } from '../hooks/useAssistant';
+import type { GroundingItem } from '../assistant/retrieval';
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  corpus: AskCorpus;
+  corpus: BaseCorpus;
   onGotoCamp: (id: string) => void;
   onGotoArt: (id: string) => void;
+  onGotoJournal: () => void;
 }
 
 const SUGGESTIONS = [
@@ -21,7 +22,7 @@ const SUGGESTIONS = [
   'my saved camps',
 ];
 
-export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props) {
+export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt, onGotoJournal }: Props) {
   const a = useAssistant(corpus, open);
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -41,7 +42,8 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
   const runSuggestion = (s: string) => { setQ(s); void a.ask(s); };
 
   const gotoItem = (i: GroundingItem) => {
-    if (i.kind === 'art') onGotoArt(i.id);
+    if (i.kind === 'journal') onGotoJournal();
+    else if (i.kind === 'art') onGotoArt(i.id);
     else onGotoCamp(i.campId ?? i.id);      // events navigate to their host camp
     onClose();
   };
@@ -92,7 +94,7 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
               {a.items.map((i) => (
                 <li key={i.kind + i.id}>
                   <button type="button" class="ask-result" onClick={() => gotoItem(i)}>
-                    <span class="ask-result-kind">{i.kind === 'art' ? '🎨' : i.kind === 'event' ? '📅' : '🏕'}</span>
+                    <span class="ask-result-kind">{i.kind === 'art' ? '🎨' : i.kind === 'event' ? '📅' : i.kind === 'journal' ? '📓' : '🏕'}</span>
                     <span class="ask-result-body">
                       <span class="ask-result-title">
                         {i.faved && <span class="ask-result-star" aria-label="starred">★</span>}

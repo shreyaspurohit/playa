@@ -9,16 +9,23 @@
 
 import type { Art, Camp, Event } from '../types';
 
+export interface JournalNote {
+  id: string;
+  title: string;
+  text: string;
+}
+
 export interface AskCorpus {
   camps: Camp[];
   art: Art[];
   campFavs: ReadonlySet<string>;
   eventFavs: ReadonlySet<string>;
   artFavs: ReadonlySet<string>;
+  journal: JournalNote[];
 }
 
 export interface GroundingItem {
-  kind: 'camp' | 'event' | 'art';
+  kind: 'camp' | 'event' | 'art' | 'journal';
   id: string;
   campId?: string;           // for events: the host camp (for navigation)
   title: string;
@@ -44,9 +51,47 @@ const STOPWORDS = new Set([
 
 const FAV_SIGNALS = ['saved', 'starred', 'favorite', 'favourite', 'faved', 'bookmarked', 'my list'];
 const FOOD_SIGNALS = ['food', 'eat', 'coffee', 'drink', 'snack', 'meal', 'breakfast', 'lunch', 'dinner', 'hungry', 'bar'];
+const JOURNAL_SIGNALS = ['journal', 'note', 'notes', 'wrote', 'remember', 'memory', 'memories', 'did i'];
 
 const MAX_ITEMS = 12;
 const SNIPPET = 160;
+
+/** An hour window (24h). `start`..`end` is inclusive-start, exclusive-end and
+ *  may wrap past midnight (night). */
+interface HourRange { start: number; end: number; }
+
+function hourInRange(h: number, r: HourRange): boolean {
+  return r.start <= r.end ? (h >= r.start && h < r.end) : (h >= r.start || h < r.end);
+}
+
+/** Parse a time-of-day intent from the question, or null. Offline, no date —
+ *  matched against each event's parsed start hour (ADR 21: "events with times"). */
+export function timeIntent(qLower: string): HourRange | null {
+  const ampm = qLower.match(/\b(\d{1,2})\s*(am|pm)\b/);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10) % 12;
+    if (ampm[2] === 'pm') h += 12;
+    return { start: (h + 23) % 24, end: (h + 2) % 24 };   // ±1h window
+  }
+  const hhmm = qLower.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (hhmm) { const h = parseInt(hhmm[1], 10) % 24; return { start: (h + 23) % 24, end: (h + 2) % 24 }; }
+  const at = qLower.match(/\bat\s+(\d{1,2})\b/);
+  if (at) { let h = parseInt(at[1], 10); if (h >= 1 && h <= 11) h += 12; h %= 24; return { start: (h + 23) % 24, end: (h + 2) % 24 }; }
+  if (/\b(sunrise|dawn)\b/.test(qLower)) return { start: 5, end: 8 };
+  if (/\bmorning\b/.test(qLower)) return { start: 5, end: 12 };
+  if (/\bnoon\b/.test(qLower)) return { start: 11, end: 13 };
+  if (/\bafternoon\b/.test(qLower)) return { start: 12, end: 17 };
+  if (/\b(evening|sunset)\b/.test(qLower)) return { start: 17, end: 21 };
+  if (/\b(night|tonight|late)\b/.test(qLower)) return { start: 21, end: 5 };   // wraps midnight
+  return null;
+}
+
+function eventStartHour(e: Event): number | null {
+  const hhmm = e.parsed_time?.start_time;
+  if (!hhmm) return null;
+  const h = parseInt(hhmm.slice(0, 2), 10);
+  return Number.isFinite(h) ? h : null;
+}
 
 function tokenize(q: string): string[] {
   return q.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1 && !STOPWORDS.has(t));
@@ -80,6 +125,8 @@ export function retrieve(question: string, corpus: AskCorpus): Retrieval {
   const terms = tokenize(question);
   const favoritesOnly = FAV_SIGNALS.some((s) => qLower.includes(s));
   const foodIntent = FOOD_SIGNALS.some((s) => qLower.includes(s));
+  const journalIntent = JOURNAL_SIGNALS.some((s) => qLower.includes(s));
+  const whenWanted = timeIntent(qLower);
 
   const items: GroundingItem[] = [];
 
@@ -109,6 +156,12 @@ export function retrieve(question: string, corpus: AskCorpus): Retrieval {
       if (foodIntent && e.food_tags && e.food_tags.length) es += 4;
       if (efaved) es += 2;
       if (favoritesOnly && terms.length === 0) es += 1;
+      // Time-of-day intent ("tonight ~9"): boost (and surface) events whose
+      // parsed start hour falls in the window, even with no keyword match.
+      if (whenWanted) {
+        const h = eventStartHour(e);
+        if (h !== null && hourInRange(h, whenWanted)) es += 5;
+      }
       if (es <= 0) continue;
       items.push({
         kind: 'event', id: e.id, campId: camp.id, title: e.name || 'Event',
@@ -131,6 +184,19 @@ export function retrieve(question: string, corpus: AskCorpus): Retrieval {
     });
   }
 
+  // The user's own journal notes (private, on-device). Always searchable;
+  // boosted when the question is explicitly about notes/memories.
+  for (const n of corpus.journal) {
+    let ns = scoreText(terms, n.title, '', n.text);
+    if (journalIntent) ns += 3;
+    if (journalIntent && terms.length === 0) ns += 1;
+    if (ns <= 0) continue;
+    items.push({
+      kind: 'journal', id: n.id, title: n.title || 'Journal note',
+      subtitle: 'your journal', snippet: trim(n.text), score: ns, faved: false,
+    });
+  }
+
   items.sort((x, y) => y.score - x.score || Number(y.faved) - Number(x.faved));
   const top = items.slice(0, MAX_ITEMS);
 
@@ -138,10 +204,12 @@ export function retrieve(question: string, corpus: AskCorpus): Retrieval {
   const campHits = items.filter((i) => i.kind === 'camp').length;
   const eventHits = items.filter((i) => i.kind === 'event').length;
   const artHits = items.filter((i) => i.kind === 'art').length;
+  const journalHits = items.filter((i) => i.kind === 'journal').length;
   if (favoritesOnly) facts.push(`Searching only your saved list (${corpus.campFavs.size} camps, ${corpus.eventFavs.size} events, ${corpus.artFavs.size} art starred).`);
   if (campHits) facts.push(`${campHits} matching camp${campHits === 1 ? '' : 's'}${foodIntent ? ' (food prioritized)' : ''}.`);
-  if (eventHits) facts.push(`${eventHits} matching event${eventHits === 1 ? '' : 's'}.`);
+  if (eventHits) facts.push(`${eventHits} matching event${eventHits === 1 ? '' : 's'}${whenWanted ? ' at that time' : ''}.`);
   if (artHits) facts.push(`${artHits} matching artwork${artHits === 1 ? '' : 's'}.`);
+  if (journalHits) facts.push(`${journalHits} of your journal note${journalHits === 1 ? '' : 's'}.`);
   if (top.length === 0) facts.push('No matches in the current data.');
 
   const contextText = buildContext(top);

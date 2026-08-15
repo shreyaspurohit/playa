@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { retrieve, buildContext, type AskCorpus } from '../src/assistant/retrieval';
+import { retrieve, buildContext, timeIntent, type AskCorpus } from '../src/assistant/retrieval';
 import type { Art, Camp, Event } from '../src/types';
 
 function camp(over: Partial<Camp>): Camp {
@@ -14,7 +14,7 @@ function art(over: Partial<Art>): Art {
 }
 const NONE = new Set<string>();
 function corpus(over: Partial<AskCorpus>): AskCorpus {
-  return { camps: [], art: [], campFavs: NONE, eventFavs: NONE, artFavs: NONE, ...over };
+  return { camps: [], art: [], campFavs: NONE, eventFavs: NONE, artFavs: NONE, journal: [], ...over };
 }
 
 describe('assistant retrieval (ADR 21 D4)', () => {
@@ -74,5 +74,35 @@ describe('assistant retrieval (ADR 21 D4)', () => {
     const ctx = buildContext(r.items);
     assert.match(ctx, /Coffee Cult/);
     assert.match(ctx, /\[camp\]/);
+  });
+
+  test('time-of-day intent surfaces an event by its start hour with no keyword match', () => {
+    const nine = ev({ id: 'e1', name: 'Late Set', description: 'bass', parsed_time: { kind: 'single', days: ['Tue'], start_day: 'Tue', start_date: '8/27', start_time: '21:00', end_day: 'Tue', end_date: '8/27', end_time: '23:00' } });
+    const noon = ev({ id: 'e2', name: 'Late Set', description: 'bass', parsed_time: { kind: 'single', days: ['Tue'], start_day: 'Tue', start_date: '8/27', start_time: '12:00', end_day: 'Tue', end_date: '8/27', end_time: '13:00' } });
+    const r = retrieve('anything tonight around 9pm', corpus({
+      camps: [camp({ id: 'c1', name: 'Sound', events: [nine, noon] })],
+    }));
+    const hit = r.items.find((i) => i.kind === 'event');
+    assert.ok(hit, 'an event surfaced from the time window alone');
+    assert.equal(hit!.id, 'e1'); // the 9pm event, not the noon one
+    assert.ok(r.facts.some((f) => /at that time/i.test(f)));
+  });
+
+  test('timeIntent parses the common shapes', () => {
+    assert.deepEqual(timeIntent('what is on at 9pm'), { start: 20, end: 23 });
+    assert.deepEqual(timeIntent('sunrise sets'), { start: 5, end: 8 });
+    assert.ok(timeIntent('something tonight')); // night wraps midnight
+    assert.equal(timeIntent('coffee camps'), null);
+  });
+
+  test('journal notes are searchable and cite the private note', () => {
+    const r = retrieve('what did I note about the temple', corpus({
+      journal: [{ id: 'j1', title: 'Temple burn', text: 'stood at the temple at sunset, felt everything' }],
+    }));
+    const hit = r.items.find((i) => i.kind === 'journal');
+    assert.ok(hit, 'journal note surfaced');
+    assert.equal(hit!.id, 'j1');
+    assert.equal(hit!.subtitle, 'your journal');
+    assert.ok(r.facts.some((f) => /journal note/i.test(f)));
   });
 });
