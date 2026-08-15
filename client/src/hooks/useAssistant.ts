@@ -1,12 +1,15 @@
 // Assistant state (ADR 21). Ties capability detection + retrieval grounding +
-// the foreground-only session into UI state. A generative answer is produced
-// only when the platform has a built-in on-device model; otherwise the answer
-// is a deterministic summary of the retrieved records. Everything is on-device.
+// the foreground-only session into UI state. A generative answer comes from the
+// browser's built-in model (tier 1) or, when the user opts in, a downloaded
+// WebGPU model (tier 2); otherwise the answer is a deterministic summary of the
+// retrieved records (tier 3). Everything is on-device.
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { detectCapabilities, type AssistantTier } from '../assistant/capabilities';
+import { detectCapabilities, deviceHint, type AssistantTier } from '../assistant/capabilities';
 import { retrieve, type AskCorpus, type GroundingItem, type JournalNote, type Retrieval } from '../assistant/retrieval';
 import { AssistantSession, createBuiltinBackend } from '../assistant/session';
+import { offerFor, type CatalogModel, type ModelOffer } from '../assistant/modelCatalog';
+import { loadWebgpuBackend } from '../assistant/webllmLoader';
 import { loadDocument } from '../utils/journalDb';
 import { activeEntries } from '../utils/journalStore';
 
@@ -14,16 +17,29 @@ import { activeEntries } from '../utils/journalStore';
  *  user's journal notes from IndexedDB on its own. */
 export type BaseCorpus = Omit<AskCorpus, 'journal'>;
 
+export type DownloadStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface DownloadState {
+  status: DownloadStatus;
+  progress: number;        // 0..1
+  text: string;            // web-llm status line
+  error: string | null;
+  model: CatalogModel | null;
+}
+
 export interface AssistantController {
   ready: boolean;
   tier: AssistantTier;
   webgpuDownloadPossible: boolean;
+  offer: ModelOffer | null;      // downloadable models for this device (tier 2)
+  download: DownloadState;
   loading: boolean;
   answer: string | null;
   items: GroundingItem[];
   facts: string[];
   error: string | null;
   ask: (question: string) => Promise<void>;
+  startDownload: (model: CatalogModel) => void;
   reset: () => void;
 }
 
@@ -39,10 +55,14 @@ function retrievalSummary(r: Retrieval): string {
   return `${lead} Top matches: ${names}.`;
 }
 
+const IDLE_DOWNLOAD: DownloadState = { status: 'idle', progress: 0, text: '', error: null, model: null };
+
 export function useAssistant(base: BaseCorpus, active: boolean): AssistantController {
   const [ready, setReady] = useState(false);
   const [tier, setTier] = useState<AssistantTier>('retrieval-only');
   const [webgpuDownloadPossible, setWebgpu] = useState(false);
+  const [offer, setOffer] = useState<ModelOffer | null>(null);
+  const [download, setDownload] = useState<DownloadState>(IDLE_DOWNLOAD);
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
   const [items, setItems] = useState<GroundingItem[]>([]);
@@ -83,6 +103,7 @@ export function useAssistant(base: BaseCorpus, active: boolean): AssistantContro
       setTier(c.tier);
       setWebgpu(c.webgpuDownloadPossible);
       if (c.tier === 'builtin') sessionRef.current = new AssistantSession(createBuiltinBackend);
+      else if (c.webgpuDownloadPossible) setOffer(offerFor(deviceHint()));
       setReady(true);
     });
     return () => { cancelled = true; };
@@ -96,6 +117,29 @@ export function useAssistant(base: BaseCorpus, active: boolean): AssistantContro
     return () => { document.removeEventListener('visibilitychange', onVis); sessionRef.current?.release(); };
   }, []);
   useEffect(() => { if (!active) sessionRef.current?.release(); }, [active]);
+
+  // Opt-in download of a WebGPU model (tier 2). Size is disclosed on the button
+  // BEFORE this runs. The model is verified (wasm hash pin), downloaded, and
+  // compiled with progress; on success it becomes the session backend.
+  const startDownload = useCallback((model: CatalogModel) => {
+    setDownload({ status: 'loading', progress: 0, text: 'Starting…', error: null, model });
+    const session = new AssistantSession(() => loadWebgpuBackend(model, (p) => {
+      setDownload((d) => (d.model?.id === model.id && d.status === 'loading'
+        ? { ...d, progress: p.progress, text: p.text }
+        : d));
+    }));
+    sessionRef.current?.release();
+    sessionRef.current = session;
+    void session.prewarm()
+      .then(() => setDownload((d) => (d.model?.id === model.id
+        ? { ...d, status: 'ready', progress: 1 }
+        : d)))
+      .catch((e) => {
+        sessionRef.current = null;
+        setDownload({ status: 'error', progress: 0, text: '', model,
+          error: e instanceof Error ? e.message : 'The model could not be loaded on this device.' });
+      });
+  }, []);
 
   const ask = useCallback(async (question: string) => {
     const q = question.trim();
@@ -127,5 +171,8 @@ export function useAssistant(base: BaseCorpus, active: boolean): AssistantContro
     setAnswer(null); setItems([]); setFacts([]); setError(null);
   }, []);
 
-  return { ready, tier, webgpuDownloadPossible, loading, answer, items, facts, error, ask, reset };
+  return {
+    ready, tier, webgpuDownloadPossible, offer, download, loading,
+    answer, items, facts, error, ask, startDownload, reset,
+  };
 }

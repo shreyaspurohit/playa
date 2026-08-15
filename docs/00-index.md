@@ -58,6 +58,7 @@ sections wherever they apply:
 | (ref) | [Site UI](./dev/site-ui.md) | Compact embed-mode and UI reference; CLAUDE.md retains detailed behavior |
 | (runbook) | [Mobile visual testing](./dev/mobile-visual-testing.md) | Phone-sized manual/headless review, screenshots, service-worker isolation, and encrypted-build restoration |
 | (runbook) | [Annual map and GIS update](./dev/annual-map-update.md) | Year rollover for city geometry, official POIs/layers, validation, mobile review, and deployment configuration |
+| (runbook) | [On-device model hosting](./dev/on-device-model-hosting.md) | R2 model/wasm provenance, upload, SHA-256 pin generation, and WebLLM-version upgrade steps (ADR 21 phase 2) |
 | (plan) | [Roadmap](./roadmap.md) | Ideas and scaling thresholds, not current commitments |
 
 ## Adding a new doc

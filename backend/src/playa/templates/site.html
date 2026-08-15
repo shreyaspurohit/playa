@@ -820,6 +820,22 @@ __SYNC_META__
   .ask-result-star { color: var(--accent); margin-right: 4px; }
   .ask-result-sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
   .ask-note { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 8px 0; }
+  .ask-download {
+    margin: 10px 0 12px; padding: 12px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--accent-soft);
+  }
+  .ask-dl-lead { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--text); }
+  .ask-dl-btn { width: 100%; }
+  .ask-dl-alt { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+  .ask-dl-link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--accent); font: inherit; text-decoration: underline;
+  }
+  .ask-dl-fine { margin: 8px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+  .ask-dl-bar { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+  .ask-dl-fill { height: 100%; background: var(--accent); transition: width 0.25s ease; }
+  .ask-dl-status { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  .ask-dl-error { font-size: 13px; line-height: 1.5; color: var(--text); }
   .ask-disclaimer { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
   .modal-body .danger-btn {
     padding: 6px 12px; border: 1px solid var(--border);

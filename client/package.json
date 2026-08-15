@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@khmyznikov/pwa-install": "^0.6.4",
+    "@mlc-ai/web-llm": "0.2.84",
     "dropbox": "10.37.1",
     "preact": "^10.29.7"
   },

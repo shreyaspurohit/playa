@@ -15,13 +15,13 @@ export interface AssistantBackend {
   dispose(): void;
 }
 
-const SYSTEM_PROMPT =
+export const SYSTEM_PROMPT =
   'You are a helpful assistant inside an unofficial Burning Man camp-directory app. '
   + 'Answer ONLY from the provided context records about camps, events, and art. '
   + 'If the context does not contain the answer, say you could not find it in the data. '
   + 'Be concise, reference items by name, and never invent camps, times, or locations.';
 
-function buildPrompt(question: string, context: string): string {
+export function buildPrompt(question: string, context: string): string {
   return `Context records:\n${context}\n\nQuestion: ${question}\n\nAnswer from the context only:`;
 }
 
@@ -53,6 +53,19 @@ export class AssistantSession {
   private creating: Promise<AssistantBackend> | null = null;
 
   constructor(private readonly makeBackend: () => Promise<AssistantBackend>) {}
+
+  /** Ensure the backend exists without asking anything. Used by the download
+   *  tier so model load + progress happen on an explicit user action, not
+   *  silently on the first question. Idempotent; safe to await repeatedly. */
+  async prewarm(): Promise<void> {
+    if (this.backend) return;
+    this.creating ??= this.makeBackend();
+    try {
+      this.backend = await this.creating;
+    } finally {
+      this.creating = null;
+    }
+  }
 
   async ask(question: string, context: string): Promise<string> {
     this.abort?.abort();

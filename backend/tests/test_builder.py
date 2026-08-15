@@ -405,6 +405,11 @@ class BurnOpenTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir.joinpath("bundle.js").write_text(
             '"use strict";(()=>{})();',
         )
+        # Code-split on-device-AI chunk (ADR 21 phase 2). build() copies it
+        # next to index.html, so a full build needs it present.
+        bundle_dir.joinpath("webllm-backend.js").write_text(
+            'export const loadWebllmModel=async()=>{};',
+        )
 
     def test_burn_open_writes_burn_key_json(self):
         builder = self._make_builder(
@@ -501,6 +506,35 @@ class BurnOpenTests(unittest.TestCase, _TmpConfigMixin):
             with self.assertRaises(RuntimeError) as cm:
                 builder.build()
         self.assertIn("spirit-mode", str(cm.exception))
+
+    def test_build_copies_webllm_chunk_but_keeps_it_out_of_sw_shell(self):
+        """ADR 21 phase 2: the on-device-AI chunk is copied next to
+        index.html for on-demand loading, but must NOT be in the SW
+        precache SHELL (non-AI users shouldn't pay its download)."""
+        builder = self._make_builder()
+        self._drop_bundle(builder)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
+            builder.build()
+        chunk = builder.config.site_dir / "webllm-backend.js"
+        self.assertTrue(chunk.exists(), "chunk copied into site/")
+        self.assertIn("loadWebllmModel", chunk.read_text())
+        sw = (builder.config.site_dir / "sw.js").read_text()
+        self.assertNotIn("webllm-backend", sw)
+
+    def test_build_fails_loud_when_webllm_chunk_missing(self):
+        """A partial/broken client build (bundle present, chunk absent)
+        must fail rather than deploy a site whose Ask download 404s."""
+        builder = self._make_builder()
+        bundle_dir = builder.config.root / "client" / "dist"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_dir.joinpath("bundle.js").write_text('"use strict";(()=>{})();')
+        # Deliberately do NOT write webllm-backend.js.
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
+            with self.assertRaises(RuntimeError) as cm:
+                builder.build()
+        self.assertIn("webllm-backend.js", str(cm.exception))
 
 
 class ConfigParsedTiersTests(unittest.TestCase, _TmpConfigMixin):
@@ -922,6 +956,9 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir.joinpath("bundle.js").write_text(
             '"use strict";(()=>{/* stub — real bundle built by esbuild in CI/make */})();'
         )
+        bundle_dir.joinpath("webllm-backend.js").write_text(
+            'export const loadWebllmModel=async()=>{};'
+        )
         # site/ already exists (from _make_config) so the SW can land there.
         # Smoke test has 1 camp, well below the production min-camps rail.
         with contextlib.redirect_stdout(io.StringIO()), \
@@ -1007,6 +1044,9 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir = self.config.root / "client" / "dist"
         bundle_dir.mkdir(parents=True)
         bundle_dir.joinpath("bundle.js").write_text('(()=>{})()')
+        bundle_dir.joinpath("webllm-backend.js").write_text(
+            'export const loadWebllmModel=async()=>{};',
+        )
         # MIN_CAMPS not overridden → defaults to 500 → 1 camp fails hard.
         with self.assertRaises(RuntimeError) as ctx, \
                 contextlib.redirect_stdout(io.StringIO()):

@@ -1,7 +1,7 @@
 ---
 title: On-device assistant ("Ask")
 date: 2026-08-14
-status: accepted — phase 1 implemented; phase 2 (downloadable model) decided (self-host on Cloudflare R2, hash-pinned), pending model upload + build wiring
+status: accepted — phase 1 + phase 2 implemented (downloadable WebGPU model self-hosted on Cloudflare R2, wasm hash-pinned, code-split chunk)
 ---
 
 # On-device assistant ("Ask")
@@ -105,16 +105,36 @@ disclaimer.
   download UI picks a device-appropriate size; a failed load falls back to
   tier 3 rather than crashing.
 
-### D6 — CSP + weight delivery *(decided: self-host on Cloudflare R2, hash-pinned)*
+### D6 — Weight delivery + integrity *(implemented: self-host on Cloudflare R2, wasm hash-pinned, code-split)*
 
-The app is a single self-contained `index.html` with a strict CSP that blocks
-external hosts, and the build inlines one IIFE bundle. The built-in-model tier
-(D3.1) needs neither a network host nor a CSP change — the browser has the
-model — so **phase 1 ships without touching the CSP**. The downloadable tier
-(D3.2) cannot fetch weights under today's CSP.
+The app is a single self-contained `index.html` and the build inlines one IIFE
+bundle. The built-in-model tier (D3.1) needs neither a network host nor any code
+delivery change — the browser has the model. The downloadable tier (D3.2) needs
+to (a) fetch weights + wasm from somewhere, and (b) ship ~6 MB of web-llm runtime
+without burdening every non-AI user.
 
-**Decision: option (a) — self-host on Cloudflare R2** (chosen over a
-user-provided-file flow for the far better UX of a one-tap download). Concretely:
+**CSP note (corrected):** there is currently **no CSP enforced** on this
+deployment — no `http-equiv` meta in the template and no edge/CDN CSP header (as
+of 2026-08). So fetching from the model origin needs no CSP change today. CORS on
+the R2 custom domain already returns `access-control-allow-origin:
+https://playa.purohit.dev`. **If** a CSP is ever introduced (edge header or meta),
+it MUST include: `connect-src https://models.purohit.dev`, `script-src
+'wasm-unsafe-eval'` (WebGPU/WASM compile), and `worker-src 'self' blob:`.
+
+**Code delivery — second esbuild entry, not full `splitting:true`.** To keep
+web-llm out of the inlined main bundle we add a **second esbuild entry point**
+(`src/assistant/webllm.ts` → `dist/webllm-backend.js`, ESM) rather than switching
+the whole app to `format:'esm' + splitting:true`. The Python builder copies the
+chunk next to `index.html`; the main bundle loads it via a dynamic `import()`
+with a **runtime-computed specifier** (`webllmLoader.ts`) so esbuild leaves it
+external. Result: the core app stays a single inlined IIFE (preserving the
+single-file value for everyone), and web-llm's ~6 MB downloads **only** when a
+user opts into the model. The chunk is same-origin, so the existing service
+worker runtime-caches it on first use (offline afterward); it is deliberately
+**not** in the SW precache SHELL, so non-AI users never pay for it.
+
+**Storage: self-host on Cloudflare R2** (chosen over a user-provided-file flow
+for the far better UX of a one-tap download). Concretely:
 
 - **Storage.** A Cloudflare **R2** bucket, exposed **public-read** via a custom
   domain (e.g. `models.purohit.dev`). R2 public buckets are **read-only to the
@@ -123,36 +143,51 @@ user-provided-file flow for the far better UX of a one-tap download). Concretely
   "someone swaps the model in an open bucket" threat unless the *account* is
   compromised (same trust boundary as the whole deployment). Egress is free on
   R2, so a couple-GB file at friends scale costs pennies.
-- **CSP.** Add exactly that model origin to `connect-src` (and the WASM needs
-  `script-src 'wasm-unsafe-eval'` / a `worker-src`). Narrow, single-origin.
-- **Integrity (defense-in-depth).** The build **pins a SHA-256** of the model
-  manifest and the app verifies the downloaded bytes before the runtime loads
-  them, rejecting any mismatch. The pin lives in the app, which deploys through
-  the trusted CI → Pages path — so integrity is anchored to the app, not the
-  bucket, even if the bucket were tampered. (WebLLM fetches many shard files; at
-  minimum pin the `mlc-chat-config.json`/manifest hash, and prefer a custom
-  loader that verifies the full set where practical.)
-- **Weights are data, not code.** The WebGPU/WASM *runtime* stays bundled in the
-  app (never fetched from the bucket), so a tampered weight file cannot execute
-  code — worst case is poisoned output (mitigated by D4 grounding + D7
-  disclaimer) or a sandboxed parser bug, not RCE.
+- **Integrity — pin the wasm library (the only executable asset).** For each
+  model the app pins a **SHA-256 of the wasm library** in
+  `client/src/assistant/modelCatalog.ts`, and `webllm.ts::verifyModelLib()`
+  fetches + hashes the bytes and **fails closed** on mismatch before the engine
+  instantiates. The wasm is the one asset that is real code, so this is the
+  high-value pin. The pin lives in the app, deployed through the trusted CI →
+  Pages path, so integrity is anchored to the app, not the bucket. See
+  [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md) for how the
+  hashes are generated and kept in sync with the WebLLM version.
+- **Weights are data, not code.** The WebGPU/WASM *runtime* ships in the
+  code-split chunk (from CI, never from the bucket), so a tampered *weight* file
+  cannot execute code — worst case is poisoned output (mitigated by D4 grounding
+  + D7 disclaimer), not RCE. Weight shards are therefore **not** individually
+  pinned (WebLLM exposes no per-shard verification hook); pinning
+  `ndarray-cache.json` per model is a documented future option if desired.
 
 The rejected alternative — **(b) user-provided file** loaded from disk via a
-WASM runtime — needs no host and no CSP change but has worse UX and shifts trust
-to the user's download source; kept on record only as a fallback if hosting ever
-becomes undesirable.
+WASM runtime — needs no host but has worse UX and shifts trust to the user's
+download source; kept on record only as a fallback if hosting ever becomes
+undesirable.
 
-**Chosen models** (WebLLM `prebuiltAppConfig` ids, q4f16_1):
+**Chosen models** (WebLLM `prebuiltAppConfig` ids, q4f16_1) — hosted at
+`https://models.purohit.dev/<model_id>/`, wasm libs at
+`https://models.purohit.dev/libs/v0_2_84/`:
 
-| Tier | model_id | ~size |
-|---|---|---|
-| phone default | `Llama-3.2-1B-Instruct-q4f16_1-MLC` | ~0.9 GB |
-| ultra-light | `gemma3-1b-it-q4f16_1-MLC` | ~0.7 GB |
-| desktop default | `Qwen3-1.7B-q4f16_1-MLC` | ~2.0 GB |
+| Tier | model_id | download | WebGPU VRAM |
+|---|---|---|---|
+| phone default (≥6 GB RAM) | `Llama-3.2-1B-Instruct-q4f16_1-MLC` | 672 MB | 879 MB |
+| ultra-light / low-RAM phone | `gemma3-1b-it-q4f16_1-MLC` | 574 MB | 711 MB |
+| desktop default | `Qwen3-1.7B-q4f16_1-MLC` | 939 MB | 2037 MB |
 
-Size is disclosed before any download; the download is opt-in, resumable, and
-cached for offline reuse. Phase 1 (D3.1 + D3.3) remains fully functional without
-any of this.
+Device gating (`modelCatalog.ts::offerFor`): phones are offered only the two 1B
+models (the 1.7B needs ~2 GB VRAM and reliably OOMs a mobile tab, D5); the
+recommended default scales with `navigator.deviceMemory`. Sizes are the real
+measured folder sizes and are disclosed **before** any download; the download is
+opt-in and cached (Cache API) for offline reuse. Phase 1 (D3.1 + D3.3) remains
+fully functional without any of this.
+
+**Download lifecycle nuance (D2 boundary).** WebLLM's `CreateMLCEngine` exposes
+no abort hook for an in-progress download, so a model download the user
+explicitly started may finish even if they close the Ask surface; completed
+shards are cached, so this is at worst one extra completed download the user
+asked for. What D2 strictly guarantees remains intact: **no model loads without
+an explicit tap, no inference runs in the background, and the loaded model is
+unloaded (`engine.unload()`) when the tab is hidden or the surface closes.**
 
 ### D7 — Honest framing and privacy disclosure
 
@@ -165,12 +200,16 @@ browser itself, not by the app, and is disclosed as such.
 
 ### D8 — Phasing
 
-- **Phase 1 (this ADR, implemented):** capability detection, the retrieval/
-  grounding engine, the foreground-only session lifecycle, the Ask UI, the
-  built-in-model tier (D3.1), and the retrieval-only tier (D3.3). No CSP change,
-  no new runtime dependency, works offline, ships in the single file.
-- **Phase 2 (designed, gated on D6):** the downloadable WebGPU model tier, its
-  opt-in download/size/instructions banner, and the model cache lifecycle.
+- **Phase 1 (implemented):** capability detection, the retrieval/grounding
+  engine, the foreground-only session lifecycle, the Ask UI, the built-in-model
+  tier (D3.1), and the retrieval-only tier (D3.3). No new runtime dependency in
+  the main bundle, works offline, ships in the single file.
+- **Phase 2 (implemented):** the downloadable WebGPU model tier — `@mlc-ai/web-llm`
+  pinned at `0.2.84`, code-split into `webllm-backend.js` (loaded only on opt-in),
+  the self-hosted R2 weights + wasm libs, the wasm SHA-256 integrity pins, and the
+  opt-in download UI (size disclosed up front, progress, offline caching, OOM
+  fallback). Operational runbook:
+  [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md).
 
 ## Failure modes & trade-offs
 
@@ -192,17 +231,29 @@ browser itself, not by the app, and is disclosed as such.
 
 ## Code references
 
-Phase 1 entry points:
+Phase 1 (built-in / retrieval tiers):
 
 - `client/src/assistant/capabilities.ts` — detect the built-in `LanguageModel`
-  API and WebGPU; classify the available tier.
+  API + WebGPU + device hint; classify the available tier.
 - `client/src/assistant/retrieval.ts` — pure question → grounded context over
   camps/events/art/food/favorites/journal/map. No model, fully testable.
 - `client/src/assistant/session.ts` — foreground-only backend session: lazy
-  create, abort/release on `visibilitychange` hidden (D2).
-- `client/src/hooks/useAssistant.ts` — wires capability + retrieval + session
-  into UI state.
-- `client/src/components/AskView.tsx` — the opt-in Ask surface.
+  create, `prewarm()`, abort/release on `visibilitychange` hidden (D2).
+- `client/src/hooks/useAssistant.ts` — wires capability + retrieval + session +
+  the download tier into UI state.
+- `client/src/components/AskView.tsx` — the opt-in Ask surface + download panel.
 
-Phase 2 (not yet built): a `client/src/assistant/webllm.ts` backend behind the
-same session interface, plus the D6 CSP/hosting change.
+Phase 2 (downloadable WebGPU model):
+
+- `client/src/assistant/modelCatalog.ts` — pinned version, R2 origin, per-model
+  size/VRAM/wasm-SHA-256, and `offerFor()` device gating. Pure + tested.
+- `client/src/assistant/integrity.ts` — `sha256Hex` / `matchesSha256` (D6). Pure.
+- `client/src/assistant/webllm.ts` — the web-llm backend behind the same
+  `AssistantBackend` interface; `verifyModelLib()` then `CreateMLCEngine`. **This
+  file is the code-split boundary** (statically imports `@mlc-ai/web-llm`).
+- `client/src/assistant/webllmLoader.ts` — in the MAIN bundle; dynamic-`import()`s
+  the chunk via a runtime specifier so esbuild keeps it external.
+- `client/esbuild.config.mjs` — second entry point → `dist/webllm-backend.js`.
+- `backend/src/playa/builder.py::_copy_webllm_backend` — copies the chunk into
+  `site/` (not inlined, not in the SW precache SHELL).
+- Hosting/upgrade runbook: [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md).

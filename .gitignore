@@ -38,6 +38,9 @@ site/index.html
 site/privacy.html
 site/sw.js
 site/version.txt
+# Code-split on-device-AI chunk (ADR 21 phase 2). Built on the runner from
+# client/dist and uploaded with the Pages artifact; never committed.
+site/webllm-backend.js
 
 # === BRC map data from /update-map skill — never commit ===
 # The skill downloads measurements PDF / city plan PDF / GeoJSON /

@@ -30,6 +30,7 @@ import gzip
 import html as html_lib
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -718,6 +719,32 @@ class SiteBuilder:
             )
         return bundle_path.read_text(encoding="utf-8")
 
+    def _copy_webllm_backend(self) -> Path | None:
+        """Copy the code-split on-device-AI chunk (ADR 21 phase 2) next to
+        index.html as `site/webllm-backend.js`.
+
+        This holds @mlc-ai/web-llm and is loaded by the main bundle at runtime
+        ONLY when a user opts into the model download — it is deliberately NOT
+        inlined and NOT in the SW precache SHELL, so non-AI users never pay its
+        ~6 MB. esbuild always emits it alongside dist/bundle.js; a missing chunk
+        means a broken/partial client build, so fail loud like _read_bundle.
+        """
+        src = self.config.root / "client" / "dist" / "webllm-backend.js"
+        if not src.exists():
+            raise RuntimeError(
+                f"web-llm backend chunk missing at {src}. "
+                "Build it with `make bundle` (or `cd client && "
+                "npm ci && npm run build`)."
+            )
+        if "</script>" in src.read_text(encoding="utf-8").lower():
+            # Served as its own file, so this can't break an embed, but a
+            # literal close tag would still be a red flag for a corrupt build.
+            print("  WARNING: webllm-backend.js contains a literal </script>")
+        out = self.config.site_dir / "webllm-backend.js"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, out)
+        return out
+
     def _gis_data_scripts(self, sources: list[str]) -> tuple[str, list[str]]:
         """Embed one public, normalized GIS payload per active map year.
 
@@ -1242,6 +1269,10 @@ class SiteBuilder:
         # Dropbox requires an app-specific policy available to users. Keep it
         # outside the password-gated SPA and free of embedded source records.
         self._write_privacy_page()
+
+        # Code-split on-device-AI backend (ADR 21 phase 2). Sits beside
+        # index.html; the main bundle imports it lazily only on opt-in.
+        self._copy_webllm_backend()
 
         # Service worker so the site is usable offline after first load.
         # Version stamp pins a cache key — rebuilds evict old caches.

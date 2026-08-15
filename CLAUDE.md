@@ -48,6 +48,7 @@ change touches one of these subsystems.
 - [`docs/dev/site-ui.md`](docs/dev/site-ui.md) — compact data-embed and UI reference
 - [`docs/dev/mobile-visual-testing.md`](docs/dev/mobile-visual-testing.md) — mobile visual-review runbook, including safe headless screenshots and encrypted-build restoration
 - [`docs/dev/annual-map-update.md`](docs/dev/annual-map-update.md) — canonical yearly city-geometry/GIS-layer refresh and release checklist
+- [`docs/dev/on-device-model-hosting.md`](docs/dev/on-device-model-hosting.md) — R2 model/wasm provenance, upload, SHA-256 pins, and WebLLM-version upgrade runbook (ADR 21 phase 2)
 - [`docs/roadmap.md`](docs/roadmap.md) — future ideas, not implemented architecture
 
 When adding a new subsystem worth of decisions, follow the template in
@@ -188,7 +189,12 @@ as a dependency, so you don't need to think about it day to day.
 `InstallPrompt.tsx` on first click of the menu's "Install app" button)
 — it provides the iOS Add-to-Home-Screen instructions + native iOS 26+
 install dialog so we don't have to maintain hand-rolled instructions
-that rot every iOS release. `esbuild`, `typescript`, `tsx`,
+that rot every iOS release. The exact-pinned, Apache-2.0
+`@mlc-ai/web-llm` (`0.2.84`) powers the opt-in on-device-AI download tier
+(ADR 21 phase 2); it is genuinely code-split into a separate
+`webllm-backend.js` chunk (see the bundle-cost note below) and loaded
+only when a user opts into the model download — never in the main bundle.
+`esbuild`, `typescript`, `tsx`,
 `happy-dom` as dev deps. Lives at the repo root in `client/`, sibling
 of `playa/` — not nested, because it's an npm/TS project, not a
 Python module. Dev deps restored via `npm ci`.
@@ -199,10 +205,23 @@ single IIFE (the Python builder inlines `dist/bundle.js` into
 actually code-split — esbuild folds the lib into the main bundle
 (adds ~50 KB gzip). The Dropbox SDK is likewise bundled even when sync is
 build-disabled, although it makes no request without sync metadata. If JS
-payload becomes a concern, the path is to
+payload becomes a concern, the general path is to
 switch esbuild to `format: 'esm'` + `splitting: true` and emit
 chunks to `site/` for the SW to serve on demand. Not worth the work
-for friends-scale traffic today.
+for those two today.
+
+**Exception — `@mlc-ai/web-llm` IS code-split.** The on-device-AI runtime
+(ADR 21 phase 2, ~6 MB) is too big to inline for every user, so esbuild
+builds a **second entry point** (`client/src/assistant/webllm.ts` →
+`dist/webllm-backend.js`, ESM). The Python builder copies it to
+`site/webllm-backend.js` (gitignored, uploaded with the Pages artifact,
+**not** in the SW precache SHELL). The main bundle loads it via a
+dynamic `import()` with a runtime-computed specifier
+(`assistant/webllmLoader.ts`) so esbuild leaves it external — web-llm
+never touches the main bundle, and downloads only when a user opts into
+the model. This is a lighter alternative to full `splitting: true` that
+keeps the core app single-file. See ADR 21 D6 +
+`docs/dev/on-device-model-hosting.md`.
 
 ## Package layout (`backend/src/playa/`)
 

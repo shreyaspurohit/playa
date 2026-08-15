@@ -34,6 +34,21 @@ export function hasWebGpu(): boolean {
     && !!(navigator as unknown as { gpu?: unknown }).gpu;
 }
 
+/** Coarse form-factor + memory hint for sizing the downloadable model (D5).
+ *  `deviceMemory` is Chrome-only (GB, capped at 8); undefined elsewhere. */
+export function deviceHint(): { mobile: boolean; deviceMemoryGB?: number } {
+  const nav = (typeof navigator !== 'undefined' ? navigator : undefined) as
+    | (Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } })
+    | undefined;
+  let mobile = false;
+  if (nav?.userAgentData && typeof nav.userAgentData.mobile === 'boolean') {
+    mobile = nav.userAgentData.mobile;
+  } else if (typeof nav?.userAgent === 'string') {
+    mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent);
+  }
+  return { mobile, deviceMemoryGB: nav?.deviceMemory };
+}
+
 /** Probe the built-in model and WebGPU, then classify the usable tier. */
 export async function detectCapabilities(): Promise<Capabilities> {
   const lm = builtinLanguageModel();
