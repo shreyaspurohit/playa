@@ -1,7 +1,7 @@
 ---
 title: On-device assistant ("Ask")
 date: 2026-08-14
-status: accepted — phase 1 implemented; phase 2 (downloadable model) designed, gated on an owner CSP/hosting decision
+status: accepted — phase 1 implemented; phase 2 (downloadable model) decided (self-host on Cloudflare R2, hash-pinned), pending model upload + build wiring
 ---
 
 # On-device assistant ("Ask")
@@ -105,26 +105,54 @@ disclaimer.
   download UI picks a device-appropriate size; a failed load falls back to
   tier 3 rather than crashing.
 
-### D6 — CSP + weight delivery *(open owner decision — gates phase 2)*
+### D6 — CSP + weight delivery *(decided: self-host on Cloudflare R2, hash-pinned)*
 
 The app is a single self-contained `index.html` with a strict CSP that blocks
 external hosts, and the build inlines one IIFE bundle. The built-in-model tier
 (D3.1) needs neither a network host nor a CSP change — the browser has the
 model — so **phase 1 ships without touching the CSP**. The downloadable tier
-(D3.2) cannot fetch weights under today's CSP. Two viable shapes, to be chosen
-by the owner before phase 2:
+(D3.2) cannot fetch weights under today's CSP.
 
-- **(a) Self-host weights** on the existing Cloudflare/Pages origin and add a
-  narrow `connect-src` (and the WebGPU/WASM `script-src`/`worker-src`)
-  exception for exactly that origin. Cleanest UX (a "Download (~N MB)" button),
-  at the cost of hosting large binaries and a deliberate CSP relaxation.
-- **(b) User-provided file** — the user downloads a `.gguf`/model bundle per our
-  instructions and loads it via a file picker; a WASM runtime (e.g. wllama)
-  reads it from disk. **No network, no CSP change**, most faithful to "the user
-  downloads it themselves" — slower (CPU/WASM) and clunkier UX.
+**Decision: option (a) — self-host on Cloudflare R2** (chosen over a
+user-provided-file flow for the far better UX of a one-tap download). Concretely:
 
-Until this is decided, phase 2 is not built. Phase 1 (D3.1 + D3.3) is fully
-functional on its own.
+- **Storage.** A Cloudflare **R2** bucket, exposed **public-read** via a custom
+  domain (e.g. `models.purohit.dev`). R2 public buckets are **read-only to the
+  world by construction** — anonymous writes are impossible; overwriting a file
+  requires the owner's Cloudflare credentials. This alone defeats the
+  "someone swaps the model in an open bucket" threat unless the *account* is
+  compromised (same trust boundary as the whole deployment). Egress is free on
+  R2, so a couple-GB file at friends scale costs pennies.
+- **CSP.** Add exactly that model origin to `connect-src` (and the WASM needs
+  `script-src 'wasm-unsafe-eval'` / a `worker-src`). Narrow, single-origin.
+- **Integrity (defense-in-depth).** The build **pins a SHA-256** of the model
+  manifest and the app verifies the downloaded bytes before the runtime loads
+  them, rejecting any mismatch. The pin lives in the app, which deploys through
+  the trusted CI → Pages path — so integrity is anchored to the app, not the
+  bucket, even if the bucket were tampered. (WebLLM fetches many shard files; at
+  minimum pin the `mlc-chat-config.json`/manifest hash, and prefer a custom
+  loader that verifies the full set where practical.)
+- **Weights are data, not code.** The WebGPU/WASM *runtime* stays bundled in the
+  app (never fetched from the bucket), so a tampered weight file cannot execute
+  code — worst case is poisoned output (mitigated by D4 grounding + D7
+  disclaimer) or a sandboxed parser bug, not RCE.
+
+The rejected alternative — **(b) user-provided file** loaded from disk via a
+WASM runtime — needs no host and no CSP change but has worse UX and shifts trust
+to the user's download source; kept on record only as a fallback if hosting ever
+becomes undesirable.
+
+**Chosen models** (WebLLM `prebuiltAppConfig` ids, q4f16_1):
+
+| Tier | model_id | ~size |
+|---|---|---|
+| phone default | `Llama-3.2-1B-Instruct-q4f16_1-MLC` | ~0.9 GB |
+| ultra-light | `gemma3-1b-it-q4f16_1-MLC` | ~0.7 GB |
+| desktop default | `Qwen3-1.7B-q4f16_1-MLC` | ~2.0 GB |
+
+Size is disclosed before any download; the download is opt-in, resumable, and
+cached for offline reuse. Phase 1 (D3.1 + D3.3) remains fully functional without
+any of this.
 
 ### D7 — Honest framing and privacy disclosure
 
