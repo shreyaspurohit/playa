@@ -50,6 +50,7 @@ import { useVersionCheck } from '../hooks/useVersionCheck';
 import { useReleaseNotes } from '../hooks/useReleaseNotes';
 import type { Snapshot } from '../utils/exportImport';
 import { InfoModal } from './InfoModal';
+import { AskView } from './AskView';
 import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
 import { FoodView } from './FoodView';
@@ -944,6 +945,7 @@ export function App() {
   const onDismissSnapshot = useCallback(() => setIncomingSnapshot(null), []);
 
   const [infoOpen, setInfoOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [infoPulse, setInfoPulse] = useState(() => {
     const n = parseInt(readString(LS.infoSeen, '0'), 10) || 0;
@@ -1225,6 +1227,7 @@ export function App() {
                 setInfoPulse(false);
                 setInfoOpen(true);
               }}
+              onAskClick={() => setAskOpen(true)}
               onSyncNow={() => { void sync.syncNow(); }}
               onSyncConnect={() => { void sync.connect(); }}
               onSyncCancel={sync.cancelConnect}
@@ -1517,6 +1520,19 @@ export function App() {
         onImport={onImportSnapshot}
         onExport={onExportSnapshot}
         onClose={() => setInfoOpen(false)}
+      />
+      <AskView
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+        corpus={{
+          camps: camps ?? [],
+          art: art ?? [],
+          campFavs: campFavs.favs,
+          eventFavs: eventFavs.favs,
+          artFavs: artFavs.favs,
+        }}
+        onGotoCamp={onGotoCamp}
+        onGotoArt={onGotoArt}
       />
       <SyncModal
         open={syncOpen}

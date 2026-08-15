@@ -51,6 +51,7 @@ sections wherever they apply:
 | [18](./18-mobile-scroll-chrome.md) | Mobile scroll-aware chrome | Auto-hide global chrome while retaining each tab's task-critical controls |
 | [19](./19-food-classification-audit.md) | Local Food classification audit | Private two-model review of Hours-not-listed false positives, with ID-only proposals |
 | [20](./20-journal.md) | Offline journal and Dropbox archive | Year-owned plain-text memories, local-first timeline/search, and optional cloud merge |
+| [21](./21-on-device-assistant.md) | On-device "Ask" assistant | Opt-in, no-cloud, foreground-only NL Q&A grounded in the app's own data; tiered built-in-model / WebGPU-download / retrieval-only |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
 | (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
 | (ref) | [HTML scraping patterns](./dev/html-scraping-patterns.md) | Directory markup shapes used by the parsers |

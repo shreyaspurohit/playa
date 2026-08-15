@@ -509,7 +509,10 @@ function AboutTab({
             </strong>{' '}
             before acting on anything you see here. Use this tool to{' '}
             <em>narrow down</em> a shortlist of possible camps — not as the
-            source of truth.
+            source of truth. The optional <strong>Ask</strong> feature runs a
+            small AI model entirely on your device (nothing leaves it); its
+            answers are grounded in this data but can still be wrong — verify the
+            same way.
           </p>
           <p>
             Data is fetched nightly from the public directory and shown here

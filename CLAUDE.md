@@ -41,6 +41,7 @@ change touches one of these subsystems.
 - [`docs/18-mobile-scroll-chrome.md`](docs/18-mobile-scroll-chrome.md) — contextual sticky controls + direction-aware mobile header collapse
 - [`docs/19-food-classification-audit.md`](docs/19-food-classification-audit.md) — local Ollama semantic audit + ID-only Food exclusion proposals
 - [`docs/20-journal.md`](docs/20-journal.md) — accepted design for a year-owned offline journal, contextual notes, timeline/search, and Dropbox archive
+- [`docs/21-on-device-assistant.md`](docs/21-on-device-assistant.md) — opt-in, no-cloud, foreground-only "Ask" assistant grounded in app data; tiered built-in-model / WebGPU-download (phase 2) / retrieval-only
 - [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
 - [`docs/dev/client-architecture.md`](docs/dev/client-architecture.md) — compact client implementation reference
 - [`docs/dev/html-scraping-patterns.md`](docs/dev/html-scraping-patterns.md) — directory HTML parser patterns
