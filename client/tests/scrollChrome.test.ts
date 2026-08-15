@@ -1,7 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  advanceScrollChrome, INITIAL_SCROLL_CHROME, type ScrollChromeState,
+  advanceScrollChrome, INITIAL_SCROLL_CHROME, rebaseScrollChrome,
+  type ScrollChromeState,
 } from '../src/utils/scrollChrome';
 
 function step(state: ScrollChromeState, y: number, mobile = true) {
@@ -36,5 +37,25 @@ describe('advanceScrollChrome', () => {
       y: 100, direction: 1, travel: 100, collapsed: true,
     }, 200, false);
     assert.equal(state.collapsed, false);
+  });
+
+  test('settle rebase reveals chrome when a short page clamps to the top', () => {
+    const state = rebaseScrollChrome({
+      y: 125, direction: 1, travel: 0, collapsed: true,
+    }, 0, true);
+
+    assert.deepEqual(state, {
+      y: 0, direction: 0, travel: 0, collapsed: false,
+    });
+  });
+
+  test('settle rebase ignores anchoring movement away from the top', () => {
+    const state = rebaseScrollChrome({
+      y: 125, direction: 1, travel: 0, collapsed: true,
+    }, 80, true);
+
+    assert.deepEqual(state, {
+      y: 80, direction: 0, travel: 0, collapsed: true,
+    });
   });
 });

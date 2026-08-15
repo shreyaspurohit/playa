@@ -55,6 +55,10 @@ small enough—and important enough—to retain.
 - A 240ms settle guard rebases scroll-anchoring deltas while the 180ms layout
   transition runs. Without it, changing the sticky header's height can look
   like an immediate user reversal and reopen it without user input.
+- The top-of-document visibility rule still applies during that settle guard.
+  On a short or collapsed view, removing the primary chrome can shrink the
+  document enough for the browser to clamp the scroll position to zero; that
+  clamp must reveal navigation because no further upward scroll is possible.
 
 This makes reveal intentionally quicker than hide and prevents touch/trackpad
 jitter from repeatedly toggling the header. `App` batches scroll processing in
@@ -118,7 +122,8 @@ collapsed.
 - **Important transient banners hide with the primary layer.** Any small upward
   movement reveals them; they are not dismissed or unmounted.
 - **Very short pages do not collapse.** They cannot scroll far enough to cross
-  the thresholds, which is the desirable result.
+  the thresholds, which is the desirable result. If a page becomes short only
+  after the chrome collapses, a browser clamp into the top region reopens it.
 - **Browser UI and page scroll direction differ in casual language.** The code
   uses increasing `window.scrollY` as “down into content” and decreasing values
   as “back toward the document top.”

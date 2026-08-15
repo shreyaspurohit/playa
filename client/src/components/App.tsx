@@ -17,7 +17,8 @@ import {
 import type { LocationKind, LocationReleasePolicy } from '../utils/embargo';
 import { readString, writeString } from '../utils/storage';
 import {
-  advanceScrollChrome, INITIAL_SCROLL_CHROME, type ScrollChromeState,
+  advanceScrollChrome, INITIAL_SCROLL_CHROME, rebaseScrollChrome,
+  type ScrollChromeState,
 } from '../utils/scrollChrome';
 import { loadCachedPassword } from '../utils/secureStore';
 import { readShareFromUrl, clearShareFromUrl } from '../utils/share';
@@ -127,14 +128,14 @@ export function App() {
       // Collapsing a sticky element changes document geometry. Browsers may
       // counter that change with scroll anchoring, which looks like an
       // immediate user reversal. Rebase those animation-time deltas without
-      // allowing them to flip the state.
+      // allowing them to flip the state, except when a short document clamps
+      // all the way to the always-visible top region.
       if (performance.now() < scrollChromeSettleUntilRef.current) {
-        scrollChromeRef.current = {
-          ...previous,
-          y: window.scrollY,
-          direction: 0,
-          travel: 0,
-        };
+        const rebased = rebaseScrollChrome(previous, window.scrollY, mobile.matches);
+        scrollChromeRef.current = rebased;
+        if (rebased.collapsed !== previous.collapsed) {
+          setChromeCollapsed(rebased.collapsed);
+        }
         return;
       }
       const next = advanceScrollChrome(previous, window.scrollY, mobile.matches);
@@ -146,12 +147,16 @@ export function App() {
           window.clearTimeout(scrollChromeSettleTimerRef.current);
         }
         scrollChromeSettleTimerRef.current = window.setTimeout(() => {
-          scrollChromeRef.current = {
-            ...scrollChromeRef.current,
-            y: window.scrollY,
-            direction: 0,
-            travel: 0,
-          };
+          const beforeRebase = scrollChromeRef.current;
+          const rebased = rebaseScrollChrome(
+            beforeRebase,
+            window.scrollY,
+            mobile.matches,
+          );
+          scrollChromeRef.current = rebased;
+          if (rebased.collapsed !== beforeRebase.collapsed) {
+            setChromeCollapsed(rebased.collapsed);
+          }
           scrollChromeSettleTimerRef.current = 0;
         }, 240);
       }

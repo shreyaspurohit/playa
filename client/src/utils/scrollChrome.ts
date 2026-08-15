@@ -22,6 +22,28 @@ const HIDE_AFTER_Y = 96;
 const HIDE_TRAVEL = 24;
 const REVEAL_TRAVEL = 10;
 
+/**
+ * Rebase scroll tracking while layout is settling without weakening the
+ * always-visible-at-the-top invariant. Collapsing the chrome can shorten a
+ * sparse page enough for the browser to clamp scrollY to zero; preserving a
+ * collapsed state there would leave no remaining scroll gesture with which to
+ * reveal the navigation.
+ */
+export function rebaseScrollChrome(
+  previous: ScrollChromeState,
+  nextY: number,
+  mobile: boolean,
+): ScrollChromeState {
+  const y = Math.max(0, nextY);
+  return {
+    ...previous,
+    y,
+    direction: 0,
+    travel: 0,
+    collapsed: mobile && y > ALWAYS_VISIBLE_Y ? previous.collapsed : false,
+  };
+}
+
 export function advanceScrollChrome(
   previous: ScrollChromeState,
   nextY: number,
