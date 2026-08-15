@@ -104,6 +104,14 @@ disclaimer.
   enforces a hard per-tab memory cap and larger models OOM-kill the tab. The
   download UI picks a device-appropriate size; a failed load falls back to
   tier 3 rather than crashing.
+- **The download is only offered when the model can actually run.** Presence of
+  `navigator.gpu` is necessary but not sufficient: our q4f16 models need the
+  WebGPU **`shader-f16`** feature, which some Safari/Firefox/GPU combinations
+  lack. `capabilities.ts::webgpuCanRunF16()` acquires an adapter and checks
+  `adapter.features.has('shader-f16')` **before** the download button appears, so
+  a user is never invited to pull ~600 MB onto a device that would only fall back
+  to smart search. If the probe fails, the surface silently stays in the
+  retrieval-only tier — no error, no guilt-trip.
 
 ### D6 — Weight delivery + integrity *(implemented: self-host on Cloudflare R2, wasm hash-pinned, code-split)*
 

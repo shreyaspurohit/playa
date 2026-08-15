@@ -34,6 +34,30 @@ export function hasWebGpu(): boolean {
     && !!(navigator as unknown as { gpu?: unknown }).gpu;
 }
 
+interface GpuAdapterLike { features?: { has?: (name: string) => boolean } }
+interface GpuLike { requestAdapter?: (opts?: unknown) => Promise<GpuAdapterLike | null> }
+
+/** Whether an adapter that can actually run our q4f16 models is obtainable:
+ *  WebGPU present AND the adapter reports the `shader-f16` feature. We probe
+ *  this BEFORE offering the ~600 MB download, so a device whose WebGPU lacks
+ *  f16 (some Safari/Firefox/GPU combos) never gets invited into a doomed
+ *  download that would only fall back to smart search. Presence of
+ *  `navigator.gpu` alone is not enough — f16 is the real gate. */
+export async function webgpuCanRunF16(): Promise<boolean> {
+  const gpu = typeof navigator !== 'undefined'
+    ? (navigator as unknown as { gpu?: GpuLike }).gpu
+    : undefined;
+  if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
+  try {
+    const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) return false;
+    return !!adapter.features && typeof adapter.features.has === 'function'
+      && adapter.features.has('shader-f16');
+  } catch {
+    return false;
+  }
+}
+
 /** Coarse form-factor + memory hint for sizing the downloadable model (D5).
  *  `deviceMemory` is Chrome-only (GB, capped at 8); undefined elsewhere. */
 export function deviceHint(): { mobile: boolean; deviceMemoryGB?: number } {
@@ -67,9 +91,12 @@ export async function detectCapabilities(): Promise<Capabilities> {
       builtinModel = true; // create() exists but no availability() — assume usable
     }
   }
+  // Only probe the GPU when there's no built-in model to fall through to, and
+  // require real f16 capability — not just `navigator.gpu` — before offering.
+  const webgpuDownloadPossible = builtinModel ? false : await webgpuCanRunF16();
   return {
     builtinModel,
-    webgpuDownloadPossible: !builtinModel && hasWebGpu(),
+    webgpuDownloadPossible,
     tier: builtinModel ? 'builtin' : 'retrieval-only',
   };
 }
