@@ -180,7 +180,7 @@ describe('<ScheduleView> past-event filter', () => {
     assert.ok(toggle);
     toggle.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.match(mount.textContent ?? '', /No starred events match the active filters/);
+    assert.match(mount.textContent ?? '', /No events match the active filters/);
     assert.equal(mount.textContent?.includes('No starred events yet'), false);
   });
 

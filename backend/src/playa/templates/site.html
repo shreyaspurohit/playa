@@ -40,6 +40,7 @@ __SYNC_META__
 <meta name="bm-location-release-year" content="__LOCATION_RELEASE_YEAR__">
 <meta name="bm-camp-location-release-at" content="__CAMP_LOCATION_RELEASE_AT__">
 <meta name="bm-art-location-release-at" content="__ART_LOCATION_RELEASE_AT__">
+<meta name="bm-embeddings" content="__HAS_EMBEDDINGS__">
 <title>Playa Camps</title>
 <style>
   /* Themes are sorted brightest -> darkest. Pick via data-theme on <html>. */
@@ -774,6 +775,105 @@ __SYNC_META__
     color: var(--accent); font-weight: 600; text-decoration: none;
   }
   .modal-body .made-by a:hover { background: var(--accent); color: var(--card); }
+
+  /* Ask (on-device assistant) — trigger + modal internals (ADR 21) */
+  /* Floating "Ask" mushroom button — hovers bottom-right over the content on
+     every screen, out of the header. Card background + accent ring so the
+     colorful mushroom stays visible on all themes. */
+  .ask-fab {
+    position: fixed; z-index: 60; right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    /* Match .scroll-top-btn (46px) so the stacked pair reads as one column. */
+    width: 46px; height: 46px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--card); border: 2px solid var(--accent);
+    font-size: 23px; line-height: 1; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,.28);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .ask-fab:hover { transform: translateY(-2px) scale(1.05); box-shadow: 0 8px 22px rgba(0,0,0,.36); }
+  .ask-fab:active { transform: scale(.95); }
+  .ask-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  /* Gentle attention pulse on the first couple of visits, then it stops. */
+  .ask-fab.pulse { animation: ask-fab-pulse 1.8s ease-out 3; }
+  @keyframes ask-fab-pulse {
+    0%   { box-shadow: 0 4px 16px rgba(0,0,0,.30), 0 0 0 0 var(--accent-soft); }
+    70%  { box-shadow: 0 4px 16px rgba(0,0,0,.30), 0 0 0 14px transparent; }
+    100% { box-shadow: 0 4px 16px rgba(0,0,0,.30), 0 0 0 0 transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) { .ask-fab.pulse { animation: none; } }
+  .ask-tier {
+    margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+    background: var(--chip-bg); color: var(--muted);
+    font-size: 11px; font-weight: 500; vertical-align: middle;
+  }
+  .ask-form { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ask-input {
+    flex: 1; min-width: 0; padding: 9px 12px; font-size: 15px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--text);
+  }
+  .ask-input:focus { outline: none; border-color: var(--accent); }
+  .ask-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .ask-chip {
+    padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--chip-bg); color: var(--text);
+  }
+  .ask-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .ask-answer {
+    margin: 4px 0 12px; padding: 10px 12px; border-radius: 8px;
+    background: var(--accent-soft); color: var(--text); font-size: 14px; line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .ask-results { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .ask-result {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--text); cursor: pointer;
+  }
+  .ask-result:hover { border-color: var(--accent); }
+  .ask-result-kind { flex-shrink: 0; font-size: 16px; }
+  .ask-result-body { display: flex; flex-direction: column; min-width: 0; }
+  .ask-result-title { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+  .ask-result-star { color: var(--accent); margin-right: 4px; }
+  .ask-result-sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .ask-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
+  .ask-filter {
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px;
+    background: var(--card); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .ask-filter:hover { border-color: var(--accent); }
+  .ask-filter.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .ask-filter-note { color: var(--muted); font-size: 12px; }
+  .ask-result-dist { color: var(--accent); font-weight: 600; }
+  /* Fixed colors (not theme tokens) so the contrast holds on every theme's
+     card background — these are meant to jump out. */
+  .ask-timing {
+    display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+    vertical-align: middle; line-height: 1.35; white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  }
+  .ask-timing.now { background: #12a150; color: #fff; }
+  .ask-timing.soon { background: #ea6a09; color: #fff; }
+  .ask-note { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 8px 0; }
+  .ask-download {
+    margin: 10px 0 12px; padding: 12px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--accent-soft);
+  }
+  .ask-dl-lead { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--text); }
+  .ask-dl-btn { width: 100%; }
+  .ask-dl-alt { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+  .ask-dl-link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--accent); font: inherit; text-decoration: underline;
+  }
+  .ask-dl-fine { margin: 8px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+  .ask-dl-bar { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+  .ask-dl-fill { height: 100%; background: var(--accent); transition: width 0.25s ease; }
+  .ask-dl-status { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  .ask-dl-error { font-size: 13px; line-height: 1.5; color: var(--text); }
+  .ask-disclaimer { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
   .modal-body .danger-btn {
     padding: 6px 12px; border: 1px solid var(--border);
     background: var(--card); color: var(--text); border-radius: 6px;
@@ -2521,7 +2621,10 @@ __SYNC_META__
   .journal-sky-night .journal-hero-silhouette { fill: rgba(8,8,18,0.72); }
   /* Floating back-to-top (camps / art long lists) */
   .scroll-top-btn {
-    position: fixed; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    /* Stacks ABOVE the always-present Ask mushroom (46px tall, 16px from the
+       bottom) with a 12px gap, so the two never overlap on camps/art. */
+    position: fixed; right: 16px;
+    bottom: calc(16px + 46px + 12px + env(safe-area-inset-bottom, 0px));
     z-index: 60; width: 46px; height: 46px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--accent); color: #fff; font-size: 22px; line-height: 1; cursor: pointer;
     box-shadow: 0 4px 14px rgba(0,0,0,0.28);

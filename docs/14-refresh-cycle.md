@@ -144,8 +144,9 @@ self.addEventListener('message', e => {
 
 `CACHE = 'playa-' + VERSION`. Every build has a unique version, so
 every new SW gets a fresh cache. The activate handler deletes any
-cache not matching the current version — old SW caches don't linger
-after upgrade.
+old `playa-v…` shell cache not matching the current version — old shells don't
+linger after upgrade. Durable art and opt-in Ask/model caches use separate names
+and survive the upgrade.
 
 This is what makes the version-aware paths reliable: when
 `reg.update()` actually finds a newer `sw.js`, the new SW's install

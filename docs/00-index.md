@@ -51,12 +51,14 @@ sections wherever they apply:
 | [18](./18-mobile-scroll-chrome.md) | Mobile scroll-aware chrome | Auto-hide global chrome while retaining each tab's task-critical controls |
 | [19](./19-food-classification-audit.md) | Local Food classification audit | Private two-model review of Hours-not-listed false positives, with ID-only proposals |
 | [20](./20-journal.md) | Offline journal and Dropbox archive | Year-owned plain-text memories, local-first timeline/search, and optional cloud merge |
+| [21](./21-on-device-assistant.md) | On-device "Ask" assistant | Opt-in, no-cloud, foreground-only NL Q&A grounded in the app's own data; tiered built-in-model / WebGPU-download / retrieval-only |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
 | (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
 | (ref) | [HTML scraping patterns](./dev/html-scraping-patterns.md) | Directory markup shapes used by the parsers |
 | (ref) | [Site UI](./dev/site-ui.md) | Compact embed-mode and UI reference; CLAUDE.md retains detailed behavior |
 | (runbook) | [Mobile visual testing](./dev/mobile-visual-testing.md) | Phone-sized manual/headless review, screenshots, service-worker isolation, and encrypted-build restoration |
 | (runbook) | [Annual map and GIS update](./dev/annual-map-update.md) | Year rollover for city geometry, official POIs/layers, validation, mobile review, and deployment configuration |
+| (runbook) | [On-device model hosting](./dev/on-device-model-hosting.md) | R2 hosting for the Ask embedding model + ONNX runtime: provenance, upload, and version-upgrade steps (ADR 21) |
 | (plan) | [Roadmap](./roadmap.md) | Ideas and scaling thresholds, not current commitments |
 
 ## Adding a new doc

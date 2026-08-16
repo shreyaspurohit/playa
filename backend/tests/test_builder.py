@@ -405,6 +405,11 @@ class BurnOpenTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir.joinpath("bundle.js").write_text(
             '"use strict";(()=>{})();',
         )
+        # Code-split on-device-AI chunk (ADR 21 phase 2). build() copies it
+        # next to index.html, so a full build needs it present.
+        bundle_dir.joinpath("semantic-backend.js").write_text(
+            'export const loadEmbedder=async()=>{};',
+        )
 
     def test_burn_open_writes_burn_key_json(self):
         builder = self._make_builder(
@@ -501,6 +506,42 @@ class BurnOpenTests(unittest.TestCase, _TmpConfigMixin):
             with self.assertRaises(RuntimeError) as cm:
                 builder.build()
         self.assertIn("spirit-mode", str(cm.exception))
+
+    def test_build_copies_semantic_chunk_into_durable_on_demand_cache(self):
+        """Ask stays opt-in but, once fetched, survives nightly SW versions."""
+        builder = self._make_builder()
+        self._drop_bundle(builder)
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
+            builder.build()
+        chunk = builder.config.site_dir / "semantic-backend.js"
+        self.assertTrue(chunk.exists(), "chunk copied into site/")
+        self.assertIn("loadEmbedder", chunk.read_text())
+        sw = (builder.config.site_dir / "sw.js").read_text()
+        shell = sw.split("const SHELL = ", 1)[1].split(";", 1)[0]
+        self.assertNotIn("semantic-backend", shell)
+        self.assertNotIn("embeddings.json", shell)
+        self.assertIn("const ASK_CACHE = 'playa-ask-v1'", sw)
+        self.assertIn("const MODEL_CACHE = 'transformers-cache'", sw)
+        self.assertIn("async function preserveAskAssets()", sw)
+        self.assertIn("k.startsWith('playa-v')", sw)
+        self.assertIn("const isAskAsset", sw)
+        self.assertIn("caches.delete(ASK_CACHE)", sw)
+        self.assertIn("caches.delete(MODEL_CACHE)", sw)
+
+    def test_build_fails_loud_when_semantic_chunk_missing(self):
+        """A partial/broken client build (bundle present, chunk absent)
+        must fail rather than deploy a site whose Ask download 404s."""
+        builder = self._make_builder()
+        bundle_dir = builder.config.root / "client" / "dist"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_dir.joinpath("bundle.js").write_text('"use strict";(()=>{})();')
+        # Deliberately do NOT write semantic-backend.js.
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
+            with self.assertRaises(RuntimeError) as cm:
+                builder.build()
+        self.assertIn("semantic-backend.js", str(cm.exception))
 
 
 class ConfigParsedTiersTests(unittest.TestCase, _TmpConfigMixin):
@@ -922,6 +963,9 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir.joinpath("bundle.js").write_text(
             '"use strict";(()=>{/* stub — real bundle built by esbuild in CI/make */})();'
         )
+        bundle_dir.joinpath("semantic-backend.js").write_text(
+            'export const loadEmbedder=async()=>{};'
+        )
         # site/ already exists (from _make_config) so the SW can land there.
         # Smoke test has 1 camp, well below the production min-camps rail.
         with contextlib.redirect_stdout(io.StringIO()), \
@@ -982,6 +1026,8 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         self.assertIn("async function cacheArtImage", sw)
         self.assertIn("req.destination !== 'image'", sw)
         self.assertIn("const IMG_CACHE_MAX = 2000", sw)
+        self.assertIn("const ASK_CACHE = 'playa-ask-v1'", sw)
+        self.assertIn("const MODEL_CACHE = 'transformers-cache'", sw)
 
     def test_build_fails_helpfully_when_bundle_missing(self):
         """If the client bundle hasn't been built yet, the error should
@@ -1007,6 +1053,9 @@ class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
         bundle_dir = self.config.root / "client" / "dist"
         bundle_dir.mkdir(parents=True)
         bundle_dir.joinpath("bundle.js").write_text('(()=>{})()')
+        bundle_dir.joinpath("semantic-backend.js").write_text(
+            'export const loadEmbedder=async()=>{};',
+        )
         # MIN_CAMPS not overridden → defaults to 500 → 1 camp fails hard.
         with self.assertRaises(RuntimeError) as ctx, \
                 contextlib.redirect_stdout(io.StringIO()):

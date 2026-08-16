@@ -30,6 +30,7 @@ import gzip
 import html as html_lib
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -718,6 +719,122 @@ class SiteBuilder:
             )
         return bundle_path.read_text(encoding="utf-8")
 
+    def _copy_semantic_backend(self) -> Path | None:
+        """Copy the code-split semantic-search chunk (ADR 21) next to index.html
+        as `site/semantic-backend.js`.
+
+        This holds @huggingface/transformers + @orama/orama and is loaded by the
+        main bundle at runtime ONLY when a user opts into the model download —
+        deliberately NOT inlined and NOT in the SW precache SHELL, so users who
+        never open Ask don't pay its weight. esbuild always emits it alongside
+        dist/bundle.js; a missing chunk means a broken/partial client build, so
+        fail loud like _read_bundle.
+        """
+        src = self.config.root / "client" / "dist" / "semantic-backend.js"
+        if not src.exists():
+            raise RuntimeError(
+                f"semantic backend chunk missing at {src}. "
+                "Build it with `make bundle` (or `cd client && "
+                "npm ci && npm run build`)."
+            )
+        if "</script>" in src.read_text(encoding="utf-8").lower():
+            # Served as its own file, so this can't break an embed, but a
+            # literal close tag would still be a red flag for a corrupt build.
+            print("  WARNING: semantic-backend.js contains a literal </script>")
+        out = self.config.site_dir / "semantic-backend.js"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, out)
+        return out
+
+    def _write_embeddings(
+        self,
+        loaded: list[tuple[str, list["Camp"]]],
+        loaded_art: list[tuple[str, list["Art"]]],
+    ) -> bool:
+        """Generate self-hosted MiniLM vectors for camps + events + art and write
+        them to `site/embeddings.json` (ADR 21 semantic search). Opt-in via
+        `BM_EMBEDDINGS` so tests and quick rebuilds skip the node + model step.
+
+        The vectors are a SEPARATE file (not inlined into index.html) fetched by
+        the client only when the user opts into the model download, so the page
+        stays small for everyone else. Returns True when shipped.
+
+        Flow: write `data/embeddings/records.json` (id + text) → shell the
+        incremental Node embedder (`client/scripts/embed.mjs`, content-hash
+        cached) → copy `vectors.json` → `site/embeddings.json`. Any failure warns
+        and returns False so a build never breaks over the optional AI feature.
+        """
+        if os.environ.get("BM_EMBEDDINGS", "").lower() not in ("1", "true", "yes"):
+            return False
+
+        def camp_text(c: "Camp") -> str:
+            return ". ".join(p for p in [c.name, " ".join(c.tags), c.description] if p)
+
+        def art_text(a: "Art") -> str:
+            bits = [a.name, f"by {a.artist}" if a.artist else "", a.category, a.description]
+            return ". ".join(p for p in bits if p)
+
+        def event_text(e, camp_name: str) -> str:
+            bits = [e.name, e.description, f"at {camp_name}" if camp_name else ""]
+            return ". ".join(p for p in bits if p)
+
+        # Key by source:kind:id. Prefixing with the source keeps a shared API
+        # uid (the same camp in api-2025 AND api-2026) from getting one year's
+        # vector for both — each source embeds its own records, and the client
+        # looks up vectors under the ACTIVE source's prefix.
+        records: list[dict] = []
+        seen: set[str] = set()
+        for spec, camps in loaded:
+            for c in camps:
+                key = f"{spec}:camp:{c.id}"
+                if key not in seen:
+                    seen.add(key)
+                    records.append({"key": key, "text": camp_text(c)})
+                for e in c.events or []:
+                    ekey = f"{spec}:event:{e.id}"
+                    if ekey in seen:
+                        continue
+                    seen.add(ekey)
+                    records.append({"key": ekey, "text": event_text(e, c.name)})
+        for spec, art in loaded_art:
+            for a in art:
+                key = f"{spec}:art:{a.id}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                records.append({"key": key, "text": art_text(a)})
+
+        emb_dir = self.config.root / "data" / "embeddings"
+        emb_dir.mkdir(parents=True, exist_ok=True)
+        (emb_dir / "records.json").write_text(json.dumps(records), encoding="utf-8")
+
+        client_dir = self.config.root / "client"
+        try:
+            subprocess.run(
+                ["node", "scripts/embed.mjs"],
+                cwd=client_dir,
+                env={**os.environ, "PLAYA_ROOT": str(self.config.root)},
+                check=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"  WARNING: embedding step failed ({exc}); shipping without vectors")
+            return ""
+
+        vectors_path = emb_dir / "vectors.json"
+        if not vectors_path.exists():
+            print("  WARNING: embedder produced no vectors.json; shipping without vectors")
+            return False
+        raw = vectors_path.read_bytes()
+        out = self.config.site_dir / "embeddings.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(raw)
+        try:
+            count = len(json.loads(raw).get("keys", []))
+            print(f"  embeddings: {count} vectors → site/embeddings.json ({len(raw) // 1024} KB, served gzipped)")
+        except Exception:
+            pass
+        return True
+
     def _gis_data_scripts(self, sources: list[str]) -> tuple[str, list[str]]:
         """Embed one public, normalized GIS payload per active map year.
 
@@ -774,7 +891,7 @@ class SiteBuilder:
 
     def _write_service_worker(self, version: str) -> Path:
         """Emit site/sw.js so the site works fully offline after first
-        load. Three caches:
+        load. Four caches:
 
           1. Versioned shell cache (`playa-<VERSION>`) — index.html,
              SW, manifest, icon. Pruned on activate so old versions
@@ -783,7 +900,14 @@ class SiteBuilder:
              stale-while-revalidate for art thumbnails fetched from
              BM's CDN. Survives version bumps so users keep their
              starred-art images offline across deploys.
-          3. (browser HTTP cache below all of this — invisible to us)
+          3. Durable Ask cache (`playa-ask-v1`) — the lazy semantic chunk and
+             vectors. Populated only after opt-in and preserved across nightly
+             version bumps so a previously-set-up Ask stays offline-capable.
+          4. Transformers.js's `transformers-cache` — model + ONNX runtime
+             assets. The worker does not populate it, but shell-cache eviction
+             must leave this library-owned cache alone.
+
+             (browser HTTP cache sits below all of this — invisible to us)
 
         The fetch handler:
           - Same-origin: cache-first against the shell (existing).
@@ -802,6 +926,11 @@ class SiteBuilder:
             "// Cross-origin image cache (art thumbnails). Decoupled\n"
             "// from VERSION so cached images survive deploys.\n"
             "const IMG_CACHE = 'playa-img-v1';\n"
+            "// Ask's lazy same-origin assets survive nightly shell versions.\n"
+            "// transformers.js separately owns MODEL_CACHE for model/ORT files.\n"
+            "const ASK_CACHE = 'playa-ask-v1';\n"
+            "const MODEL_CACHE = 'transformers-cache';\n"
+            "const ASK_ASSETS = ['./semantic-backend.js', './embeddings.json'];\n"
             "// Cap image-cache entries — eviction is best-effort\n"
             "// LRU via insertion order (Cache.keys() returns FIFO).\n"
             "// Sized to hold the whole art set (a few hundred pieces) with\n"
@@ -829,13 +958,24 @@ class SiteBuilder:
             "    }));\n"
             "  })());\n"
             "});\n"
+            "async function preserveAskAssets() {\n"
+            "  const cache = await caches.open(ASK_CACHE);\n"
+            "  await Promise.all(ASK_ASSETS.map(async (url) => {\n"
+            "    if (await cache.match(url)) return;\n"
+            "    const prior = await caches.match(url);\n"
+            "    if (prior) await cache.put(url, prior.clone());\n"
+            "  }));\n"
+            "}\n"
             "self.addEventListener('activate', (e) => {\n"
             "  e.waitUntil((async () => {\n"
+            "    // Upgrade from the old behavior, where lazy Ask files landed\n"
+            "    // in the versioned shell cache: copy them before pruning it.\n"
+            "    await preserveAskAssets();\n"
             "    const keys = await caches.keys();\n"
-            "    // Drop old shell caches but PRESERVE the image cache —\n"
-            "    // it intentionally outlives version bumps.\n"
+            "    // Delete ONLY old Playa shell caches. Broad deletion would also\n"
+            "    // erase transformers.js's model cache after every nightly build.\n"
             "    await Promise.all(keys\n"
-            "      .filter(k => k !== CACHE && k !== IMG_CACHE)\n"
+            "      .filter(k => k.startsWith('playa-v') && k !== CACHE)\n"
             "      .map(k => caches.delete(k)));\n"
             "    await self.clients.claim();\n"
             "  })());\n"
@@ -855,9 +995,13 @@ class SiteBuilder:
             "    return;\n"
             "  }\n"
             "  if (e.data === 'CLEAR_IMAGE_CACHE') {\n"
-            "    // Used by the 'Clear all local data' flow so users get\n"
-            "    // a true reset, not just LS wipe.\n"
-            "    e.waitUntil(caches.delete(IMG_CACHE).then(() => {\n"
+            "    // Backward-compatible message name used by 'Clear all local\n"
+            "    // data'. Clear every durable app/model cache, not user state.\n"
+            "    e.waitUntil(Promise.all([\n"
+            "      caches.delete(IMG_CACHE),\n"
+            "      caches.delete(ASK_CACHE),\n"
+            "      caches.delete(MODEL_CACHE),\n"
+            "    ]).then(() => {\n"
             "      try { e.source && e.source.postMessage('IMAGE_CACHE_CLEARED'); } catch (_) {}\n"
             "    }));\n"
             "    return;\n"
@@ -944,6 +1088,24 @@ class SiteBuilder:
             "  // detect a new deploy. Bypass the SW so polls always go\n"
             "  // to origin instead of serving the just-cached copy.\n"
             "  if (url.pathname.endsWith('/version.txt')) return;\n"
+            "  // Ask files are opt-in and network-first while online, with a\n"
+            "  // durable fallback that survives nightly shell-cache eviction.\n"
+            "  const isAskAsset = ASK_ASSETS.some((p) => url.pathname.endsWith(p.slice(1)));\n"
+            "  if (isAskAsset) {\n"
+            "    e.respondWith((async () => {\n"
+            "      const cache = await caches.open(ASK_CACHE);\n"
+            "      try {\n"
+            "        const net = await fetch(req);\n"
+            "        if (net.ok) await cache.put(req, net.clone());\n"
+            "        return net;\n"
+            "      } catch (err) {\n"
+            "        const cached = await cache.match(req);\n"
+            "        if (cached) return cached;\n"
+            "        throw err;\n"
+            "      }\n"
+            "    })());\n"
+            "    return;\n"
+            "  }\n"
             "  // Cache-first for the precache shell + anything same-origin;\n"
             "  // falls back to network and caches the response on the way by.\n"
             "  e.respondWith((async () => {\n"
@@ -1181,6 +1343,7 @@ class SiteBuilder:
         )
         if gis_script:
             data_script = data_script + "\n" + gis_script
+        has_embeddings = self._write_embeddings(loaded, loaded_art)
         bundle_js = self._read_bundle()
 
         # Guard: our placeholder isn't a substring that could legally appear
@@ -1234,6 +1397,7 @@ class SiteBuilder:
                 "__ART_LOCATION_RELEASE_AT__",
                 self.config.art_location_release_at,
             )
+            .replace("__HAS_EMBEDDINGS__", "1" if has_embeddings else "")
         )
 
         self.config.site_html.parent.mkdir(parents=True, exist_ok=True)
@@ -1242,6 +1406,10 @@ class SiteBuilder:
         # Dropbox requires an app-specific policy available to users. Keep it
         # outside the password-gated SPA and free of embedded source records.
         self._write_privacy_page()
+
+        # Code-split semantic-search backend (ADR 21). Sits beside index.html;
+        # the main bundle imports it lazily only on opt-in.
+        self._copy_semantic_backend()
 
         # Service worker so the site is usable offline after first load.
         # Version stamp pins a cache key — rebuilds evict old caches.

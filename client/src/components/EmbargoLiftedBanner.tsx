@@ -22,8 +22,7 @@ export function EmbargoLiftedBanner({ kind, onRefresh, onDismiss }: Props) {
       <div class="import-banner-body">
         <p>
           🔥 <strong>{label} locations are now available.</strong>{' '}
-          Current-year API {kind} locations are no longer hidden. Refresh to load
-          the latest data.
+          Refresh to load the latest data.
         </p>
         <div class="import-banner-actions">
           <button type="button" class="primary-btn" onClick={onRefresh}>

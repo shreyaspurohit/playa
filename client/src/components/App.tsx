@@ -51,6 +51,8 @@ import { useVersionCheck } from '../hooks/useVersionCheck';
 import { useReleaseNotes } from '../hooks/useReleaseNotes';
 import type { Snapshot } from '../utils/exportImport';
 import { InfoModal } from './InfoModal';
+import { AskView } from './AskView';
+import { AskFab } from './AskFab';
 import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
 import { FoodView } from './FoodView';
@@ -949,6 +951,7 @@ export function App() {
   const onDismissSnapshot = useCallback(() => setIncomingSnapshot(null), []);
 
   const [infoOpen, setInfoOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [infoPulse, setInfoPulse] = useState(() => {
     const n = parseInt(readString(LS.infoSeen, '0'), 10) || 0;
@@ -1523,6 +1526,21 @@ export function App() {
         onExport={onExportSnapshot}
         onClose={() => setInfoOpen(false)}
       />
+      <AskView
+        open={askOpen}
+        onClose={() => setAskOpen(false)}
+        corpus={{
+          source,
+          camps: camps ?? [],
+          art: art ?? [],
+          campFavs: campFavs.favs,
+          eventFavs: eventFavs.favs,
+          artFavs: artFavs.favs,
+        }}
+        onGotoCamp={onGotoCamp}
+        onGotoArt={onGotoArt}
+      />
+      {!askOpen && <AskFab onClick={() => setAskOpen(true)} />}
       <SyncModal
         open={syncOpen}
         sync={sync}

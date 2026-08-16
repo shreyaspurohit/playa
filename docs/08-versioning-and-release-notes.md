@@ -118,13 +118,15 @@ sequenceDiagram
 
 ### Service worker caching key
 
-`CACHE = 'playa-' + VERSION`. Every build evicts old caches in the
-`activate` handler — no stale assets linger across deploys. Combined
+`CACHE = 'playa-' + VERSION`. Every build evicts old `playa-v…` shell caches in
+the `activate` handler while preserving the durable art/Ask caches and
+Transformers.js model cache. Combined
 with `cache: 'reload'` on per-URL install fetches, this means:
 
 - A new SW installs with origin-fresh bytes (no HTTP cache pollution).
 - The new SW's cache name diverges from any previous cache.
-- The activate handler deletes everything not matching the new name.
+- The activate handler deletes old versioned shell caches, not durable runtime
+  caches.
 
 That is what makes the "force refresh" path reliable, even under GH
 Pages' max-age cache window.
