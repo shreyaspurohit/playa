@@ -20,15 +20,23 @@ const RECORDS = `${DIR}/records.json`;
 const CACHE = `${DIR}/cache.json`;
 const OUT = `${DIR}/vectors.json`;
 
-const MODEL_ID = 'all-MiniLM-L6-v2';
+const MODEL_ID = 'all-MiniLM-L6-v2';   // canonical id — drives the signature the client checks
 const REVISION = 'main';
 const DIM = 384;
 
-// Fetch model weights from the same self-hosted R2 the browser uses, so the
-// build never depends on HuggingFace and always matches production.
+// Where the BUILD fetches the model. Default: HuggingFace (`Xenova/…`), which CI
+// runners can reach. Cloudflare in front of our R2 (models.purohit.dev) 403s
+// datacenter IPs, so the build must NOT depend on it — the browser still uses R2
+// at runtime (semantic.ts). Set BM_MODELS_BASE to point the build at R2 for
+// local testing. Either way the model is identical, so the signature is stable.
+const R2_BASE = process.env.BM_MODELS_BASE;
+const FETCH_ID = R2_BASE ? MODEL_ID : `Xenova/${MODEL_ID}`;
+
 env.allowLocalModels = false;
-env.remoteHost = process.env.BM_MODELS_BASE || 'https://models.purohit.dev';
-env.remotePathTemplate = '{model}/resolve/{revision}/';
+if (R2_BASE) {
+  env.remoteHost = R2_BASE;
+  env.remotePathTemplate = '{model}/resolve/{revision}/';
+}
 
 const sha1 = (s) => createHash('sha1').update(s).digest('hex');
 
@@ -61,7 +69,7 @@ if (cache.__config !== CONFIG_SIG) {
 
 // dtype 'q8' → onnx/model_quantized.onnx (the file we self-host). Node would
 // otherwise default to the full fp32 model.onnx.
-const extractor = await pipeline('feature-extraction', MODEL_ID, { revision: REVISION, dtype: 'q8' });
+const extractor = await pipeline('feature-extraction', FETCH_ID, { revision: REVISION, dtype: 'q8' });
 
 let embedded = 0;
 let reused = 0;
