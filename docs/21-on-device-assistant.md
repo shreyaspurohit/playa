@@ -1,267 +1,246 @@
 ---
-title: On-device assistant ("Ask")
-date: 2026-08-14
-status: accepted — phase 1 + phase 2 implemented (downloadable WebGPU model self-hosted on Cloudflare R2, wasm hash-pinned, code-split chunk)
+title: On-device "Ask" (semantic search)
+date: 2026-08-14 (rewritten 2026-08-16 after the generative approach was dropped)
+status: accepted — shipped as opt-in on-device semantic search. A generative LLM was built end-to-end, evaluated, and rejected (see "Why not an LLM"); revisit 2027.
 ---
 
-# On-device assistant ("Ask")
+# On-device "Ask" (semantic search)
 
 ## Overview
 
-An **opt-in, fully on-device** natural-language "Ask" surface: users type a
-question ("where's coffee near me open now?", "what's on tonight at 9?", "chill
-lounges near my camp") and get an answer grounded in the data the app already
-holds — camps, events (with parsed times), food classification, art, the map,
-and *their own* saved favorites / journal / meet-spots.
+**Ask** ("Ask Not AI" 🍄 in the UI) is an **opt-in, fully on-device** search. The
+user types a plain-English question — *"where can I relax"*, *"late-night
+music"*, *"somewhere warm to get a drink"* — and gets the camps, events, and art
+that fit, **ranked by meaning** rather than exact keywords, with optional
+**On now** and **Near me** filters. It is gated behind a one-time ~50 MB model
+download; after that it works offline. Nothing about the question or the data
+leaves the device.
 
-Two hard commitments shape every decision:
+Under the hood it is **semantic search, not a chatbot**:
 
-1. **No cloud, ever.** Nothing about a question or the camp data leaves the
-   device. This preserves the whole project's privacy/ToS posture (a cloud LLM
-   would ship copyrighted camp text to a third party — see
-   [13-tos-compliance.md](./13-tos-compliance.md) and
+- a small **MiniLM embedding model** (`all-MiniLM-L6-v2`, ~23 MB q8) runs via
+  **`@huggingface/transformers`** on **CPU/WASM** (so it runs on every browser,
+  including iPhone — no WebGPU),
+- the app embeds the typed query and ranks it against **vectors precomputed at
+  build time** for every camp/event/art, using an **`@orama/orama`** vector
+  index.
+
+Because it only ever ranks **real records**, it **cannot hallucinate** — the
+worst case is an imperfect ranking, never an invented camp.
+
+Two commitments shape it:
+
+1. **No cloud, ever.** Nothing leaves the device. A cloud model would ship
+   copyrighted camp text to a third party and re-open the §5/§6 ToS questions the
+   rest of the app avoids ([13-tos-compliance.md](./13-tos-compliance.md),
    [15-data-sources.md](./15-data-sources.md)).
-2. **Foreground-only, zero background cost.** Inference runs *only* while the
-   app is open and visible. No service-worker inference, no background tasks,
-   no wake-locks. A model is loaded lazily on first use and released when the
-   tab is hidden, so there is never idle battery/GPU drain (D2).
+2. **Opt-in, zero idle cost.** Nothing loads until the user opens Ask and
+   accepts the download; embedding runs only on a typed query. No background
+   task, no wake-lock. The regular on-screen search is untouched and always
+   available.
 
-The generative model is never the source of truth. It phrases and routes; the
-app's structured data is the authority, and answers cite the real cards the
-user can tap. This is what lets a phone-sized (~1B) model be useful without
-hallucinating camp facts.
+## Why not an LLM
+
+The first build of this feature *was* a generative assistant — a tiny LLM that
+phrased answers grounded in retrieved records. We built it end-to-end across two
+tiers and then **removed all of it**. Recording why, because it is the crux of
+this ADR and worth re-checking as the ecosystem moves.
+
+**What we tried**
+
+- **Tier 1 — the browser's built-in model** (Chrome's `LanguageModel` / Gemini
+  Nano). Zero hosting, worked on desktop Chrome.
+- **Tier 2 — a downloadable WebGPU model** (WebLLM / MLC: Llama-3.2-1B,
+  gemma3-1b, Qwen3-1.7B, q4f16), self-hosted on Cloudflare R2, code-split,
+  wasm-hash-pinned — the full machinery.
+- **Tier 3 — a keyword/retrieval fallback** for everything else.
+
+**Why it lost**
+
+1. **The output was unreliable, even with perfect grounding.** Handed a correct
+   list of records and told to "answer only from this," Gemini Nano still replied
+   *"I could not find it in the data."* A ~1B model does not reliably follow
+   strict grounding or extract a clean list; its prose was routinely **worse than
+   the grounded results underneath it**.
+2. **The reachable audience was almost nobody.** The WebGPU download tier needs
+   `maxStorageBuffersPerShaderStage ≥ 10`, which WebLLM hardcodes. Only **Chromium
+   desktop** exposes 10 — **Firefox, Safari, and every iPhone/iPad cap at 8** (all
+   iOS browsers are WebKit). So a 600–900 MB download reached, in practice, only
+   desktop-Chrome users — a sliver of a Burner audience that is overwhelmingly on
+   iPhones.
+3. **The hard queries were the wrong job for it.** Precise questions like "camps
+   open at 8am on Aug 31" are exactly what a tiny LLM is worst at, and are already
+   answered deterministically by the Schedule/Food views. The model added nothing
+   there.
+4. **The useful part was always the retrieval, not the generation.** Every honest
+   answer's value came from the grounded records. Once we accepted that, the
+   generative layer was pure cost (size, fragility, narrow reach) for negative
+   value.
+
+**What semantic search gives instead:** the "understands what I mean" benefit
+(the reason to want AI here) **reliably**, on **every** browser, at **~25 MB**
+instead of ~900 MB, with **zero hallucination**. So the whole generative stack —
+`@mlc-ai/web-llm`, the R2 LLM weights, the capability/WebGPU tiering, the Chrome
+built-in path, the keyword fallback — was deleted and replaced with the design
+above.
 
 ## Decisions
 
-### D1 — Opt-in, off by default, on-device only
+### D1 — Opt-in, download-gated, one path
 
-The assistant ships **off**. It surfaces as an "Ask" entry the user chooses to
-open; nothing loads a model or runs inference until they do. There is no cloud
-fallback and no "bring your own API key" mode — a cloud path would break the
-no-data-leaves-device promise and re-open the §5/§6 ToS questions we spent the
-rest of the app avoiding. If we ever reconsider, it is a new ADR, not a flag.
+Ask ships **off**. Opening it shows a size-disclosed **download prompt** and
+nothing else; on accept it downloads the model + runtime + vectors, then works
+offline. There is **no fallback tier** inside Ask — either the model is
+downloaded (search works) or it is not (the prompt). The app's regular on-screen
+search covers everyone who does not opt in, so Ask does not need its own
+degraded mode. A cloud path stays out of scope (a new ADR, not a flag).
 
-### D2 — Foreground-only lifecycle (no background drain)
+### D2 — Semantic search, not generation
 
-This is a first-class requirement, not an optimization.
+Ranking is by **embedding similarity over real records**, so results are always
+genuine cards. No text is generated; there is nothing to hallucinate and no
+"answer" to be wrong. This is what makes the feature trustworthy enough to ship
+without a per-answer "this may be wrong" hedge (the standing "verify on the
+directory" guidance in the About modal still applies).
 
-- The model backend is created **lazily** on the first question, never at app
-  boot.
-- Inference only runs in response to a user action in the foreground.
-- On `document.visibilitychange` → hidden (tab backgrounded, phone locked, app
-  switched), any in-flight generation is **aborted** and the session is
-  released so the GPU/CPU and memory are freed.
-- The **service worker never runs inference.** It only ever precached the app
-  shell (see [07-offline-pwa.md](./07-offline-pwa.md)); the assistant adds
-  nothing to it.
-- No `navigator.wakeLock`, no timers, no periodic-background-sync. If the app
-  is not open and visible, the assistant consumes nothing.
+### D3 — Stack: transformers.js (CPU/WASM) + MiniLM + Orama
 
-### D3 — Tiered backend, best-effort per platform
+- **Embeddings:** `@huggingface/transformers` running `all-MiniLM-L6-v2` (q8,
+  384-dim). **CPU/WASM only** (`env.backends.onnx.wasm`, `numThreads = 1`) so it
+  needs no WebGPU and runs on **every** browser including iOS — the exact
+  constraint that killed the LLM tier. Embedding one short query is sub-100 ms.
+- **Vector search:** `@orama/orama` (`mode: 'vector'`), so we do not hand-roll
+  cosine/index code.
+- Both are pinned runtime deps, **code-split** into `semantic-backend.js` (see
+  D5) so they never touch the main bundle.
 
-Support is a graceful cascade, resolved at question time by capability
-detection — never by user-agent sniffing:
+### D4 — Self-host the model + runtime on Cloudflare R2
 
-1. **Browser built-in model** — if the platform exposes a built-in on-device
-   LLM API (Chrome/Chromium `LanguageModel` / Prompt API, Gemini Nano), use it.
-   The browser owns the model and its download; the app calls it with no weight
-   hosting and **no CSP change**. Covers desktop Chrome/Edge-Chromium and
-   Android Chrome. (Chrome 148+, May 2026.)
-2. **Downloadable WebGPU model** *(phase 2 — see D6)* — where no built-in model
-   exists but WebGPU does (Safari/iOS 26+, Firefox, Chromium without the flag),
-   offer an **explicit opt-in download** of a small quantized model
-   (WebLLM/MLC or transformers.js), cached for offline reuse. Size is disclosed
-   **before** any bytes download.
-3. **Retrieval-only fallback** — everywhere else (no built-in model, no WebGPU,
-   pre-iOS-26, or the user declines the download): answer **without generation**
-   by running the question through the retrieval layer (D4) and returning ranked
-   real cards plus deterministic computed facts ("3 coffee camps open now near
-   you"). Always available, offline, on any device.
+Same hosting rationale as before: an R2 bucket exposed public-read via
+`models.purohit.dev` (read-only to the world; free egress; CORS set for the
+site + `localhost` for dev). Hosted assets: the MiniLM model files under
+`all-MiniLM-L6-v2/resolve/main/…` (HuggingFace layout, which transformers.js
+expects) and the ONNX Runtime **wasm variants** under `ort/<version>/` (host all
+four — the browser picks one; hosting only some 404s mid-load). Total one-time
+download ≈ **50 MB** (model + tokenizer + ORT wasm + the vectors file), disclosed
+before the user accepts, cached for offline reuse. Runbook + upgrade steps:
+[dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md).
 
-The value ladder is deliberate: even tier 3 (zero model) is useful, so the
-feature is never "broken" — it just gets more conversational as the platform
-allows.
+### D5 — Vectors: build-time, incremental, shipped as a separate file
 
-### D4 — Retrieval grounding is the source of truth
+- **Build-time embedding.** `client/scripts/embed.mjs` embeds every shipped
+  camp/event/art with the **same** MiniLM model (native `onnxruntime-node`, fast)
+  and writes int8-quantized vectors. It is **incremental**: a content-hash cache
+  (`data/embeddings/cache.json`) re-embeds only records whose text changed, so a
+  rebuild embeds ~nothing. The cache is gated by a config signature — any change
+  to the model/revision/dtype/pooling/dim re-embeds everything. In CI the cache
+  is persisted across nightly runs via `actions/cache` (only `cache.json`, which
+  holds int8 vectors keyed by *text hash* — never `records.json`, which has
+  source text). Embedding is gated behind `BM_EMBEDDINGS=1` (set by the `make`
+  build targets and the CI build job, off for the test suite). See
+  `builder.py::_write_embeddings`.
+- **Build/runtime compatibility check.** The payload carries a `sig`
+  (model@revision + dtype/pooling/normalize/dim) that must equal
+  `embedModel.ts::EMBED_SIG`; the client **rejects a mismatch** rather than
+  ranking against a stale embedding space after a partial upgrade.
+- **Separate file, not inlined.** The ~4–5 MB of vectors ship as
+  **`site/embeddings.json`**, fetched **only when the user opts into the
+  download** — so `index.html` stays ~2 MB for every visitor who never opens Ask.
+  A cheap `<meta name="bm-embeddings">` tells the client the index exists without
+  fetching it.
+- **Code-split chunk.** transformers.js + orama build to `semantic-backend.js`
+  via a second esbuild entry, copied to `site/` by
+  `builder.py::_copy_semantic_backend`, loaded at runtime through a
+  runtime-specifier dynamic `import()` (`semanticLoader.ts`) so it stays out of
+  the main bundle and is not in the SW precache SHELL.
+- **Offline across deploys.** Once fetched, `semantic-backend.js` and
+  `embeddings.json` live in the durable `playa-ask-v1` runtime cache rather than
+  the nightly versioned shell cache. Transformers.js's `transformers-cache`
+  holds the model/runtime and is likewise preserved. Activation prunes only old
+  `playa-v…` shell caches; **Clear all local data** explicitly removes both Ask
+  caches.
 
-Regardless of tier, a question is first turned into a **retrieval** over the
-in-memory data the app already indexes: camp/event/art haystacks, tag filters,
-`display_time`/`parsed_time`, food classification + live "open now", map
-addresses + Near-Me distances, and the user's own favorites, journal, and meet
-spots. When a generative tier is available, the retrieved records are passed as
-grounding context and the model is instructed to answer **only** from them and
-to reference cards by name; the UI renders those as tappable links to the real
-cards. This keeps a tiny model honest and makes every answer verifiable, which
-also satisfies the app's standing "always verify on directory.burningman.org"
-disclaimer.
+### D6 — Filters: On now / Near me (reuse existing infra)
 
-### D5 — Platform floor and model sizing
+Two toggles refine results, reusing what the app already has:
 
-- **iOS/iPadOS 26+** is the floor for the WebGPU tier (WebGPU shipped there in
-  Safari/Tahoe 26); older iOS gets retrieval-only. This is detected, not
-  assumed.
-- On phones, only **~1B** aggressively-quantized models are offered — iOS
-  enforces a hard per-tab memory cap and larger models OOM-kill the tab. The
-  download UI picks a device-appropriate size; a failed load falls back to
-  tier 3 rather than crashing.
-- **The download is only offered when the model can actually run.** Presence of
-  `navigator.gpu` is necessary but not sufficient: our q4f16 models need the
-  WebGPU **`shader-f16`** feature, which some Safari/Firefox/GPU combinations
-  lack. `capabilities.ts::webgpuCanRunF16()` acquires an adapter and checks
-  `adapter.features.has('shader-f16')` **before** the download button appears, so
-  a user is never invited to pull ~600 MB onto a device that would only fall back
-  to smart search. If the probe fails, the surface silently stays in the
-  retrieval-only tier — no error, no guilt-trip.
+- **On now** — keeps events whose `eventAvailability(e, now())` is `now`/`soon`
+  (the same logic Food/Schedule use). Events also carry an **on now** /
+  **starting soon** badge in any search.
+- **Near me** — opt-in GPS (`useGeolocation`), then sorts results by
+  `haversineMeters` from the user to each record's BRC address
+  (`addressToLatLng`), showing distance. Records without a placeable address drop
+  out while it is on.
 
-### D6 — Weight delivery + integrity *(implemented: self-host on Cloudflare R2, wasm hash-pinned, code-split)*
+### D7 — Honest framing & privacy
 
-The app is a single self-contained `index.html` and the build inlines one IIFE
-bundle. The built-in-model tier (D3.1) needs neither a network host nor any code
-delivery change — the browser has the model. The downloadable tier (D3.2) needs
-to (a) fetch weights + wasm from somewhere, and (b) ship ~6 MB of web-llm runtime
-without burdening every non-AI user.
+The surface states plainly that Ask runs entirely on the device and results are
+this app's data. Because nothing leaves the device, the app's no-cloud /
+no-tracking claims stay accurate. The About modal's "what to trust less" +
+"verify on the directory" guidance covers Ask alongside tags and event times.
 
-**CSP note (corrected):** there is currently **no CSP enforced** on this
-deployment — no `http-equiv` meta in the template and no edge/CDN CSP header (as
-of 2026-08). So fetching from the model origin needs no CSP change today. CORS on
-the R2 custom domain already returns `access-control-allow-origin:
-https://playa.purohit.dev`. **If** a CSP is ever introduced (edge header or meta),
-it MUST include: `connect-src https://models.purohit.dev`, `script-src
-'wasm-unsafe-eval'` (WebGPU/WASM compile), and `worker-src 'self' blob:`.
+### D8 — Revisit in 2027
 
-**Code delivery — second esbuild entry, not full `splitting:true`.** To keep
-web-llm out of the inlined main bundle we add a **second esbuild entry point**
-(`src/assistant/webllm.ts` → `dist/webllm-backend.js`, ESM) rather than switching
-the whole app to `format:'esm' + splitting:true`. The Python builder copies the
-chunk next to `index.html`; the main bundle loads it via a dynamic `import()`
-with a **runtime-computed specifier** (`webllmLoader.ts`) so esbuild leaves it
-external. Result: the core app stays a single inlined IIFE (preserving the
-single-file value for everyone), and web-llm's ~6 MB downloads **only** when a
-user opts into the model. The chunk is same-origin, so the existing service
-worker runtime-caches it on first use (offline afterward); it is deliberately
-**not** in the SW precache SHELL, so non-AI users never pay for it.
+The generative approach was rejected against **2026** realities. Re-evaluate at
+2027 prep, because several of the blockers are moving:
 
-**Storage: self-host on Cloudflare R2** (chosen over a user-provided-file flow
-for the far better UX of a one-tap download). Concretely:
+- **Small models are improving** — a 2–3B on-device model with reliable
+  instruction-following could add real value *on top of* the semantic results (a
+  one-line summary, a natural-language filter), where 2026's 1B models added
+  negative value.
+- **WebGPU limits may equalize** — if Firefox/WebKit raise
+  `maxStorageBuffersPerShaderStage` to 10 (and iOS WebGPU matures), the download
+  tier's reach stops being desktop-Chrome-only.
+- **Browser built-in models** (Chrome's Prompt API, an eventual Safari/WebKit
+  equivalent) may become capable and widespread enough to use with no hosting.
 
-- **Storage.** A Cloudflare **R2** bucket, exposed **public-read** via a custom
-  domain (e.g. `models.purohit.dev`). R2 public buckets are **read-only to the
-  world by construction** — anonymous writes are impossible; overwriting a file
-  requires the owner's Cloudflare credentials. This alone defeats the
-  "someone swaps the model in an open bucket" threat unless the *account* is
-  compromised (same trust boundary as the whole deployment). Egress is free on
-  R2, so a couple-GB file at friends scale costs pennies.
-- **Integrity — pin the wasm library (the only executable asset).** For each
-  model the app pins a **SHA-256 of the wasm library** in
-  `client/src/assistant/modelCatalog.ts`, and `webllm.ts::verifyModelLib()`
-  fetches + hashes the bytes and **fails closed** on mismatch before the engine
-  instantiates. The wasm is the one asset that is real code, so this is the
-  high-value pin. The pin lives in the app, deployed through the trusted CI →
-  Pages path, so integrity is anchored to the app, not the bucket. See
-  [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md) for how the
-  hashes are generated and kept in sync with the WebLLM version.
-- **Weights are data, not code.** The WebGPU/WASM *runtime* ships in the
-  code-split chunk (from CI, never from the bucket), so a tampered *weight* file
-  cannot execute code — worst case is poisoned output (mitigated by D4 grounding
-  + D7 disclaimer), not RCE. Weight shards are therefore **not** individually
-  pinned (WebLLM exposes no per-shard verification hook); pinning
-  `ndarray-cache.json` per model is a documented future option if desired.
-
-The rejected alternative — **(b) user-provided file** loaded from disk via a
-WASM runtime — needs no host but has worse UX and shifts trust to the user's
-download source; kept on record only as a fallback if hosting ever becomes
-undesirable.
-
-**Chosen models** (WebLLM `prebuiltAppConfig` ids, q4f16_1) — hosted at
-`https://models.purohit.dev/<model_id>/`, wasm libs at
-`https://models.purohit.dev/libs/v0_2_84/`:
-
-| Tier | model_id | download | WebGPU VRAM |
-|---|---|---|---|
-| phone default (≥6 GB RAM) | `Llama-3.2-1B-Instruct-q4f16_1-MLC` | 672 MB | 879 MB |
-| ultra-light / low-RAM phone | `gemma3-1b-it-q4f16_1-MLC` | 574 MB | 711 MB |
-| desktop default | `Qwen3-1.7B-q4f16_1-MLC` | 939 MB | 2037 MB |
-
-Device gating (`modelCatalog.ts::offerFor`): phones are offered only the two 1B
-models (the 1.7B needs ~2 GB VRAM and reliably OOMs a mobile tab, D5); the
-recommended default scales with `navigator.deviceMemory`. Sizes are the real
-measured folder sizes and are disclosed **before** any download; the download is
-opt-in and cached (Cache API) for offline reuse. Phase 1 (D3.1 + D3.3) remains
-fully functional without any of this.
-
-**Download lifecycle nuance (D2 boundary).** WebLLM's `CreateMLCEngine` exposes
-no abort hook for an in-progress download, so a model download the user
-explicitly started may finish even if they close the Ask surface; completed
-shards are cached, so this is at worst one extra completed download the user
-asked for. What D2 strictly guarantees remains intact: **no model loads without
-an explicit tap, no inference runs in the background, and the loaded model is
-unloaded (`engine.unload()`) when the tab is hidden or the surface closes.**
-
-### D7 — Honest framing and privacy disclosure
-
-The Ask surface states plainly: answers are generated on-device by a small
-model, may be wrong, and should be verified on the real cards / the directory.
-The About modal's existing "what to trust less" list gains the assistant.
-Because nothing leaves the device, the app's no-cloud/no-tracking claims remain
-accurate; the built-in-model tier's model download (if any) is performed by the
-browser itself, not by the app, and is disclosed as such.
-
-### D8 — Phasing
-
-- **Phase 1 (implemented):** capability detection, the retrieval/grounding
-  engine, the foreground-only session lifecycle, the Ask UI, the built-in-model
-  tier (D3.1), and the retrieval-only tier (D3.3). No new runtime dependency in
-  the main bundle, works offline, ships in the single file.
-- **Phase 2 (implemented):** the downloadable WebGPU model tier — `@mlc-ai/web-llm`
-  pinned at `0.2.84`, code-split into `webllm-backend.js` (loaded only on opt-in),
-  the self-hosted R2 weights + wasm libs, the wasm SHA-256 integrity pins, and the
-  opt-in download UI (size disclosed up front, progress, offline caching, OOM
-  fallback). Operational runbook:
-  [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md).
+**Keep semantic search as the reliable core regardless.** Any future generative
+layer is an *optional enhancement on top of* it, never a replacement — the
+retrieval is what makes answers trustworthy. If we add one, it is an amendment to
+this ADR with a fresh capability check, not a silent swap.
 
 ## Failure modes & trade-offs
 
-- **Hallucination.** Mitigated by D4 grounding, the D7 disclaimer, and citing
-  real cards; not eliminated. The model is framed as a convenience, never
-  authority.
-- **iOS memory OOM.** Model load is wrapped; a failure falls back to tier 3
-  and surfaces a plain "your device couldn't run the model" note. Never a
-  hard crash of the app.
-- **No capable platform.** Tier 3 always answers, so the feature degrades to
-  "smart search", never to nothing.
-- **Offline.** Once a model is present (built-in or downloaded+cached), the
-  whole feature works offline — which is the point on playa. Tier 3 is offline
-  unconditionally.
-- **Model download abandoned/expensive.** Phase-2 concern: size disclosed up
-  front, resumable/cached, and never auto-started.
-- **Scope creep toward a chatbot.** Deliberately resisted — this answers
-  questions about *this* data, not open-ended conversation.
+- **Imperfect ranking**, not hallucination — the worst case is a less-relevant
+  card, and the real card is always what's shown.
+- **~50 MB download** — disclosed up front, opt-in, cached for offline reuse; the
+  regular search serves anyone who declines.
+- **The unencrypted vectors file was evaluated and deemed non-sensitive** (so it
+  ships as plaintext). `site/embeddings.json` covers every source and is publicly
+  fetchable, but it contains only **opaque record keys + non-invertible int8
+  vectors** — no names, descriptions, or locations. The keys are useless to an
+  outsider: directory IDs are already the public `/camps/<id>/` URLs, and API
+  uids fetch nothing without `BM_API_KEY`. Vectors are not practically
+  reversible to text, and nothing from a source the user hasn't unlocked is ever
+  indexed (`allow(key)` gates on the decrypted `recordMap`) or displayed. So it
+  exposes nothing an outsider couldn't already obtain — not private data. (If the
+  bar ever tightens, the fix is to gate the vectors per-source like `camps-data`;
+  recorded so this isn't re-flagged.)
+- **No index in a build** — if `BM_EMBEDDINGS` was off, the meta tag is empty and
+  Ask shows an "unavailable" note instead of a broken download.
+- **Scope creep toward a chatbot** — deliberately resisted; this searches *this*
+  data, it does not converse.
 
 ## Code references
 
-Phase 1 (built-in / retrieval tiers):
-
-- `client/src/assistant/capabilities.ts` — detect the built-in `LanguageModel`
-  API + WebGPU + device hint; classify the available tier.
-- `client/src/assistant/retrieval.ts` — pure question → grounded context over
-  camps/events/art/food/favorites/journal/map. No model, fully testable.
-- `client/src/assistant/session.ts` — foreground-only backend session: lazy
-  create, `prewarm()`, abort/release on `visibilitychange` hidden (D2).
-- `client/src/hooks/useAssistant.ts` — wires capability + retrieval + session +
-  the download tier into UI state.
-- `client/src/components/AskView.tsx` — the opt-in Ask surface + download panel.
-
-Phase 2 (downloadable WebGPU model):
-
-- `client/src/assistant/modelCatalog.ts` — pinned version, R2 origin, per-model
-  size/VRAM/wasm-SHA-256, and `offerFor()` device gating. Pure + tested.
-- `client/src/assistant/integrity.ts` — `sha256Hex` / `matchesSha256` (D6). Pure.
-- `client/src/assistant/webllm.ts` — the web-llm backend behind the same
-  `AssistantBackend` interface; `verifyModelLib()` then `CreateMLCEngine`. **This
-  file is the code-split boundary** (statically imports `@mlc-ai/web-llm`).
-- `client/src/assistant/webllmLoader.ts` — in the MAIN bundle; dynamic-`import()`s
-  the chunk via a runtime specifier so esbuild keeps it external.
-- `client/esbuild.config.mjs` — second entry point → `dist/webllm-backend.js`.
-- `backend/src/playa/builder.py::_copy_webllm_backend` — copies the chunk into
-  `site/` (not inlined, not in the SW precache SHELL).
-- Hosting/upgrade runbook: [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md).
+- `client/src/assistant/embedModel.ts` — pinned model id/revision, R2 origin,
+  ORT version, download size. Pure.
+- `client/src/assistant/semantic.ts` — the code-split backend: configures
+  transformers.js for R2/CPU, loads the embedder, decodes the shipped vectors,
+  builds + queries the Orama index. **Statically imports the heavy libs** (the
+  code-split boundary).
+- `client/src/assistant/semanticLoader.ts` — MAIN-bundle runtime-specifier
+  `import()` of `semantic-backend.js`, keeping the libs external.
+- `client/src/assistant/embeddings.ts` — `hasEmbeddings()` (meta check) +
+  `fetchEmbeddings()` (the separate vectors file).
+- `client/src/hooks/useAssistant.ts` — download-gate state, query → embed →
+  Orama search → mapped camp/event/art results, plus the On-now / Near-me filters
+  and timing badges.
+- `client/src/components/AskView.tsx` — the opt-in Ask surface (download panel,
+  filters, results).
+- `client/scripts/embed.mjs` — build-time incremental embedder.
+- `backend/src/playa/builder.py` — `_write_embeddings` (records → node embed →
+  `site/embeddings.json`, `BM_EMBEDDINGS`-gated) and `_copy_semantic_backend`.
+- `client/esbuild.config.mjs` — second entry point → `dist/semantic-backend.js`.
+- Hosting / upgrade runbook:
+  [dev/on-device-model-hosting.md](./dev/on-device-model-hosting.md).

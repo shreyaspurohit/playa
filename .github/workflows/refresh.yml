@@ -139,6 +139,20 @@ jobs:
           # cache schema can change even when upstream GeoJSON does not.
           key: brc-gis-v3-${{ hashFiles('backend/src/playa/gis.py') }}-${{ steps.gis-revision.outputs.sha }}-${{ steps.gis-revision.outputs.scope }}
 
+      # Incremental Ask embeddings (ADR 21 D5): persist ONLY the content-hash
+      # cache (int8 vectors keyed by text hash — no source text) so a nightly
+      # runner re-embeds just what changed instead of all ~9.5k records. NOT
+      # records.json (contains source text) and NOT vectors.json (regenerated).
+      # Rolling key: unique per run (always saves a fresh cache); restore-keys
+      # falls back to the latest cache for the current embed config.
+      - name: Restore embeddings cache
+        uses: actions/cache@v6
+        with:
+          path: data/embeddings/cache.json
+          key: ask-embeddings-v1-${{ hashFiles('client/scripts/embed.mjs', 'client/src/assistant/embedModel.ts') }}-${{ github.run_id }}
+          restore-keys: |
+            ask-embeddings-v1-${{ hashFiles('client/scripts/embed.mjs', 'client/src/assistant/embedModel.ts') }}-
+
       - name: Install client deps
         run: npm ci
         working-directory: client
@@ -352,6 +366,10 @@ jobs:
           SITE_TIERS: ${{ secrets.SITE_TIERS }}
           # BURN_OPEN comes from $GITHUB_ENV via the Resolve step
           # above (D13). The Python builder reads it directly.
+          # Generate the Ask semantic-search vectors (ADR 21). The Make
+          # targets set this locally; CI calls the builder directly, so set
+          # it here or production ships without a search index.
+          BM_EMBEDDINGS: '1'
         run: python3 -m playa all
 
       # Uploads site/ (index.html + CNAME + robots.txt + .nojekyll) from

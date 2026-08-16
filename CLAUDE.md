@@ -41,14 +41,14 @@ change touches one of these subsystems.
 - [`docs/18-mobile-scroll-chrome.md`](docs/18-mobile-scroll-chrome.md) — contextual sticky controls + direction-aware mobile header collapse
 - [`docs/19-food-classification-audit.md`](docs/19-food-classification-audit.md) — local Ollama semantic audit + ID-only Food exclusion proposals
 - [`docs/20-journal.md`](docs/20-journal.md) — accepted design for a year-owned offline journal, contextual notes, timeline/search, and Dropbox archive
-- [`docs/21-on-device-assistant.md`](docs/21-on-device-assistant.md) — opt-in, no-cloud, foreground-only "Ask" assistant grounded in app data; tiered built-in-model / WebGPU-download (phase 2) / retrieval-only
+- [`docs/21-on-device-assistant.md`](docs/21-on-device-assistant.md) — opt-in, no-cloud "Ask" on-device semantic search (transformers.js + MiniLM + Orama, download-gated); why a generative LLM was built then rejected (revisit 2027)
 - [`docs/revocation-plan.md`](docs/revocation-plan.md) — operational runbook for takedowns
 - [`docs/dev/client-architecture.md`](docs/dev/client-architecture.md) — compact client implementation reference
 - [`docs/dev/html-scraping-patterns.md`](docs/dev/html-scraping-patterns.md) — directory HTML parser patterns
 - [`docs/dev/site-ui.md`](docs/dev/site-ui.md) — compact data-embed and UI reference
 - [`docs/dev/mobile-visual-testing.md`](docs/dev/mobile-visual-testing.md) — mobile visual-review runbook, including safe headless screenshots and encrypted-build restoration
 - [`docs/dev/annual-map-update.md`](docs/dev/annual-map-update.md) — canonical yearly city-geometry/GIS-layer refresh and release checklist
-- [`docs/dev/on-device-model-hosting.md`](docs/dev/on-device-model-hosting.md) — R2 model/wasm provenance, upload, SHA-256 pins, and WebLLM-version upgrade runbook (ADR 21 phase 2)
+- [`docs/dev/on-device-model-hosting.md`](docs/dev/on-device-model-hosting.md) — R2 hosting for the Ask embedding model + ONNX runtime: provenance, upload, and version-upgrade runbook (ADR 21)
 - [`docs/roadmap.md`](docs/roadmap.md) — future ideas, not implemented architecture
 
 When adding a new subsystem worth of decisions, follow the template in
@@ -190,11 +190,11 @@ as a dependency, so you don't need to think about it day to day.
 — it provides the iOS Add-to-Home-Screen instructions + native iOS 26+
 install dialog so we don't have to maintain hand-rolled instructions
 that rot every iOS release. The exact-pinned, Apache-2.0
-`@mlc-ai/web-llm` (`0.2.84`) powers the opt-in on-device-AI download tier
-(ADR 21 phase 2); it is genuinely code-split into a separate
-`webllm-backend.js` chunk (see the bundle-cost note below) and loaded
-only when a user opts into the model download — never in the main bundle.
-`esbuild`, `typescript`, `tsx`,
+`@huggingface/transformers` + MIT `@orama/orama` power the opt-in "Ask"
+on-device **semantic search** (ADR 21); they are genuinely code-split into
+a separate `semantic-backend.js` chunk (see the bundle-cost note below) and
+loaded only when a user opts into the model download — never in the main
+bundle. `esbuild`, `typescript`, `tsx`,
 `happy-dom` as dev deps. Lives at the repo root in `client/`, sibling
 of `playa/` — not nested, because it's an npm/TS project, not a
 Python module. Dev deps restored via `npm ci`.
@@ -210,18 +210,19 @@ switch esbuild to `format: 'esm'` + `splitting: true` and emit
 chunks to `site/` for the SW to serve on demand. Not worth the work
 for those two today.
 
-**Exception — `@mlc-ai/web-llm` IS code-split.** The on-device-AI runtime
-(ADR 21 phase 2, ~6 MB) is too big to inline for every user, so esbuild
-builds a **second entry point** (`client/src/assistant/webllm.ts` →
-`dist/webllm-backend.js`, ESM). The Python builder copies it to
-`site/webllm-backend.js` (gitignored, uploaded with the Pages artifact,
-**not** in the SW precache SHELL). The main bundle loads it via a
-dynamic `import()` with a runtime-computed specifier
-(`assistant/webllmLoader.ts`) so esbuild leaves it external — web-llm
-never touches the main bundle, and downloads only when a user opts into
-the model. This is a lighter alternative to full `splitting: true` that
-keeps the core app single-file. See ADR 21 D6 +
-`docs/dev/on-device-model-hosting.md`.
+**Exception — the "Ask" semantic-search libs ARE code-split.** The Ask
+runtime (`@huggingface/transformers` + `@orama/orama`, ADR 21) is too big
+to inline for every user, so esbuild builds a **second entry point**
+(`client/src/assistant/semantic.ts` → `dist/semantic-backend.js`, ESM;
+`onnxruntime-node` + `sharp` externalized). The Python builder copies it to
+`site/semantic-backend.js` (gitignored, uploaded with the Pages artifact,
+**not** in the SW precache SHELL). The main bundle loads it via a dynamic
+`import()` with a runtime-computed specifier (`assistant/semanticLoader.ts`)
+so esbuild leaves it external — the libs never touch the main bundle, and
+load only when a user opts into the model download. This is a lighter
+alternative to full `splitting: true` that keeps the core app single-file.
+The per-record vectors ship separately as `site/embeddings.json` (fetched
+only on opt-in). See ADR 21 D3–D5 + `docs/dev/on-device-model-hosting.md`.
 
 ## Package layout (`backend/src/playa/`)
 
@@ -291,6 +292,7 @@ wrapping them in classes would have been pure ceremony.
 | `MIN_CAMPS`          | `500`                         | Primary-source build safety rail. `0` is for intentionally small local fixtures only; never set it in CI. |
 | `SYNC_PROVIDER`      | *(unset)*                     | Optional cloud backup provider. Set to `dropbox` with `SYNC_CLIENT_ID`; unset emits no sync UI or provider traffic. |
 | `SYNC_CLIENT_ID`     | *(unset)*                     | Public Dropbox App key for PKCE; configure an App-folder app and register the deployed/local redirect URI. |
+| `BM_EMBEDDINGS`      | `0` / unset                   | When `1`, the build embeds camps/events/art (Ask semantic search, ADR 21) via `client/scripts/embed.mjs` and ships `site/embeddings.json`. Set by the `make` build targets (rebuild/build/dev/fetch); left off for the test suite, which calls the builder directly. Incremental via `data/embeddings/cache.json`. |
 
 Local dev: leave `SITE_PASSWORD` unset to produce a plaintext build for
 quick preview. CI sets both via repo secrets. The API source caches are

@@ -267,6 +267,11 @@ dev: install-backend bundle
 		python3 -m playa all; \
 	fi
 
+# The Ask feature (ADR 21) ships MiniLM vectors; generate them for real site
+# builds. NOT set for the test suite, which calls the builder directly and must
+# not shell out to node / fetch the model. Content-hash cached → incremental.
+rebuild build dev fetch fetch-small: export BM_EMBEDDINGS := 1
+
 rebuild: install-backend bundle gis-prepare
 	python3 -m playa meta
 	python3 -m playa merge

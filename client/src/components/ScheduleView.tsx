@@ -327,7 +327,7 @@ function DayColumn({
         <span class="sched-day-count">{entries.length}</span>
       </h3>
       {entries.length === 0 ? (
-        <div class="sched-empty">nothing starred</div>
+        <div class="sched-empty">Star events to see them here</div>
       ) : (
         <ul class="sched-list">
           {entries.map((e) =>
@@ -611,10 +611,9 @@ export function ScheduleView({
       {nothing ? (
         <div class="empty-state">
           {filtersOn
-            ? 'No starred events match the active filters. Use Clear filters to restore the full schedule.'
-            : <>No starred events yet. Head to Camps, find something interesting,
-              expand its events list, and tap the ☆ next to an event you want to
-              attend. It'll show up here grouped by day.</>}
+            ? 'No events match the active filters — clear them to see the full schedule.'
+            : <>Star events to build your schedule — open a camp in <strong>Camps</strong>,
+              expand its events, and tap the ☆. They’ll show up here grouped by day.</>}
         </div>
       ) : (
         <>

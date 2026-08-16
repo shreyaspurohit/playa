@@ -94,6 +94,7 @@ export function InfoModal({
       "  • theme, map-layer, distance-unit, and last-viewed-tab preferences",
       "  • your private journal on this device (any Dropbox journal backup is kept)",
       "  • the password cached for this device",
+      "  • the downloaded Ask model and search cache",
       ...(sync.available ? ["  • this device's Dropbox connection (the Dropbox backup is kept)"] : []),
       '',
       "You'll need to re-enter the password.",
@@ -152,11 +153,10 @@ export function InfoModal({
     // too in case the user clicked Clear before ever loading the new
     // build that would have migrated it.
     try { sessionStorage.removeItem(SS.password); } catch {}
-    // Drop the SW-managed cross-origin image cache too — otherwise
-    // "clear all" leaves the on-disk thumbnail bytes for every
-    // starred art piece behind. Fire-and-forget; the reload below
-    // doesn't wait. The SW responds with 'IMAGE_CACHE_CLEARED' but
-    // we don't need that signal — the reload supersedes.
+    // Drop the SW-managed image + Ask caches too — otherwise "clear all"
+    // leaves thumbnails, vectors, and downloaded model/runtime bytes behind.
+    // The legacy message name is kept so an older controlling SW still clears
+    // the image cache during an upgrade. Fire-and-forget; reload supersedes.
     try {
       navigator.serviceWorker?.controller?.postMessage('CLEAR_IMAGE_CACHE');
     } catch { /* no SW or messaging blocked */ }
@@ -343,7 +343,7 @@ export function GuideTab() {
           <li>a dashed <strong>arrow</strong> from your GPS position to any selected marker, with distance, compass bearing, and <strong>walk / bike ETA</strong>.</li>
         </ul>
         <p class="guide-subtle">
-          Location access is optional. GPS is read in-page and never leaves
+          Location access is optional. GPS is read in-page and stays on
           your device. Tap{' '}
           <strong>? Legend</strong> for a deeper read of the grid.
         </p>
@@ -375,8 +375,7 @@ export function GuideTab() {
             in the fragment (<code>#share=&hellip;</code>). Send via
             iMessage / Signal / email. Whoever opens it gets a banner
             offering to import your plans as the friend named after
-            your nickname. Nothing leaves your browser; the URL
-            <em> is</em> the data.
+            your nickname. The URL <em>is</em> the data.
           </li>
           <li>
             <strong>Export</strong> &mdash; downloads a full JSON
@@ -391,7 +390,7 @@ export function GuideTab() {
             yours) or imports the file as a friend (when it doesn't).
             Re-importing the same person always prompts: replace
             with the latest snapshot, or ignore. Latest wins, so
-            stale lists never linger.
+            your lists stay fresh.
           </li>
         </ul>
         <p class="guide-subtle">
@@ -509,9 +508,9 @@ function AboutTab({
             </strong>{' '}
             before acting on anything you see here. Use this tool to{' '}
             <em>narrow down</em> a shortlist of possible camps — not as the
-            source of truth. The optional <strong>Ask</strong> feature runs a
-            small AI model entirely on your device (nothing leaves it); its
-            answers are grounded in this data but can still be wrong — verify the
+            source of truth. The optional <strong>Ask</strong> feature finds
+            camps, events, and art from a plain-English question, entirely on
+            your device; its picks come from this same data — verify them the
             same way.
           </p>
           <p>
@@ -557,7 +556,7 @@ function AboutTab({
           Camp location is shown on {formatReleaseTime(locationPolicy.campReleaseAt)},
           and art location is shown on {formatReleaseTime(locationPolicy.artReleaseAt)}.
           Names, descriptions, schedules, favorites, and public GIS map layers
-          remain available. Events do not carry a separate location coordinate.
+          remain available. Events use their camp’s location.
           {' '}<a
             href="https://innovate.burningman.org/apis-page/"
             target="_blank"
@@ -592,7 +591,7 @@ function AboutTab({
         only when you choose <strong>Use my GPS</strong> on Map or
         <strong> Near me</strong> on Schedule or Food. If granted, your GPS fix
         is read entirely in-page to filter nearby results and compute distance,
-        bearing, and travel estimates — nothing is sent anywhere. Tap an active
+        bearing, and travel estimates. Tap an active
         Near me button again (or Clear filters in Schedule) to restore the full
         list and stop that location watch. Decline and every tab remains usable
         without location-aware features.
@@ -600,8 +599,8 @@ function AboutTab({
       <p>
         <strong>Sharing favorites:</strong> the share URL carries your
         starred camps + events + nickname + home camp + meet spots in
-        its fragment (<code>#share=…</code>). Fragments never hit
-        servers — the data rides the URL itself.
+        its fragment (<code>#share=…</code>). The data rides the URL
+        fragment itself.
       </p>
       <p>
         <strong>Stuck on an old version?</strong> The site is cached
@@ -621,7 +620,7 @@ function AboutTab({
           type="button"
           onClick={onForceRefresh}
           disabled={refreshState === 'checking'}
-          title="Re-fetches the shell from the server into the existing cache, then reloads. Non-destructive: any fetch that fails leaves the old cache entry in place, so you never end up on a broken page."
+          title="Re-fetches the shell from the server into the existing cache, then reloads. Non-destructive: a failed fetch keeps the old cache entry, so your page stays working."
         >
           <span class="action-label">{refreshLabel}</span>
           <span class="action-desc">

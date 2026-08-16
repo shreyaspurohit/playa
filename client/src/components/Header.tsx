@@ -25,7 +25,6 @@ interface Props {
   currentTheme: string;
   onThemeChange: (name: string) => void;
   onInfoClick: () => void;
-  onAskClick: () => void;
   onSyncNow: () => void;
   onSyncConnect: () => void;
   onSyncCancel: () => void;
@@ -42,7 +41,7 @@ interface Props {
 export function Header({
   campTotal, campMatching, artTotal, artMatching,
   view, filterNote, fetchedDate, fetchedAt, version,
-  currentTheme, onThemeChange, onInfoClick, onAskClick, onSyncNow,
+  currentTheme, onThemeChange, onInfoClick, onSyncNow,
   onSyncConnect, onSyncCancel, onSyncDisconnect, infoPulse,
   syncAvailable, syncConnected, syncStatus,
   source, availableSources, onSourceChange,
@@ -63,10 +62,6 @@ export function Header({
           </span>
         </div>
         <div class="topline-right">
-          <button
-            type="button" class="ask-trigger" onClick={onAskClick}
-            title="Ask a question about camps, events, food, and art"
-          >✨ Ask</button>
           <NicknamePill />
           <HeaderMenu
             source={source}

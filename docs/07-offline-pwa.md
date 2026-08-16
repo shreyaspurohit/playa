@@ -38,6 +38,11 @@ shell cache.
   download UI. The cache survives deploys, is capped at 2000 entries (ample
   headroom over the current 327-image set so the whole collection caches
   without churn), and is removed by **Clear all local data**.
+- **Ask uses durable opt-in caches.** `semantic-backend.js` and
+  `embeddings.json` enter `playa-ask-v1` only after setup and survive nightly
+  version changes. Transformers.js owns `transformers-cache` for the model and
+  ONNX runtime. Service-worker activation deletes only old `playa-v…` shell
+  caches, never these durable caches. **Clear all local data** removes both.
 - **Per-URL cache: 'reload' on install + REFRESH_SHELL.** The SW's
   `install` handler explicitly bypasses the HTTP cache (`fetch(url,
   { cache: 'reload' })`) so a brand-new SW installs with bytes from

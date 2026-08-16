@@ -51,6 +51,7 @@ import { useReleaseNotes } from '../hooks/useReleaseNotes';
 import type { Snapshot } from '../utils/exportImport';
 import { InfoModal } from './InfoModal';
 import { AskView } from './AskView';
+import { AskFab } from './AskFab';
 import { MapView } from './MapView';
 import { ScheduleView } from './ScheduleView';
 import { FoodView } from './FoodView';
@@ -1227,7 +1228,6 @@ export function App() {
                 setInfoPulse(false);
                 setInfoOpen(true);
               }}
-              onAskClick={() => setAskOpen(true)}
               onSyncNow={() => { void sync.syncNow(); }}
               onSyncConnect={() => { void sync.connect(); }}
               onSyncCancel={sync.cancelConnect}
@@ -1525,6 +1525,7 @@ export function App() {
         open={askOpen}
         onClose={() => setAskOpen(false)}
         corpus={{
+          source,
           camps: camps ?? [],
           art: art ?? [],
           campFavs: campFavs.favs,
@@ -1533,8 +1534,8 @@ export function App() {
         }}
         onGotoCamp={onGotoCamp}
         onGotoArt={onGotoArt}
-        onGotoJournal={() => goto('journal')}
       />
+      {!askOpen && <AskFab onClick={() => setAskOpen(true)} />}
       <SyncModal
         open={syncOpen}
         sync={sync}

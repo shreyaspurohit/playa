@@ -38,9 +38,9 @@ site/index.html
 site/privacy.html
 site/sw.js
 site/version.txt
-# Code-split on-device-AI chunk (ADR 21 phase 2). Built on the runner from
+# Code-split semantic-search chunk (ADR 21). Built on the runner from
 # client/dist and uploaded with the Pages artifact; never committed.
-site/webllm-backend.js
+site/semantic-backend.js
 
 # === BRC map data from /update-map skill — never commit ===
 # The skill downloads measurements PDF / city plan PDF / GeoJSON /
@@ -77,3 +77,7 @@ __pycache__/
 # secret, not in the tree.
 .env
 .env.local
+
+# Derived semantic-search vectors (embedding cache + output) — never committed
+data/embeddings/
+site/embeddings.json

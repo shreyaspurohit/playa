@@ -81,7 +81,7 @@ describe('source-specific directory disclaimer', () => {
     assert.match(mount.textContent ?? '', /Camp location is shown on August 23 at 12:00 AM PDT/);
     assert.match(mount.textContent ?? '', /art location is shown on August 30 at 12:00 AM PDT/);
     assert.doesNotMatch(mount.textContent ?? '', /selected source|normal\/spirit|Before each cutoff|only that location field is hidden/i);
-    assert.match(mount.textContent ?? '', /Events do not carry a separate location coordinate/);
+    assert.match(mount.textContent ?? '', /Events use their camp’s location/);
     assert.match(mount.textContent ?? '', /Use my GPS/);
     assert.match(mount.textContent ?? '', /Near me/);
     assert.match(mount.textContent ?? '', /stop that location watch/);

@@ -41,33 +41,40 @@ const mainConfig = {
   jsxImportSource: 'preact',
 };
 
-// Downloadable AI backend (ADR 21 phase 2): a SEPARATE ESM chunk holding
-// @mlc-ai/web-llm. NOT inlined — the Python builder copies it next to
-// index.html as `webllm-backend.js`, and the main bundle imports it at runtime
-// only when the user opts into the model download. Keeps web-llm's ~1-2 MB out
-// of the main bundle every non-AI user loads.
-const webllmConfig = {
-  entryPoints: ['src/assistant/webllm.ts'],
+// Downloadable semantic-search backend (ADR 21): a SEPARATE ESM chunk holding
+// @huggingface/transformers + @orama/orama. NOT inlined — the Python builder
+// copies it next to index.html as `semantic-backend.js`, and the main bundle
+// imports it at runtime only when the user opts into the ~35 MB model download.
+// Keeps the embedding/search libs out of the main bundle every other user loads.
+// onnxruntime-node + sharp are Node-only transformers.js deps → externalized.
+const semanticConfig = {
+  entryPoints: ['src/assistant/semantic.ts'],
   bundle: true,
   minify: !watch,
   sourcemap: watch ? 'inline' : false,
   format: 'esm',
   target: ['es2020'],
   platform: 'browser',
-  outfile: 'dist/webllm-backend.js',
+  outfile: 'dist/semantic-backend.js',
   legalComments: 'none',
-  banner: { js: banner([['@mlc-ai/web-llm', 'node_modules/@mlc-ai/web-llm/LICENSE']]) },
+  external: ['onnxruntime-node', 'sharp'],
+  banner: {
+    js: banner([
+      ['@huggingface/transformers', 'node_modules/@huggingface/transformers/LICENSE'],
+      ['orama', 'node_modules/@orama/orama/LICENSE.md'],
+    ]),
+  },
   logLevel: 'info',
 };
 
 if (watch) {
-  for (const cfg of [mainConfig, webllmConfig]) {
+  for (const cfg of [mainConfig, semanticConfig]) {
     const ctx = await esbuild.context(cfg);
     await ctx.watch();
   }
   console.log('[esbuild] watching for changes…');
 } else {
-  for (const cfg of [mainConfig, webllmConfig]) {
+  for (const cfg of [mainConfig, semanticConfig]) {
     const result = await esbuild.build(cfg);
     console.log(`[esbuild] built ${cfg.outfile} (errors: ${result.errors.length}, warnings: ${result.warnings.length})`);
   }
