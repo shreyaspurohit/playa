@@ -511,7 +511,9 @@ function AboutTab({
             source of truth. The optional <strong>Ask</strong> feature finds
             camps, events, and art from a plain-English question, entirely on
             your device; its picks come from this same data — verify them the
-            same way.
+            same way. The 🍄 is a nod to mycelial networks: decentralized and
+            all-connected, which is how Ask works — no cloud, one search across
+            every camp, event, and art.
           </p>
           <p>
             Data is fetched nightly from the public directory and shown here
