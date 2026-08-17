@@ -97,9 +97,28 @@ class APISource:
         if not isinstance(fetched_at, str) or not fetched_at.strip():
             raise RuntimeError(f"API cache {f} has no valid fetched_at timestamp")
 
-        # Group events by hosted_by_camp uid for O(1) attachment.
+        # Group events by hosted_by_camp uid for O(1) attachment. The bulk
+        # endpoint can repeat an EventModel verbatim (observed in the 2026
+        # snapshot), so treat its stable uid as record identity. Do this
+        # before normalization because one legitimate EventModel may expand
+        # into several occurrence-specific Event records below.
         events_by_camp: dict[str, list[Event]] = {}
+        events_seen: dict[str, dict[str, Any]] = {}
+        duplicate_events = 0
         for ev_raw in events_raw:
+            event_uid = ev_raw.get("uid")
+            if event_uid:
+                event_key = str(event_uid)
+                previous = events_seen.get(event_key)
+                if previous is not None:
+                    if ev_raw != previous:
+                        raise RuntimeError(
+                            f"API cache {f} contains conflicting event records "
+                            f"with uid {event_key!r}"
+                        )
+                    duplicate_events += 1
+                    continue
+                events_seen[event_key] = ev_raw
             camp_uid = ev_raw.get("hosted_by_camp")
             if not camp_uid:
                 continue
@@ -107,6 +126,11 @@ class APISource:
             if not evs:
                 continue
             events_by_camp.setdefault(camp_uid, []).extend(evs)
+        if duplicate_events:
+            print(
+                f"  api-{self.year}: ignored {duplicate_events} repeated "
+                "event record(s)"
+            )
 
         denied = _load_denylist(config)
         skipped = 0

@@ -129,6 +129,48 @@ class APISourceLoadTests(unittest.TestCase):
         self.assertEqual([e.id for e in a.events], ["evA1"])
         self.assertEqual([e.id for e in b.events], ["evB1"])
 
+    def test_identical_event_rows_are_attached_once(self):
+        event = {
+            "uid": "evA1", "title": "A workshop", "year": 2024,
+            "hosted_by_camp": "campA",
+            "occurrence_set": [
+                {"start_time": "2024-08-27T10:00:00-07:00",
+                 "end_time":   "2024-08-27T11:00:00-07:00"},
+            ],
+        }
+        self._write(2024, {
+            "camps": [
+                {"uid": "campA", "name": "A", "year": 2024,
+                 "location_string": "6:00 & E"},
+            ],
+            "events": [event, dict(event)],
+        })
+
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
+
+        self.assertEqual([e.id for e in camps[0].events], ["evA1"])
+
+    def test_conflicting_event_rows_with_same_uid_are_rejected(self):
+        event = {
+            "uid": "evA1", "title": "A workshop", "year": 2024,
+            "hosted_by_camp": "campA",
+            "occurrence_set": [
+                {"start_time": "2024-08-27T10:00:00-07:00",
+                 "end_time":   "2024-08-27T11:00:00-07:00"},
+            ],
+        }
+        changed_event = dict(event, title="A different workshop")
+        self._write(2024, {
+            "camps": [
+                {"uid": "campA", "name": "A", "year": 2024,
+                 "location_string": "6:00 & E"},
+            ],
+            "events": [event, changed_event],
+        })
+
+        with self.assertRaisesRegex(RuntimeError, "conflicting event records"):
+            APISource(year=2024).load_snapshot(self.config)
+
     def test_events_with_no_host_are_dropped(self):
         self._write(2024, {
             "camps": [
