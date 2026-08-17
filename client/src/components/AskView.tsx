@@ -97,7 +97,7 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
           <h2 id="ask-title">🍄 Ask Not AI</h2>
           <button class="modal-close" type="button" aria-label="Close" onClick={onClose}>✕</button>
         </div>
-        <p class="ask-myc">connected like mycelium — searching across everything, on your device</p>
+        <p class="ask-myc">connected like mycelium — searching across all playa, on your device</p>
         <div class="modal-body">
           <form class="ask-form" onSubmit={submit}>
             <input
