@@ -2,7 +2,7 @@
 // "1:44 6400', Open Playa") to polar coordinates (bearing from Man +
 // distance in feet) and from there to lat/lng or SVG (x, y).
 //
-// Address grammar in the fetched directory is remarkably permissive:
+// API location-string grammar is permissive:
 //
 //   "7:30 & F"               most common (camps)
 //   "F & 7:30"               also seen (order reversed)
@@ -19,7 +19,7 @@
 //
 // Per-year geometry (ADR D11): every function takes an optional
 // `BrcMapData` to look up letter-set + radii + Golden Spike. Defaults
-// to the directory year's entry so legacy callers keep working.
+// to the current BRC year's entry for source-independent callers.
 import { BRC, type BrcMapData } from './data';
 
 export interface PolarAddress {
@@ -108,7 +108,7 @@ export function parseAddress(raw: string, brc: BrcMapData = BRC): PolarAddress |
   }
 
   // Form 2: `<clock> <distance>` (art in open playa — no street ring).
-  // The directory writes "1:44 6400', Open Playa" for these; we
+  // API snapshots can write "1:44 6400', Open Playa" for these; we
   // capture the clock + feet and label `street` as "Open Playa" so
   // the label-near-Man rendering reads sensibly.
   const m = trimmed.match(CLOCK_DISTANCE_RE);

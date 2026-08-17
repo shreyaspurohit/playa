@@ -36,10 +36,9 @@ live/soon at render.
 > `Event.food_tags`, precise camp-level `Camp.food_tags`, the 34-bucket
 > `FOOD_TYPES` taxonomy, `FoodView`, live availability, search, type filters,
 > event stars/friend stars, Near Me, inline details, shared mockable clock/GPS,
-> and the aggregate-only `playa food-audit`. Current cached data after the 2026
-> precision audit: directory **393/4,167 food events (9%) across 249 camps**;
-> API 2026 **252/2,453 (10%) across 161 camps**. The separate Hours-not-listed
-> population is **90 directory camps + 92 API camps**.
+> and the aggregate-only `playa food-audit`. The current population is derived
+> only from configured annual API snapshots; aggregate counts should be
+> recaptured after each explicit annual refresh.
 
 ## Decisions
 
@@ -87,7 +86,7 @@ properties (per owner direction, 2026-08-09):
      no specific dish. NO drink words here.
 
 An event is a "food event" ⇔ it has ≥1 `food_tag`. The bucket set was chosen
-data-driven against the cached directory events (buckets with real hit counts;
+data-driven against cached API events (buckets with real hit counts;
 recognizable low-count ones like `sushi`/`smores` kept because they'll grow with
 API-year data). Multiple buckets can fire on one event ("Breakfast tacos with
 bacon" → `tacos` + `bacon`, plus `meal` if it says breakfast).
@@ -132,8 +131,8 @@ precise per-type match on name+description removed 24 such false positives
 while retaining genuine no-event food camps. No new data source is introduced;
 classification remains inside each existing per-source payload.
 
-After classification, `SiteBuilder` applies the reviewed, source/year-scoped
-`data/food-exclusions-<source>-<year>.txt` list. `camp:<id>` clears only
+After classification, `SiteBuilder` applies the reviewed API-year-scoped
+`data/food-exclusions-api-YYYY.txt` list. `camp:<id>` clears only
 `Camp.food_tags`; `event:<id>` clears only that event's `food_tags`. The source
 record, coarse camp tags, schedule entry, location, and all other views remain
 untouched. Malformed entries fail the build, while stale/unmatched entries emit
@@ -268,10 +267,10 @@ the browser from the already-embedded `parsed_time`.
 Food's inline copy explains the task (find meals, search, refresh availability)
 without exposing classifier implementation details or repeating warning text.
 The centrally maintained About modal still discloses the actual
-transformations—tags are generated from listing text and event times are
+transformations—tags are generated from source text and event times are
 formatted against the configured burn-week calendar—because that applies to
-every source and satisfies the existing ToS stance. Directory-specific
-verification guidance remains directory-only.
+every annual source and satisfies the existing ToS stance. Users are reminded
+that snapshots can be stale or incomplete.
 
 ### D10 — Audit Hours-not-listed semantics locally and conservatively
 
@@ -284,15 +283,15 @@ changes `FOOD_TYPES` or deployable data itself. See
 [ADR 19](./19-food-classification-audit.md) for the privacy boundary, annual
 runbook, and failure modes.
 
-The 2026 audit reviewed all 239 camp-prose Hours-not-listed candidates. After
-approved generic phrase masks and the conservative primary-veto consensus
-policy, 53 remaining camp IDs were added to the two 2026 Food-only exclusion
-files. The resulting population is 90 directory + 92 API-2026 rows. Ambiguous
-model decisions were intentionally left visible rather than silently removed.
+The local audit produces advisory ID-only proposals outside the repository.
+After human approval, record-specific API decisions remain tracked in the
+matching annual exclusion file. The 2026 file retains 22 reviewed camp IDs;
+directory-scoped decisions were retired with that source. Ambiguous model
+decisions remain visible rather than being silently removed.
 
 ## Mechanism
 
-Build time (`python -m playa tag` → `build`):
+Build time (`python -m playa build`):
 
 ```
 for each camp:
@@ -387,10 +386,9 @@ flowchart TD
 - `backend/src/playa/tagger.py` — `FOOD_TYPES`, event classification, and
   camp-own-text classification, including phrase masking.
 - `backend/src/playa/builder.py` / `backend/src/playa/config.py` — per-source
-  classification, Food-only exclusion loading, and recurring canonical-date
+  classification, API-year Food exclusions, and recurring canonical-date
   stamping.
-- `data/food-exclusions-directory-2026.txt` /
-  `data/food-exclusions-api-2026.txt` — approved ID-only 2026 suppressions.
+- `data/food-exclusions-api-2026.txt` — approved ID-only API-2026 suppressions.
 - `backend/src/playa/timeparser.py` — parsing, canonical week maps, and
   earliest mapped occurrence selection.
 - `backend/src/playa/cli.py` / `Makefile` — aggregate-only `food-audit` command.

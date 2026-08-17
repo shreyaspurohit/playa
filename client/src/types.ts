@@ -16,7 +16,7 @@ export interface Event {
   id: string;
   name: string;
   description: string;
-  time: string;                   // raw directory text
+  time: string;                   // normalized API occurrence text
   display_time: string;           // pre-parsed clean form; '' if unparseable
   parsed_time: ParsedTime | null; // structured form for the calendar
   food_tags?: string[];           // app-generated food-type buckets (ADR 17); absent for non-food events
@@ -28,28 +28,23 @@ export interface Camp {
   location: string;
   description: string;
   website: string;
-  url: string;                    // canonical /camps/<id>/
   tags: string[];
   food_tags?: string[];           // precise food-type buckets from name+desc (ADR 17)
   events: Event[];
 }
 
-/** Art installation. Mirrors `backend/src/playa/models.py` `Art.to_dict`.
- *  Subset of fields are populated depending on source: directory provides
- *  name/location/description; the API additionally provides artist,
- *  hometown, category, program, image_url, year. */
+/** Art installation. Mirrors `backend/src/playa/models.py` `Art.to_dict`. */
 export interface Art {
   id: string;
   name: string;
   location: string;
   description: string;
-  url: string;                    // canonical /artwork/<id>/ (directory only)
   artist: string;
   hometown: string;
   category: string;
   program: string;
-  image_url: string;              // first thumbnail from API; '' for directory
-  year: number;                   // 0 for directory (no year context)
+  image_url: string;              // first thumbnail from API
+  year: number;
   tags: string[];
 }
 
@@ -134,10 +129,6 @@ export const LS = {
   // storage slot is `${base}/${source}` via `scopedKey()`.
   // See docs/15-data-sources.md for why ID spaces don't cross sources.
   source: 'bm-source',
-  // One-shot flag: existing users had unsuffixed `bm-favs` etc. before
-  // multi-source landed. On first load, we copy each into its
-  // `/directory` slot. This flag tells us not to repeat that copy.
-  legacyKeysMigrated: 'bm-legacy-migrated',
   // Per-burn-year + kind flag: '1' once the user has seen (and refreshed
   // or dismissed) the EmbargoLiftedBanner. Camp and art have different
   // release dates, so compose `${base}/${year}/${kind}`.
@@ -158,7 +149,7 @@ export const LS = {
 /** A data-source identifier as it appears in DOM script ids,
  *  `<meta name="bm-sources">`, and the `bm-source` LS slot.
  *
- *  Examples: `'directory'`, `'api-2024'`, `'api-2025'`.
+ *  Examples: `'api-2024'`, `'api-2025'`.
  *
  *  Kept as a plain string because the set is dynamic — what's
  *  available depends on what the build embedded.

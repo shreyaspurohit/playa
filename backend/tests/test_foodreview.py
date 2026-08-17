@@ -16,13 +16,13 @@ from playa.models import Camp, Event
 def camp(*, food_tags=(), events=()):
     return Camp(
         id="camp-1", name="Camp", location="", description="Description",
-        website="", url="", food_tags=list(food_tags), events=list(events),
+        website="", food_tags=list(food_tags), events=list(events),
     )
 
 
 class CandidateTests(unittest.TestCase):
     def test_collects_camp_only_hours_not_listed_entry(self):
-        found = collect_candidates("directory", [camp(food_tags=("cake",))])
+        found = collect_candidates("api-2026", [camp(food_tags=("cake",))])
         self.assertEqual(1, len(found))
         self.assertEqual("camp", found[0].kind)
 
@@ -32,7 +32,7 @@ class CandidateTests(unittest.TestCase):
             parsed_time={"start_time": "18:00"}, food_tags=["meal"],
         )
         self.assertEqual([], collect_candidates(
-            "directory", [camp(food_tags=("cake",), events=(event,))],
+            "api-2026", [camp(food_tags=("cake",), events=(event,))],
         ))
 
     def test_collects_food_event_without_parsed_hours(self):
@@ -46,13 +46,13 @@ class CandidateTests(unittest.TestCase):
     def test_non_food_event_does_not_suppress_camp_fallback(self):
         event = Event(id="event-1", name="Dance", description="Music", time="")
         found = collect_candidates(
-            "directory", [camp(food_tags=("cake",), events=(event,))],
+            "api-2026", [camp(food_tags=("cake",), events=(event,))],
         )
         self.assertEqual(["camp"], [item.kind for item in found])
 
     def test_identifier_omits_source_text(self):
         candidate = Candidate(
-            "directory", "camp", "1", "1", "Private name", "Private text", ("cake",),
+            "api-2026", "camp", "1", "1", "Private name", "Private text", ("cake",),
         )
         identifier = candidate.identifier()
         self.assertNotIn("name", identifier)

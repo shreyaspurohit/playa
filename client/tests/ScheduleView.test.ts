@@ -88,7 +88,7 @@ describe('<ScheduleView> past-event filter', () => {
     });
     const camps = [{
       id: 'camp', name: 'Test Camp', location: '4:00 & B', description: '',
-      website: '', url: '', tags: [], events: [
+      website: '', tags: [], events: [
         event('past', 'Past event', '10:00', '11:00'),
         event('ongoing', 'Ongoing event', '12:00', '14:00'),
         event('future', 'Future event', '14:00', '16:00'),
@@ -133,7 +133,7 @@ describe('<ScheduleView> past-event filter', () => {
     const props = {
       camps: [{
         id: 'camp', name: 'Test Camp', location: '4:00 & B', description: '',
-        website: '', url: '', tags: [], events: [
+        website: '', tags: [], events: [
           event('past', 'Past event', '10:00', '11:00'),
           event('ongoing', 'Ongoing event', '12:00', '14:00'),
         ],
@@ -167,7 +167,7 @@ describe('<ScheduleView> past-event filter', () => {
     render(h(ScheduleView, {
       camps: [{
         id: 'camp', name: 'Test Camp', location: '4:00 & B', description: '',
-        website: '', url: '', tags: [], events: [pastEvent],
+        website: '', tags: [], events: [pastEvent],
       }],
       favEventIds: new Set(['past']),
       friendFavEventIds: () => [], youLabel: 'You',
@@ -195,7 +195,7 @@ describe('<ScheduleView> past-event filter', () => {
     const props = {
       camps: [{
         id: 'camp', name: 'Some Camp!', location: '', description: '', website: '',
-        url: '', tags: [], events: [overnight],
+        tags: [], events: [overnight],
       }],
       favEventIds: new Set(['overnight']), friendFavEventIds: () => [], youLabel: 'You',
       burnStart: '2026-09-05', burnEnd: '2026-09-06', isDayHidden: () => false,

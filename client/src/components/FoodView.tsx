@@ -341,9 +341,6 @@ export function FoodView({
                 {e.camp.website && (
                   <a class="food-link" href={e.camp.website} target="_blank" rel="noopener">Website ↗</a>
                 )}
-                {e.camp.url && (
-                  <a class="food-link" href={e.camp.url} target="_blank" rel="noopener">Official listing ↗</a>
-                )}
                 <button
                   type="button"
                   class="food-link food-open-camp"

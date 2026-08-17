@@ -30,11 +30,8 @@ export interface SharePayload {
   myCampId?: string;
   /** Rendezvous plans. Drops gracefully to empty when the shape is off. */
   meetSpots?: MeetSpot[];
-  /** Data source the ids belong to ("directory", "api-2024", …). When
-   *  absent (legacy share links from pre-multi-source clients), the
-   *  receiver assumes "directory". The receiver's UI nudges them to
-   *  switch sources first if their current view doesn't match. */
-  source?: string;
+  /** Annual API source that owns every id in this payload. */
+  source: string;
 }
 
 // === Validation limits + allow/deny lists ============================
@@ -47,11 +44,9 @@ export const MAX_ENCODED_LEN = 200_000;
 /** Cap on the displayed nickname. Fits in all our chip/banner layouts.
  *  Also bounds a DoS vector where someone sends a 10 MB name. */
 export const MAX_NICKNAME_LEN = 64;
-/** Per-list cap on id count. Real directory ~ 1500 camps + ~4200 events.
- *  2000 is a generous headroom; past that it's junk or an attack. */
+/** Per-list cap on id count. 2000 is generous headroom. */
 export const MAX_IDS = 2000;
-/** Per-id cap. Directory uses short numeric ids; 64 allows future
- *  SFDC-style uids from the official API without being unbounded. */
+/** Per-id cap for API UIDs. */
 export const MAX_ID_LEN = 64;
 /** Reasonable ceilings for the rendezvous layer. */
 export const MAX_MEET_SPOTS = 50;
@@ -73,8 +68,8 @@ const BAD_CHARS = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\
  *  `Object.create(null)` or Map everywhere. */
 const BANNED_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
-/** IDs must be short and printable. Directory IDs are numeric; official
- *  API uids are alphanumeric with hyphens. Anything else (whitespace,
+/** IDs must be short and printable. API uids are alphanumeric with hyphens.
+ *  Anything else (whitespace,
  *  quotes, angle brackets, path separators) has no business here. */
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -161,17 +156,15 @@ function fromBase64Url(s: string): Uint8Array {
 
 export function encodeShare(p: SharePayload): string {
   // Compact field names keep URLs short. Optional rendezvous fields
-  // and the source tag are omitted when empty / when source is the
-  // implicit default ('directory'), so a directory-only share stays
-  // byte-identical to the pre-multi-source format.
+  // and the source tag is always included so unrelated source-less IDs are
+  // never interpreted against a current API snapshot.
   const compact: {
     n: string; c: string[]; e: string[];
-    a?: string[]; m?: string; s?: MeetSpot[]; src?: string;
-  } = { n: p.name, c: p.campIds, e: p.eventIds };
+    a?: string[]; m?: string; s?: MeetSpot[]; src: string;
+  } = { n: p.name, c: p.campIds, e: p.eventIds, src: p.source };
   if (p.artIds && p.artIds.length > 0) compact.a = p.artIds;
   if (p.myCampId) compact.m = p.myCampId;
   if (p.meetSpots && p.meetSpots.length > 0) compact.s = p.meetSpots;
-  if (p.source && p.source !== 'directory') compact.src = p.source;
   const json = JSON.stringify(compact);
   return toBase64Url(new TextEncoder().encode(json));
 }
@@ -193,18 +186,18 @@ export function decodeShare(encoded: string): SharePayload | null {
     const myCampId = cleanSingleId((parsed as { m?: unknown }).m);
     const meetSpots = cleanMeetSpots((parsed as { s?: unknown }).s);
     const sourceRaw = (parsed as { src?: unknown }).src;
-    // Validate source against a tight pattern — directory or api-YYYY.
-    // Anything else is silently dropped so a malicious sender can't
-    // poke at LS keys we didn't intend.
+    // Source-less and non-API links are retired: accepting their unrelated IDs
+    // under a current API source would create false matches.
     const source = typeof sourceRaw === 'string'
-      && /^(directory|api-\d{4})$/.test(sourceRaw)
+      && /^api-\d{4}$/.test(sourceRaw)
       ? sourceRaw : undefined;
+    if (!source) return null;
     return {
       name, campIds, eventIds,
       ...(artIds.length > 0 ? { artIds } : {}),
       ...(myCampId ? { myCampId } : {}),
       ...(meetSpots.length > 0 ? { meetSpots } : {}),
-      ...(source ? { source } : {}),
+      source,
     };
   } catch {
     return null;

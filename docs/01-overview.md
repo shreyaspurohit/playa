@@ -1,106 +1,66 @@
----
-title: System Overview
-date: 2026-04-27
-status: current
----
-
 # System Overview
+
+**Status:** Accepted
+**Last updated:** 2026-08-16
 
 ## Overview
 
-Playa Camps is a **single-page static site** that lets a private group
-of friends browse + plan around the official Burning Man theme-camp
-directory before and during the burn. The pipeline pulls public data
-from `directory.burningman.org` plus configured cached `api-YYYY` snapshots,
-transforms it, and ships a
-self-contained, password-gated, offline-capable PWA to GitHub Pages.
-
-The shape of every architectural decision falls out of three
-constraints:
-
-1. **Public code repo, private data.** The repo is public for
-   portability; camp content (which is copyrighted by the camps) must
-   never land in git.
-2. **No backend.** Everything runs at build time (Python on a CI
-   runner) or at view time (TypeScript in the browser). No app server,
-   no database, no API to operate.
-3. **Burn-week reality.** Most users will be on cellular or no network
-   on-playa. The site must work fully offline after one good load.
+Playa Camps is a private-audience, password-gated, offline-capable static PWA
+built from cached annual Burning Man API snapshots and official GIS layers. The
+repo contains code and source-independent assets; Event Data and derived vectors
+stay out of git.
 
 ## Decisions
 
-- **Static site over dynamic.** GH Pages is free, reliable, and the
-  artifact is one HTML file. No backend means no auth, no rate limits,
-  no service to maintain.
-- **Build-time data baking.** Camp data is fetched, parsed, tagged,
-  encrypted, and inlined into `index.html` at build time. Avoids
-  per-request fetches at runtime — important for the offline mode
-  and for keeping the live site readable from cache.
-- **Symmetric encryption + shared password.** A friend group with one
-  shared secret is the right access model for this audience. Real
-  per-user auth would be 10× the complexity for ~10× more security
-  than this needs.
-- **Public repo, hard `.gitignore`.** Code lives publicly, data never
-  hits git. Every CI run fetches fresh from upstream and uploads only
-  the built artifact.
-- **Parallel source and entity payloads.** Directory/API sources normalize to
-  shared models but keep independent IDs and user state. Camps and art travel
-  as parallel per-source payloads. `SITE_TIERS` uses envelope encryption so one
-  password unlocks only its configured source subset.
+- Static GitHub Pages hosting keeps the runtime simple: no app server, accounts,
+  cookies, or application analytics.
+- Annual `api-YYYY` snapshots are the only record sources. The configured current
+  BRC year is primary and older years are optional secondary sources.
+- API keys exist only during explicit operator refreshes. Push-triggered and
+  ordinary manual builds reuse encrypted Release snapshots and never fetch
+  Event Data.
+- The Preact client is bundled into the generated HTML; the semantic search
+  runtime and vectors are separate opt-in assets.
+- Source payloads can use a single password or named envelope-encryption tiers.
+- A service worker supplies offline shell/data behavior and cleans retired cache
+  namespaces during activation.
+- Local state is annual-source-scoped and optionally synchronized to a Dropbox
+  App folder using PKCE and mergeable tombstones.
 
 ## Mechanism
 
-```mermaid
-flowchart LR
-  Cron[Nightly cron<br>08:00 UTC] --> Test
-  Test[CI: test<br>Python + JS] --> Build
-  Build[CI: build<br>fetch + tag + bundle + encrypt] --> Pages
-  Pages[Upload Pages artifact] --> Deploy
-  Deploy[Deploy to GH Pages] --> CDN[playa.purohit.dev]
-  CDN --> Browser[User browser]
-  Browser -->|first load| SW[Service Worker]
-  SW -->|cache shell| Browser
-  SW -.->|offline| Browser
+```text
+manual API refresh -> encrypted annual Release snapshot
+                                  |
+main push/manual deploy -> tests -> download snapshots -> optional GIS refresh
+                        -> bundle -> normalize/tag/embed/encrypt -> Pages artifact
+                        -> GitHub Pages -> Cloudflare -> password gate -> offline PWA
 ```
 
-Two halves of the codebase:
+The builder loads each annual cache once into camps/events/art plus `fetched_at`.
+It validates source order and current-year size, derives visible freshness from
+the current-year cache, creates a separate build version, and emits the HTML,
+privacy page, worker, lazy semantic runtime, and optional embeddings.
 
-- **`backend/src/playa/`** (Python 3.14.4, stdlib + openssl CLI):
-  fetch HTML, parse, tag, encrypt, write `site/index.html` + `sw.js` +
-  `version.txt`.
-- **`client/src/`** (TypeScript + Preact + esbuild): bundled into one
-  IIFE that the Python builder inlines into the HTML. The core client was
-  historically ~35 KB before the `pwa-install` dependency; that library is
-  dynamically imported in source but folded into the single IIFE by the current
-  non-splitting esbuild format, adding roughly 50 KB gzip. The
-  client decrypts the embedded payload at runtime, renders the UI,
-  manages favorites, runs the map, etc.
+The client unlocks only the sources granted by the selected tier, applies the
+current-year location embargo unless the wrapper is trusted, and scopes all
+favorite/share/import/sync behavior to the selected `api-YYYY`.
 
-The boundary between them is the HTML template
-(`backend/src/playa/templates/site.html`) — the Python side fills
-placeholder tokens (`__DATA_SCRIPT__`, `__BUNDLE__`, `__VERSION__`,
-`__RELEASE_NOTES__`, etc.) and emits the final document.
+## Failure modes and trade-offs
 
-## Failure modes & trade-offs
-
-- **Single-password access** — losing or rotating the password requires
-  a rebuild + redeploy + re-distribution to friends. Acceptable since
-  the audience is small. See
-  [revocation-plan.md](./revocation-plan.md).
-  Multi-tier deployments have the same rebuild/redistribution property for any
-  rotated tier password; encrypted API-cache password rotation is independent.
-- **Build is the only update path.** Tag changes, parser fixes, etc.
-  require a CI run to reach users. Force-refresh handles the
-  sub-day window; nightly cron is the worst case.
-- **Camp data is a snapshot.** Anything edited on the upstream
-  directory after the last fetch is invisible until the next nightly.
-  The About modal makes this explicit ("anything changed after the
-  nightly refresh — trust less").
+- Cached data can be stale; the UI displays its actual fetch date.
+- A missing configured snapshot fails the build rather than serving an older
+  year as current.
+- GIS is optional and exact-year; missing geometry disables map features for
+  that year.
+- Offline clients can remain on an old encrypted build until reconnecting.
+- Static hosting means every data update deploys a new artifact.
 
 ## Code references
 
-- `backend/src/playa/builder.py` — pipeline orchestrator
-- `client/src/index.tsx` — client entry
-- `backend/src/playa/templates/site.html` — the HTML shell
-- `.github/workflows/refresh.yml` — CI orchestration
-- `Makefile` — local dev surface
+- `backend/src/playa/cli.py`
+- `backend/src/playa/sources/api.py`
+- `backend/src/playa/builder.py`
+- `client/src/components/App.tsx`
+- `client/src/hooks/useSource.ts`
+- `.github/workflows/refresh.yml`

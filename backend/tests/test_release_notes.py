@@ -82,7 +82,6 @@ class CollectReleaseNotesTests(unittest.TestCase):
             burn_start="2026-08-30",
             burn_end="2026-09-07",
         )
-        self.config.pages_dir.mkdir(parents=True)
         # Builder needs a Tagger; default taxonomy is fine.
         self.builder = SiteBuilder(self.config, Tagger())
 
@@ -164,7 +163,6 @@ class CollectReleaseNotesTests(unittest.TestCase):
                 burn_start="2026-08-30",
                 burn_end="2026-09-07",
             )
-            cfg.pages_dir.mkdir(parents=True)
             builder = SiteBuilder(cfg, Tagger())
             with contextlib.redirect_stdout(io.StringIO()):
                 with contextlib.redirect_stderr(io.StringIO()):

@@ -1,19 +1,19 @@
-name: Refresh camps directory
+name: Deploy API snapshot site
 
-# Repo is public; fetched camp data is NOT committed (see .gitignore).
-# Every run fetches fresh on the ephemeral runner, builds the site, and
-# deploys via actions/upload-pages-artifact — data never lands in git.
+# Repo is public; cached Event Data is NOT committed (see .gitignore).
+# A push to main (including a merged PR) or an explicit manual dispatch
+# downloads encrypted annual API snapshots, builds the site, and deploys via
+# actions/upload-pages-artifact — Event Data never lands in git.
 #
 # api.burningman.org sources (api-YYYY) are cached as ENCRYPTED GitHub
 # Release assets — see docs/15-data-sources.md decision D7. The cache
-# step downloads the asset if a release tag exists, otherwise hits the
-# API once + uploads. Past-year builds therefore stop costing API calls
-# after the first run.
+# step requires an existing asset. Only an explicit `refresh_api_years`
+# dispatch may call the API and replace a snapshot; push-triggered runs never
+# do.
 
 on:
-  schedule:
-    # 08:00 UTC daily (≈ 01:00 PT / 00:00 PST).
-    - cron: '0 8 * * *'
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       burn_open:
@@ -31,8 +31,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: refresh-camps
-  cancel-in-progress: true
+  group: deploy-api-site
+  # A manual API refresh briefly removes the selected Release before replacing
+  # it. Queue a main push behind that operation instead of cancelling midway.
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -127,7 +129,7 @@ jobs:
           fi
           api_years="${BM_API_YEARS//[[:space:]]/}"
           api_years="${api_years//,/+}"
-          if [ -z "$api_years" ]; then api_years="directory-only"; fi
+          if [ -z "$api_years" ]; then api_years="missing-api-years"; fi
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "scope=${BRC_MAP_YEAR}-${api_years}" >> "$GITHUB_OUTPUT"
 
@@ -140,8 +142,8 @@ jobs:
           key: brc-gis-v3-${{ hashFiles('backend/src/playa/gis.py') }}-${{ steps.gis-revision.outputs.sha }}-${{ steps.gis-revision.outputs.scope }}
 
       # Incremental Ask embeddings (ADR 21 D5): persist ONLY the content-hash
-      # cache (int8 vectors keyed by text hash — no source text) so a nightly
-      # runner re-embeds just what changed instead of all ~9.5k records. NOT
+      # cache (int8 vectors keyed by text hash — no source text) so a later
+      # deployment re-embeds just what changed instead of all ~9.5k records. NOT
       # records.json (contains source text) and NOT vectors.json (regenerated).
       # Rolling key: unique per run (always saves a fresh cache); restore-keys
       # falls back to the latest cache for the current embed config.
@@ -149,9 +151,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: data/embeddings/cache.json
-          key: ask-embeddings-v1-${{ hashFiles('client/scripts/embed.mjs', 'client/src/assistant/embedModel.ts') }}-${{ github.run_id }}
+          key: ask-embeddings-v2-${{ hashFiles('client/scripts/embed.mjs', 'client/src/assistant/embedModel.ts') }}-${{ github.run_id }}
           restore-keys: |
-            ask-embeddings-v1-${{ hashFiles('client/scripts/embed.mjs', 'client/src/assistant/embedModel.ts') }}-
+            ask-embeddings-v2-${{ hashFiles('client/scripts/embed.mjs', 'client/src/assistant/embedModel.ts') }}-
 
       - name: Install client deps
         run: npm ci
@@ -171,7 +173,7 @@ jobs:
       # Triggered only when `inputs.refresh_api_years` is set on a
       # `workflow_dispatch` run — e.g., '2026' to grab a fresh
       # current-year snapshot mid-week, or '2025,2026' for both.
-      # Nightly cron runs leave caches alone (no extra API hits).
+      # Push-triggered runs leave caches alone (no extra API hits).
       # ===============================================================
       - name: Force-refresh selected API year caches
         if: github.event_name == 'workflow_dispatch' && inputs.refresh_api_years != ''
@@ -205,8 +207,9 @@ jobs:
       #
       # For each year in `vars.BM_API_YEARS` (repo-level variable, e.g.
       # "2025,2026"), try to download the encrypted cache from the
-      # `data-api-<year>` Release. Cache miss → fetch from
-      # api.burningman.org once, encrypt, attach as the Release asset.
+      # `data-api-<year>` Release. A cache miss fails unless that year was
+      # explicitly selected by `refresh_api_years`; only that manual path
+      # may fetch, encrypt, and replace an asset.
       #
       # To force a re-fetch for a year (e.g., a corrected dataset
       # mid-year): use the `refresh_api_years` workflow_dispatch
@@ -214,18 +217,21 @@ jobs:
       # runs. Manual alternative: `gh release delete data-api-2025
       # --yes` and re-run the workflow.
       # ===============================================================
-      - name: Refresh API source caches
+      - name: Load API source caches
         env:
           BM_API_KEY: ${{ secrets.BM_API_KEY }}
           BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}
+          REFRESH_YEARS: ${{ inputs.refresh_api_years }}
+          EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${BM_API_YEARS:-}" ]; then
-            echo "BM_API_YEARS unset — directory-only build, skipping API cache."
-            exit 0
+            echo "::error ::BM_API_YEARS is required for an API-only build."
+            exit 1
           fi
           mkdir -p data/api
           # Encrypted writes use BM_CACHE_PASSWORD with SITE_PASSWORD
@@ -237,17 +243,35 @@ jobs:
             exit 1
           fi
           IFS=',' read -ra YEARS <<< "$BM_API_YEARS"
+          configured_current=0
           for year_raw in "${YEARS[@]}"; do
             year="$(echo "$year_raw" | tr -d '[:space:]')"
             [ -z "$year" ] && continue
+            if [[ ! "$year" =~ ^[0-9]{4}$ ]]; then
+              echo "::error ::Invalid BM_API_YEARS entry: ${year}"
+              exit 1
+            fi
+            if [ "$year" = "$BRC_MAP_YEAR" ]; then configured_current=1; fi
             tag="data-api-${year}"
-            asset="${year}.bin"
+            asset="${year}.json"
             out="data/api/${year}.json"
             echo "::group::api-${year}"
             if gh release download "$tag" --pattern "$asset" --output "$out" 2>/dev/null; then
               echo "cache hit: pulled ${asset} from release ${tag}"
             else
-              echo "cache miss for ${tag} — fetching from api.burningman.org"
+              refresh_selected=0
+              if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+                IFS=',' read -ra REQUESTED <<< "${REFRESH_YEARS:-}"
+                for requested_raw in "${REQUESTED[@]}"; do
+                  requested="$(echo "$requested_raw" | tr -d '[:space:]')"
+                  if [ "$requested" = "$year" ]; then refresh_selected=1; fi
+                done
+              fi
+              if [ "$refresh_selected" != 1 ]; then
+                echo "::error ::Missing encrypted snapshot ${tag}/${asset}. Push-triggered builds never fetch Event Data; dispatch refresh_api_years=${year} to create it."
+                exit 1
+              fi
+              echo "manual refresh selected for ${tag} — fetching API snapshot"
               if [ -z "${BM_API_KEY:-}" ]; then
                 echo "::error ::BM_API_KEY not set; cannot fetch year ${year}. Add the secret or remove the year from BM_API_YEARS."
                 exit 1
@@ -264,6 +288,10 @@ jobs:
             fi
             echo "::endgroup::"
           done
+          if [ "$configured_current" != 1 ]; then
+            echo "::error ::BM_API_YEARS must contain BRC_MAP_YEAR (${BRC_MAP_YEAR})."
+            exit 1
+          fi
 
       # ===============================================================
       # ADR D13: resolve `BURN_OPEN` for the build step.
@@ -285,9 +313,10 @@ jobs:
       # CAMP_LOCATION_RELEASE_AT / ART_LOCATION_RELEASE_AT even while the
       # site is unlocked — only the password gate is bypassed.
       #
-      # Comparison is done in UTC at day granularity. Worst-case
-      # boundary skew is ~7h vs Black-Rock midnight, which is
-      # operationally fine — the cron only runs once a day anyway.
+      # Comparison is done in UTC at day granularity. With no scheduled build,
+      # the window changes the deployed artifact only on the next push or
+      # manual dispatch. Run this workflow at both boundaries when exact
+      # automatic opening/relocking is desired.
       # ===============================================================
       - name: Resolve BURN_OPEN from the site-unlock window
         env:
@@ -327,12 +356,10 @@ jobs:
           fi
           echo "BURN_OPEN=${effective}" >> "$GITHUB_ENV"
 
-      - name: Fetch + build site
+      - name: Build site from cached snapshots
         env:
-          # Pulled from repo secrets. Blank → plaintext build with the
-          # placeholder email. Set both before the first real deploy.
+          # Pulled from repo secrets. Blank → plaintext build.
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
-          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           # Burn-week dates — REQUIRED. This pair drives the calendar
           # fallback + public-access window (see Config.burn_start /
           # burn_end). No code-side default;
@@ -349,14 +376,13 @@ jobs:
           # step above AND `_resolve_sources()` in playa.cli — the
           # same value picks the years to fetch and the years to
           # embed in the site.
-          BM_API_KEY: ${{ secrets.BM_API_KEY }}
           BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
           # Optional Dropbox app-folder backup (ADR 16). Both are public repo
           # variables; leaving them unset emits no sync UI or Dropbox origin.
           SYNC_PROVIDER: ${{ vars.SYNC_PROVIDER }}
           SYNC_CLIENT_ID: ${{ vars.SYNC_CLIENT_ID }}
-          # Live directory/GIS year. Keep the fallback aligned with the
+          # Current API/GIS year. Keep the fallback aligned with the
           # newest BRC_BY_YEAR entry; next year can be switched via a repo
           # variable after the annual map constants are reviewed.
           BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}

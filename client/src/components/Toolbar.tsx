@@ -93,7 +93,7 @@ export function Toolbar({
             class={'fav-filter' + (webOnly ? ' active' : '')}
             type="button"
             aria-pressed={webOnly ? 'true' : 'false'}
-            title={`${webCount} camps published a website on the directory`}
+            title={`${webCount} camps include a website in the API snapshot`}
             onClick={onToggleWebFilter}
           >
             With website ↗ <span class="count">({webCount})</span>

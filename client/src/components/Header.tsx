@@ -56,7 +56,7 @@ export function Header({
           </h1>
           <span
             class="version"
-            title={`Directory last fetched ${fetchedAt} UTC`}
+            title={`API snapshot fetched ${fetchedAt}`}
           >
             Updated {fetchedDate} · {version}
           </span>

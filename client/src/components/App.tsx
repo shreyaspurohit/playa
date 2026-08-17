@@ -29,9 +29,7 @@ import {
 import { useFavorites } from '../hooks/useFavorites';
 import { useFriends } from '../hooks/useFriends';
 import { useMeetSpots } from '../hooks/useMeetSpots';
-import {
-  useSource, migrateLegacyKeysOnce, sourceForDisplay,
-} from '../hooks/useSource';
+import { useSource, sourceForDisplay } from '../hooks/useSource';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute, type View } from '../hooks/useHashRoute';
 import { ActionBar } from './ActionBar';
@@ -73,7 +71,6 @@ interface Meta {
   fetchedDate: string;
   fetchedAt: string;
   version: string;
-  contactEmail: string;
   /** Schedule window (ISO YYYY-MM-DD). Independent from D8 location
    *  disclosure; fetched early events may move burnStart earlier. */
   burnStart: string;
@@ -92,7 +89,6 @@ function readMeta(): Meta {
     fetchedDate:  get('bm-fetched-date') || 'unknown',
     fetchedAt:    get('bm-fetched-at')   || 'unknown',
     version:      get('bm-version')      || 'v0.0.0',
-    contactEmail: get('bm-contact-email') || 'bm-camps@example.com',
     burnStart:    get('bm-burn-start') || '',
     burnEnd:      get('bm-burn-end')   || '',
     locationReleaseYear: Number.parseInt(get('bm-location-release-year'), 10),
@@ -282,11 +278,6 @@ export function App() {
   }, [view]);
   const { updateAvailable, latest: latestVersion } = useVersionCheck();
   const { pending: pendingReleaseNotes, dismiss: dismissReleaseNotes } = useReleaseNotes();
-
-  // One-shot LS migration: pre-multi-source builds wrote bare keys
-  // (bm-favs, bm-fav-events, …); copy each into its `/directory` slot
-  // so existing users see their data under the default source.
-  useMemo(() => migrateLegacyKeysOnce(), []);
 
   const { source, setSource, available: availableSources } = useSource();
 
@@ -496,7 +487,7 @@ export function App() {
   // A persisted selection can point at a source this password did not
   // unlock. The effect below fixes localStorage/state, but effects run after
   // paint; derive the source used by visible source labels and notices so an
-  // API-only unlock never flashes directory-specific copy for one frame.
+  // An unlock never flashes copy for a stale persisted source for one frame.
   const visibleSource = sourceForDisplay(source, effectiveAvailableSources);
   const sync = useSync(effectiveAvailableSources);
 
@@ -510,7 +501,7 @@ export function App() {
     if (first) setSource(first);
   }, [unlockedDeks, source, setSource]);
 
-  // ADR D13: burn-window auto-unlock. When the build deployed
+  // ADR D13: password-free spirit access. When a build deploys
   // `site/burn-key.json`, fetch it on boot, parse the per-source
   // DEK+IV blobs, and seed `unlockedDeks` directly — skipping the
   // password prompt. Outside the window the file 404s and we fall
@@ -644,8 +635,7 @@ export function App() {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [showAllTags, setShowAllTags] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
-  // "Has a website" filter — narrows to ~40% of camps that posted a
-  // URL on the directory. Useful for picking camps in advance: web
+  // "Has a website" filter. Useful for picking camps in advance: web
   // pages tend to mean a camp organized enough to publish hours,
   // ticketing, or contact info.
   const [webOnly, setWebOnly] = useState(false);
@@ -1512,13 +1502,10 @@ export function App() {
 
       <Footer
         fetchedDate={meta.fetchedDate}
-        contactEmail={meta.contactEmail}
-        source={visibleSource}
       />
       <InfoModal
         open={infoOpen}
         fetchedDate={meta.fetchedDate}
-        contactEmail={meta.contactEmail}
         source={visibleSource}
         locationPolicy={locationPolicy}
         sync={sync}

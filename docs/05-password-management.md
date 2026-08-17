@@ -160,7 +160,7 @@ be disturbed.
 3. Do **not** rotate `BM_CACHE_PASSWORD`. It protects the GitHub Release cache,
    is unrelated to browser access, and changing it would make existing cache
    assets unreadable without a re-fetch.
-4. Run **Actions → Refresh camps directory → Run workflow**. The build generates
+4. Run **Actions → Build API snapshots → Run workflow**. The build generates
    fresh per-source DEKs and wrappers, then deploys a site that no longer has a
    wrapper decryptable by the old god password.
 5. Verify in a clean/private browser profile:

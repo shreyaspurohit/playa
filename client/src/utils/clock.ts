@@ -13,7 +13,7 @@
 import { LS } from '../types';
 import { readString, writeString, removeKey } from './storage';
 
-/** Directory/API event times are unzoned Black Rock City local times. */
+/** Event display times are interpreted as Black Rock City local times. */
 export const PLAYA_TIME_ZONE = 'America/Los_Angeles';
 
 export interface PlayaTimeParts {

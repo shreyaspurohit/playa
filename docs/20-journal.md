@@ -137,7 +137,7 @@ description is retained. Renames in future source data deliberately do not
 rewrite old memories.
 
 This name-snapshot rule is also an **access** requirement, not only a durability
-one: a normal (spirit-level) user has no directory/API source toggle and never
+one: a normal (spirit-level) user has no multi-year source toggle and never
 loads historical multi-year camp/art payloads, so an old entry could not resolve
 a camp, event, or art record by ID even in principle — the stored name is the
 only thing that can render it (see D6, D16).
@@ -171,7 +171,7 @@ The view contains:
 4. edit (overwrites in place), delete (with undo — D15), and an **Export
    journal** action (D15).
 
-There is no directory/API source toggle on this surface — that belongs only to
+There is no annual-source toggle on this surface — that belongs only to
 god-mode data browsing. A normal user sees a single Journal tab with all their
 years on one page; nothing is hidden behind an edition selector. The current
 burn edition (e.g. **2026**) is shown prominently at the top of the page so the
@@ -477,9 +477,8 @@ even when it costs a little duplication:
 
 ### D16 — The journal is ungated and survives rotation and re-lock
 
-Confirmed against the directory and Innovate API terms: there is no *scheduled*
-post-event withdrawal requirement. The password gate is a standing "narrow the
-audience" mitigation, and rotation is a discretionary/reactive lever (audience
+The password gate is a standing audience-control measure, and rotation is a
+discretionary/reactive lever (audience
 drift, or a takedown — see `docs/13`, `revocation-plan.md`), not a calendar
 expiry. Absent an intervening event, Camps, Art, Food, Map, and Schedule data
 stay available to whoever holds the current password.
@@ -531,7 +530,7 @@ password:
   whole-app gate: unlocking is required to read *shared source data*, not to read
   *your own writing*.
 - The journal is **tier-agnostic** — per-device local data, unrelated to
-  god/demigod/spirit tiers or the burn-window auto-unlock (D13). Its protection
+  god/demigod/spirit tiers or the spirit auto-unlock artifact (D13). Its protection
   boundary is device security, matching every other piece of local app state.
 
 **Ungated bootstrap (required).** Today the gate renders before global navigation
@@ -771,7 +770,7 @@ sequenceDiagram
   not on any local store. UI copy must never imply local storage is permanent.
 - **Context names can become historically stale.** That is the point of the
   snapshot: an old story reflects what the user saw then, independent of future
-  directory corrections.
+  later source corrections.
 - **No media or rich formatting.** The limitation avoids storage, copyright,
   offline-download, rendering, and sync complexity.
 - **No sharing in v1.** This protects private writing but means journal-only

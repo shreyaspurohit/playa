@@ -4,12 +4,6 @@
 //
 // Multi-source: each embedded source has its own <script> tag with id
 // `camps-data-<source>` (plain) or `camps-data-<source>-encrypted`.
-// The legacy ids `camps-data` / `camps-data-encrypted` (no source
-// suffix) are also accepted as a fallback so an older bundle running
-// against a newer page — or vice-versa during the migration window —
-// still finds its data. The legacy plain path also accepts raw JSON
-// content (pre-D12 builds) when the script's `type` is
-// `application/json` rather than the new gzip+base64 type.
 import type {
   Art, Camp, EncryptedPayload, Source, SourceCipher,
 } from './types';
@@ -76,7 +70,7 @@ async function readPlain(el: HTMLElement): Promise<Camp[]> {
 /** Parse a `<meta name="<name>">` manifest if present.
  *
  *  Format: `<source>:<idx>,<idx>,…;<source>:<idx>,…`
- *  e.g.    `directory:0;api-2025:0,1;api-2026:0,1,2`
+ *  e.g.    `api-2025:0,1;api-2026:0,1,2`
  *
  *  Returns null when the meta is absent or empty. Each map entry's
  *  value is the list of wrapper indices for that source. Used for
@@ -137,7 +131,7 @@ function readEnvelopeSource(
 }
 
 export async function readEmbeddedPayload(
-  source: Source = 'directory',
+  source: Source,
 ): Promise<Payload> {
   // Envelope mode (D10) overrides everything — the source-specific
   // cipher/wrapper scripts are the only camp data on the page.
@@ -164,17 +158,6 @@ export async function readEmbeddedPayload(
   const enc = document.getElementById(`camps-data-${source}-encrypted`);
   if (enc) {
     const text = enc.textContent ?? '{}';
-    return { kind: 'encrypted', enc: JSON.parse(text) as EncryptedPayload };
-  }
-  // Legacy fallback — pre-multi-source builds embedded `camps-data`
-  // / `camps-data-encrypted` without any source suffix.
-  const legacyPlain = document.getElementById('camps-data');
-  if (legacyPlain) {
-    return { kind: 'plain', camps: await readPlain(legacyPlain) };
-  }
-  const legacyEnc = document.getElementById('camps-data-encrypted');
-  if (legacyEnc) {
-    const text = legacyEnc.textContent ?? '{}';
     return { kind: 'encrypted', enc: JSON.parse(text) as EncryptedPayload };
   }
   throw new Error(`No camps data script for source "${source}"`);
@@ -227,7 +210,7 @@ async function readPlainArt(el: HTMLElement): Promise<Art[]> {
  *  use — the caller pulls the art cipher out of `EnvelopeSource` and
  *  decrypts via `decryptSource(env.artCipher, dekIv)`. */
 export async function readEmbeddedArt(
-  source: Source = 'directory',
+  source: Source,
 ): Promise<ArtPayload> {
   // Envelope mode: art comes from `EnvelopeSource.artCipher`, not a
   // top-level script. Caller routes via the `getEnvelopeArt` helper.

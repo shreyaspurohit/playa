@@ -80,7 +80,7 @@ It does not modify `FOOD_TYPES`, tests, or deployable exclusion files. After
 owner approval, generalizable mistakes become narrow
 `FOOD_FALSE_POSITIVE_PHRASES` masks; record-specific mistakes become
 `camp:<id>` or `event:<id>` entries in
-`data/food-exclusions-<source>-<year>.txt`. Apply phrase masks first, rerun the
+`data/food-exclusions-api-YYYY.txt`. Apply phrase masks first, rerun the
 review against the smaller population, and add only the remaining approved
 IDs. Both layers suppress only Food classification—not the source record in
 Camps, Schedule, or Map.
@@ -89,7 +89,7 @@ The builder fails on malformed exclusion lines and prints only aggregate
 applied/unmatched counts. An unmatched entry is a prompt to rerun the audit: a
 record may have changed during the year, or a generic mask may now cover it.
 
-### D5 — Operator tool, never nightly infrastructure
+### D5 — Operator tool, never automated deployment infrastructure
 
 Ollama is not installed in GitHub Actions and is not a runtime dependency. The
 semantic audit is run after a fresh annual data load, after meaningful
@@ -168,7 +168,8 @@ remote hosts remain rejected. Do not point output at the repository.
 - `Makefile` — `food-review` operator target.
 - `backend/src/playa/tagger.py` — deterministic `FOOD_TYPES` classifier and
   approved generic phrase masks.
-- `backend/src/playa/config.py` / `backend/src/playa/builder.py` — source/year
+- `backend/src/playa/config.py` / `backend/src/playa/builder.py` — API-year
   exclusion paths, strict ID-list parsing, and Food-only application.
-- `data/food-exclusions-*.txt` — approved ID-only decisions; no source text.
+- `data/food-exclusions-api-*.txt` — approved ID-only API decisions; no source
+  text or directory-scoped IDs.
 - `client/src/components/FoodView.tsx` — production Hours-not-listed paths.

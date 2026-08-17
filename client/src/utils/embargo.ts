@@ -35,7 +35,7 @@ export function releaseAtFor(
 
 /** Decide whether one location-field class must be hidden.
  *
- * - Directory and historical API years pass through.
+ * - Historical API years pass through.
  * - The configured current API year compares against its kind-specific time.
  * - Future API years fail closed until the annual policy is advanced.
  * - Missing/malformed current-year metadata fails closed in the client; the
@@ -51,7 +51,7 @@ export function isLocationEmbargoed(
 ): boolean {
   if (trusted) return false;
   const sourceYear = apiYear(source);
-  if (sourceYear === null) return false;
+  if (sourceYear === null) return true;
 
   if (!Number.isInteger(policy.year) || policy.year < 2000) return true;
   if (sourceYear < policy.year) return false;

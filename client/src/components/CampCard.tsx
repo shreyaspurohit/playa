@@ -1,5 +1,5 @@
 // One <article> in the results grid. Shows name, meta (location +
-// website + canonical + navigate), description, tags, and a collapsible
+// website + navigate), description, tags, and a collapsible
 // events list. When anyone (you or friends) has starred it, a "faved
 // by" chip row appears below the meta.
 import type { Camp } from '../types';
@@ -76,18 +76,6 @@ export function CampCard({
           <>
             {' · '}
             <a href={camp.website} target="_blank" rel="noopener">website ↗</a>
-          </>
-        )}
-        {camp.url && (
-          <>
-            {' · '}
-            <a
-              class="canonical"
-              href={camp.url}
-              target="_blank"
-              rel="noopener"
-              title="Open on directory.burningman.org"
-            >on directory ↗</a>
           </>
         )}
         {camp.location && (

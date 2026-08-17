@@ -240,9 +240,8 @@ function collectSchedule(
   return { byCell, hiddenByCell, unscheduled };
 }
 
-function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, isDirectory }: {
+function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
   e: ScheduleEntry;
-  isDirectory: boolean;
   onGotoCamp: (id: string) => void;
   youLabel: string;
   /** Called with no args — the parent already knows the (eventId, iso)
@@ -256,7 +255,6 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, isDirectory }
   const st = p ? to12h(p.start_time) : '';
   const et = p ? to12h(p.end_time) : '';
   const span = p && p.end_day && p.end_day !== p.start_day ? ` → ${p.end_day}` : '';
-  const evUrl = `https://directory.burningman.org/events/${encodeURIComponent(e.event.id)}/`;
   return (
     <li class={'sched-row' + (hidden ? ' hidden' : '')}>
       <div class="sched-time">
@@ -264,13 +262,7 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, isDirectory }
       </div>
       <div class="sched-main">
         <div class="sched-row-head">
-          {isDirectory ? (
-            <a class="sched-evname" href={evUrl} target="_blank" rel="noopener">
-              {e.event.name}
-            </a>
-          ) : (
-            <span class="sched-evname">{e.event.name}</span>
-          )}
+          <span class="sched-evname">{e.event.name}</span>
           <AddJournalButton compact context={{ kind: 'event', title: e.event.name, campName: e.camp.name }} />
           {onToggleHide && (
             <button
@@ -310,7 +302,7 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, isDirectory }
 }
 
 function DayColumn({
-  cell, entries, hiddenEntries, onGotoCamp, youLabel, onToggleHide, isDirectory,
+  cell, entries, hiddenEntries, onGotoCamp, youLabel, onToggleHide,
 }: {
   cell: DayCell;
   entries: ScheduleEntry[];
@@ -318,7 +310,6 @@ function DayColumn({
   onGotoCamp: (id: string) => void;
   youLabel: string;
   onToggleHide: (eventId: string, iso: string) => void;
-  isDirectory: boolean;
 }) {
   return (
     <section class="sched-day">
@@ -332,7 +323,7 @@ function DayColumn({
         <ul class="sched-list">
           {entries.map((e) =>
             <EventRow
-              key={`${cell.iso}:${e.event.id}`} e={e} isDirectory={isDirectory}
+              key={`${cell.iso}:${e.event.id}`} e={e}
               onGotoCamp={onGotoCamp} youLabel={youLabel}
               onToggleHide={() => onToggleHide(e.event.id, cell.iso)}
             />)}
@@ -346,7 +337,7 @@ function DayColumn({
           <ul class="sched-list">
             {hiddenEntries.map((e) =>
               <EventRow
-                key={`${cell.iso}:hidden:${e.event.id}`} e={e} isDirectory={isDirectory}
+                key={`${cell.iso}:hidden:${e.event.id}`} e={e}
                 onGotoCamp={onGotoCamp} youLabel={youLabel}
                 onToggleHide={() => onToggleHide(e.event.id, cell.iso)}
                 hidden
@@ -365,9 +356,6 @@ export function ScheduleView({
   source, nowSnapshot,
 }: Props) {
   const brc = useMemo(() => brcForSource(source), [source]);
-  // Only directory events have a canonical directory.burningman.org page; API
-  // events do not, so their names render as plain text (no dead hyperlink).
-  const isDirectory = source === 'directory';
   const cells = useMemo(
     () => buildCalendarCells(burnStart ?? '', burnEnd ?? ''),
     [burnStart, burnEnd],
@@ -627,7 +615,6 @@ export function ScheduleView({
                 hiddenEntries={hiddenByCell.get(c.iso) ?? []}
                 onGotoCamp={onGotoCamp} youLabel={youLabel}
                 onToggleHide={onToggleDayHidden}
-                isDirectory={isDirectory}
               />
             ))}
           </div>
@@ -657,7 +644,7 @@ export function ScheduleView({
                   <ul class="sched-list">
                     {entries.map((e) =>
                       <EventRow
-                        key={`${c.iso}:${e.event.id}`} e={e} isDirectory={isDirectory}
+                        key={`${c.iso}:${e.event.id}`} e={e}
                         onGotoCamp={onGotoCamp} youLabel={youLabel}
                         onToggleHide={() => onToggleDayHidden(e.event.id, c.iso)}
                       />)}
@@ -668,7 +655,7 @@ export function ScheduleView({
                       <ul class="sched-list">
                         {hidden.map((e) =>
                           <EventRow
-                            key={`${c.iso}:hidden:${e.event.id}`} e={e} isDirectory={isDirectory}
+                            key={`${c.iso}:hidden:${e.event.id}`} e={e}
                             onGotoCamp={onGotoCamp} youLabel={youLabel}
                             onToggleHide={() => onToggleDayHidden(e.event.id, c.iso)}
                             hidden
@@ -688,14 +675,13 @@ export function ScheduleView({
                 <span class="sched-day-count">{unscheduled.length}</span>
               </h3>
               <p class="footnote">
-                These events had times the parser didn't recognize — the raw
-                text from directory.burningman.org is shown as the event
-                description.
+                These events did not include a usable occurrence time in the
+                snapshot, so they cannot be placed on the calendar.
               </p>
               <ul class="sched-list">
                 {unscheduled.map((e) =>
                   <EventRow
-                    key={`uns:${e.event.id}`} e={e} isDirectory={isDirectory}
+                    key={`uns:${e.event.id}`} e={e}
                     onGotoCamp={onGotoCamp} youLabel={youLabel}
                   />,
                 )}

@@ -1,46 +1,35 @@
-"""Pluggable data sources for camp + event + art listings.
-
-Each source implements `name` (string id used in DOM/LS keys),
-`load_camps(config) -> list[Camp]`, and `load_art(config) -> list[Art]`.
-The builder enumerates whichever sources the user asked for and emits
-one encrypted payload per source per type (camps + art are independent
-ciphers — each source ships both).
-
-See docs/15-data-sources.md for the architecture rationale.
-"""
+"""Annual API-snapshot source registry."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from ..config import Config
 from ..models import Art, Camp
 
 
+@dataclass
+class SourceSnapshot:
+    """One decrypted cache read, normalized for the builder."""
+
+    camps: list[Camp]
+    art: list[Art]
+    fetched_at: str
+
+
 class Source(Protocol):
     name: str
 
-    def load_camps(self, config: Config) -> list[Camp]: ...
-    def load_art(self, config: Config) -> list[Art]: ...
+    def load_snapshot(self, config: Config) -> SourceSnapshot: ...
 
 
 def make_source(spec: str) -> Source:
     """Resolve a source spec string to a concrete Source instance.
 
-    Recognized specs:
-      * "directory"   — directory.burningman.org HTML scrape
-      * "api-YYYY"    — api.burningman.org bulk endpoints, year=YYYY
-
-    Unknown specs raise ValueError so a typo in --sources doesn't
-    silently produce an empty payload.
+    Only ``api-YYYY`` is valid. Unknown or malformed specs fail closed.
     """
-    if spec == "directory":
-        from .directory import DirectorySource
-        return DirectorySource()
-    if spec.startswith("api-"):
-        try:
-            year = int(spec[len("api-"):])
-        except ValueError as e:
-            raise ValueError(f"bad api source spec {spec!r}: {e}") from e
+    if spec.startswith("api-") and len(spec) == 8 and spec[4:].isdigit():
+        year = int(spec[4:])
         from .api import APISource
         return APISource(year=year)
     raise ValueError(f"unknown source: {spec!r}")

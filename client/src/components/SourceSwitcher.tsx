@@ -4,13 +4,11 @@
 // every source's payload is already in the page — see
 // docs/15-data-sources.md.
 //
-// Hidden when there's only one source (the default-and-only build),
-// so directory-only deploys keep their existing chrome.
+// Hidden when there's only one annual snapshot.
 import type { JSX } from 'preact';
 import type { Source } from '../types';
 
 function labelFor(source: Source): string {
-  if (source === 'directory') return 'Directory';
   if (source.startsWith('api-')) return `API ${source.slice(4)}`;
   return source;
 }

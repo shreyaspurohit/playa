@@ -54,15 +54,10 @@ owner decision reversing these.
 - **App-side content encryption of the Dropbox sync/journal files** — the data
   lives in the user's own encrypted Dropbox account; keep it plainly readable
   (see [16-cloud-sync.md](16-cloud-sync.md) D11 and [20-journal.md](20-journal.md)).
-- **directory↔API favorite migration** — users don't switch sources; the source
-  switch is operator-only (testing / viewing history), so favorites need not
-  carry across id spaces.
 - **Mid-session tier-up password affordance** — all real users are spirit-mode;
   higher tiers exist only for the operator to test and compare.
 - **Mutant vehicle source / catalog** — art cars move and have no fixed
   location; they're a discover-in-the-moment thing you can't plan or map.
-- **Per-year-source denylists** — global id takedown is the default; build a
-  per-source/year variant *only if* a specific year's takedown ever requires it.
 
 ## Scaling boundaries
 

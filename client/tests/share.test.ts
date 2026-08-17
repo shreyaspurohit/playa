@@ -11,8 +11,11 @@ import {
 
 /** Encode an arbitrary object (not a SharePayload) as a share blob so
  *  tests can feed hostile shapes to the decoder. */
-function encodeRaw(obj: unknown): string {
-  const json = JSON.stringify(obj);
+function encodeRaw(obj: unknown, withSource = true): string {
+  const payload = withSource && obj !== null && typeof obj === 'object' && !Array.isArray(obj)
+    ? { src: 'api-2026', ...obj }
+    : obj;
+  const json = JSON.stringify(payload);
   const bytes = new TextEncoder().encode(json);
   let bin = '';
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -28,18 +31,19 @@ describe('encode/decode', () => {
       name: 'Alice',
       campIds: ['779', '136', '500'],
       eventIds: ['419', '2974'],
+      source: 'api-2026',
     };
     const decoded = decodeShare(encodeShare(p));
     assert.deepEqual(decoded, p);
   });
 
   test('handles unicode nicknames', () => {
-    const p = { name: '🔥 dusty', campIds: ['1'], eventIds: [] };
+    const p = { name: '🔥 dusty', campIds: ['1'], eventIds: [], source: 'api-2026' };
     assert.deepEqual(decodeShare(encodeShare(p)), p);
   });
 
   test('handles empty fav lists', () => {
-    const p = { name: 'shy', campIds: [], eventIds: [] };
+    const p = { name: 'shy', campIds: [], eventIds: [], source: 'api-2026' };
     assert.deepEqual(decodeShare(encodeShare(p)), p);
   });
 
@@ -48,6 +52,17 @@ describe('encode/decode', () => {
     assert.equal(decodeShare(''), null);
     // Valid base64 but wrong shape:
     assert.equal(decodeShare('e30'), null); // "{}"
+  });
+
+  test('rejects source-less and non-API share links', () => {
+    assert.equal(
+      decodeShare(encodeRaw({ n: 'Alice', c: ['1'], e: [] }, false)),
+      null,
+    );
+    assert.equal(
+      decodeShare(encodeRaw({ n: 'Alice', c: ['1'], e: [], src: 'retired' }, false)),
+      null,
+    );
   });
 
   test('decode rejects payloads with no name', () => {
@@ -144,7 +159,7 @@ describe('decode — hostile input validation', () => {
 
 describe('URL round-trip', () => {
   test('buildShareUrl + readShareFromUrl recover the payload', () => {
-    const p = { name: 'Alice', campIds: ['1', '2'], eventIds: ['99'] };
+    const p = { name: 'Alice', campIds: ['1', '2'], eventIds: ['99'], source: 'api-2026' };
     const url = buildShareUrl(p);
     // Browser URL simulation: assign to location.hash via the href setter.
     const parsed = new URL(url);
@@ -161,7 +176,7 @@ describe('URL round-trip', () => {
   });
 
   test('clearShareFromUrl drops just the share segment', () => {
-    const p = { name: 'Alice', campIds: ['1'], eventIds: [] };
+    const p = { name: 'Alice', campIds: ['1'], eventIds: [], source: 'api-2026' };
     location.hash = '#schedule&share=' + buildShareUrl(p).split('#share=')[1];
     clearShareFromUrl();
     assert.ok(!location.hash.includes('share='));
@@ -175,6 +190,7 @@ describe('URL round-trip', () => {
       campIds: ['1', '2'],
       eventIds: ['e1'],
       artIds: ['a1', 'a2', 'a3'],
+      source: 'api-2026',
     };
     const decoded = decodeShare(encodeShare(p));
     assert.equal(decoded?.name, 'Alice');
@@ -182,7 +198,7 @@ describe('URL round-trip', () => {
   });
 
   test('omits artIds when empty (compatible with old payloads)', () => {
-    const p = { name: 'Alice', campIds: ['1'], eventIds: [] };
+    const p = { name: 'Alice', campIds: ['1'], eventIds: [], source: 'api-2026' };
     const decoded = decodeShare(encodeShare(p));
     // Old shares produce no artIds; receiver treats undefined as "none".
     assert.equal(decoded?.artIds, undefined);
@@ -191,6 +207,7 @@ describe('URL round-trip', () => {
   test('artIds: rejects malformed individual ids but keeps valid ones', () => {
     const raw = encodeShare({
       name: 'Alice', campIds: [], eventIds: [],
+      source: 'api-2026',
       // Mix of valid + bad — bad gets dropped by cleanIds.
       artIds: ['a1', '<script>', 'a2', '   '],
     });

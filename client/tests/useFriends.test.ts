@@ -18,7 +18,7 @@ let mountpoint: HTMLElement;
 
 // Tests run with a fixed scoped key — `useFriends` doesn't care which
 // source it points at, only that the key is per-source-stable.
-const TEST_KEY = LS.sharedFavs + '/directory';
+const TEST_KEY = LS.sharedFavs + '/api-2026';
 
 function Harness(): null {
   api = useFriends(TEST_KEY);

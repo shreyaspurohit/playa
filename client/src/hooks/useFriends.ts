@@ -4,7 +4,7 @@
 //
 // Per-source: `storageKey` is the scoped slot like
 // `bm-shared/api-2024`. Each source has its own friends map because
-// camp ids don't cross sources (numeric directory ids vs. SFDC uids).
+// record ids are scoped to an annual API snapshot.
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { FriendFavs, MeetSpot } from '../types';
 import { readString, writeString } from '../utils/storage';

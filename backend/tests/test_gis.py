@@ -303,7 +303,7 @@ class GisOrchestrationTests(unittest.TestCase):
         self.assertIn("Ranger Headquarters", stderr.getvalue())
         self.assertEqual(normalized_path.read_bytes(), cached_bytes)
         scripts, embedded = SiteBuilder(self.config)._gis_data_scripts(
-            ["directory"],
+            ["api-2026"],
         )
         self.assertEqual(embedded, ["2026"])
         self.assertIn('id="gis-data-2026"', scripts)
@@ -328,14 +328,9 @@ class GisOrchestrationTests(unittest.TestCase):
         self.assertIn('id="gis-data-2026"', scripts)
         self.assertIn("GIS 2025 cache unusable", stdout.getvalue())
 
-    def test_nightly_pipeline_uses_best_effort_gis(self):
-        sources = ["directory", "api-2025", "api-2026"]
+    def test_deploy_pipeline_uses_best_effort_gis(self):
+        sources = ["api-2026", "api-2025"]
         with (
-            mock.patch("playa.cli.cmd_fetch_all"),
-            mock.patch("playa.cli.cmd_fetch_art_all"),
-            mock.patch("playa.cli.cmd_meta"),
-            mock.patch("playa.cli.cmd_merge"),
-            mock.patch("playa.cli.cmd_tag"),
             mock.patch("playa.cli.cmd_gis_fetch") as gis_fetch,
             mock.patch("playa.cli.cmd_build") as build,
         ):

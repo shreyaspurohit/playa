@@ -19,12 +19,10 @@ Three closely-related subsystems coordinate around the version stamp:
 
 ## Decisions
 
-- **Date-+-minute version** — `vYYYY.MM.DD.HHMM` (Pacific). Lex-sorts
+- **Date-plus-minute version** — `vYYYY.MM.DD.HHMM` (Pacific). Lex-sorts
   in chronological order, two same-day deploys get distinct strings,
-  and the leading `vYYYY.MM.DD` matches `fetched_date` so they read
-  as one human-friendly value. Time zone is **Pacific** for both
-  fields so the date prefix never disagrees with HHMM around the
-  midnight boundary.
+  and distinguishes same-day deploys. This is deliberately independent from
+  `fetched_date`, which reflects the primary API cache's `fetched_at`.
 - **Plain text `version.txt`** as the polling endpoint — 12 bytes,
   no parsing, no SW interception. Easier and cheaper than parsing
   HTML or hitting a `/version` API (which doesn't exist on Pages
@@ -46,14 +44,11 @@ Three closely-related subsystems coordinate around the version stamp:
 flowchart LR
   Now[datetime.now UTC] --> Pacific["pacific = utc.astimezone(<br>America/Los_Angeles)"]
   Pacific --> Version["v + pacific.strftime<br>(%Y.%m.%d.%H%M)"]
-  Pacific --> Date["pacific.strftime(%Y-%m-%d)"]
-  Now --> ISO[utc.strftime ISO]
-  Version --> Meta["meta.json<br>+ <meta name='bm-version'><br>+ version.txt<br>+ sw.js CACHE name"]
+  Version --> Meta["<meta name='bm-version'><br>+ version.txt<br>+ sw.js CACHE name"]
+  Cache["primary API fetched_at"] --> Date["visible Updated date"]
 ```
 
-- `meta.py::write_meta` is the source of truth.
-- `builder.py::load_meta` falls back to file mtimes if `meta.json`
-  is missing (e.g., partial fetch).
+- `SiteBuilder._build_meta()` creates both values from their distinct clocks.
 
 ### Update detection
 
@@ -147,7 +142,8 @@ Pages' max-age cache window.
 
 ## Code references
 
-- `backend/src/playa/meta.py` — version stamping
+- `backend/src/playa/builder.py::_build_meta` — build/deploy version
+  stamping (`vYYYY.MM.DD.HHMM`)
 - `backend/src/playa/builder.py::_collect_release_notes` — git log
   filter for `rn:`
 - `backend/src/playa/builder.py::_write_service_worker` — emits

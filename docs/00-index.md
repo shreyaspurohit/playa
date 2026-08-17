@@ -33,7 +33,7 @@ sections wherever they apply:
 |---|---|---|
 | [01](./01-overview.md) | System overview | The whole pipeline in one page |
 | [02](./02-tech-stack.md) | Tech stack & tool choices | Preact, Python stdlib, esbuild, GH Actions — and why |
-| [03](./03-build-pipeline.md) | Build pipeline | Fetch → parse → tag → bundle → encrypt → embed → deploy |
+| [03](./03-build-pipeline.md) | Build pipeline | Cached API snapshot → normalize → tag → bundle → encrypt → deploy |
 | [04](./04-data-encryption.md) | Camp data encryption | PBKDF2 + AES-CBC, openssl ↔ Web Crypto round-trip |
 | [05](./05-password-management.md) | Password gate + secure cache | Gate, AES-GCM wrap key in IndexedDB |
 | [06](./06-multi-tab-sync.md) | Multi-tab synchronization | `storage` events for state, BroadcastChannel for password |
@@ -43,9 +43,9 @@ sections wherever they apply:
 | [10](./10-map-system.md) | Map system | SVG BRC grid, GPS, official GIS overlays, zoom/pan, address ↔ lat/lng |
 | [11](./11-schedule-system.md) | Schedule system | Event time parsing, calendar columns, filters |
 | [12](./12-deployment-and-ci.md) | Deployment & CI | GitHub Actions, Pages, custom domain |
-| [13](./13-tos-compliance.md) | ToS compliance | directory.burningman.org + Innovate API stance |
+| [13](./13-tos-compliance.md) | ToS compliance | API/GIS Event Data obligations and shutdown behavior |
 | [14](./14-refresh-cycle.md) | Refresh & force-refresh | What each path does, the SW interactions, the bug we fixed |
-| [15](./15-data-sources.md) | Multi-source data architecture | Directory + `api.burningman.org`, per-source state, normalization |
+| [15](./15-data-sources.md) | Annual snapshot architecture | `api-YYYY` sources, per-source state, tiers, normalization |
 | [16](./16-cloud-sync.md) | Dropbox cloud sync | Opt-in App-folder backup/restore with PKCE, LWW soft-delete, and offline catch-up |
 | [17](./17-food-tab.md) | Food tab | Food-only classification, live availability, search, filters, stars, and Near Me |
 | [18](./18-mobile-scroll-chrome.md) | Mobile scroll-aware chrome | Auto-hide global chrome while retaining each tab's task-critical controls |
@@ -54,7 +54,6 @@ sections wherever they apply:
 | [21](./21-on-device-assistant.md) | On-device "Ask" assistant | Opt-in, no-cloud, foreground-only NL Q&A grounded in the app's own data; tiered built-in-model / WebGPU-download / retrieval-only |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
 | (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
-| (ref) | [HTML scraping patterns](./dev/html-scraping-patterns.md) | Directory markup shapes used by the parsers |
 | (ref) | [Site UI](./dev/site-ui.md) | Compact embed-mode and UI reference; CLAUDE.md retains detailed behavior |
 | (runbook) | [Mobile visual testing](./dev/mobile-visual-testing.md) | Phone-sized manual/headless review, screenshots, service-worker isolation, and encrypted-build restoration |
 | (runbook) | [Annual map and GIS update](./dev/annual-map-update.md) | Year rollover for city geometry, official POIs/layers, validation, mobile review, and deployment configuration |

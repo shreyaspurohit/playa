@@ -6,44 +6,31 @@
 // Cross-tab: storage events keep tabs in sync — flipping the source
 // in one tab updates the other.
 //
-// Migration: on first run after the multi-source upgrade, we copy
-// each legacy unsuffixed key (bm-favs, bm-fav-events, bm-shared,
-// bm-my-camp, bm-meet-spots, bm-hidden-days) into its `/directory`
-// slot. Bare keys are left in place so an older bundle (cached SW,
-// other tab) still finds its data — see ADR D4.
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { LS, type Source } from '../types';
 import { readString, writeString } from '../utils/storage';
-import { DIRECTORY_YEAR, type BrcMapData, getBrcForYear } from '../map/data';
+import { CURRENT_BRC_YEAR, type BrcMapData, getBrcForYear } from '../map/data';
 
-const SCOPED_BASE_KEYS = [
-  LS.favs, LS.favEvents, LS.sharedFavs,
-  LS.myCampId, LS.meetSpots, LS.hiddenDays,
-];
+function configuredBrcYear(): number {
+  if (typeof document !== 'undefined') {
+    const raw = document.querySelector('meta[name="bm-brc-map-year"]')
+      ?.getAttribute('content');
+    const year = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    if (Number.isInteger(year) && year >= 2000 && year <= 2200) return year;
+  }
+  return CURRENT_BRC_YEAR;
+}
 
 /** Resolve a source identifier to the burn year its data represents.
  *
- *   `directory` → `DIRECTORY_YEAR` (the year being currently fetched —
- *                   bumped by the /update-map skill at year rollover)
  *   `api-YYYY`  → `YYYY`
- *   anything else → DIRECTORY_YEAR (best-guess fallback)
+ *   anything else → the configured current BRC year
  *
  * Drives the per-year map geometry lookup in MapView (ADR D11). */
 export function yearForSource(source: Source): number {
-  if (source === 'directory') {
-    if (typeof document !== 'undefined') {
-      const raw = document.querySelector('meta[name="bm-directory-map-year"]')
-        ?.getAttribute('content');
-      const configured = raw ? parseInt(raw, 10) : Number.NaN;
-      if (Number.isInteger(configured) && configured >= 2000 && configured <= 2200) {
-        return configured;
-      }
-    }
-    return DIRECTORY_YEAR;
-  }
   const m = /^api-(\d{4})$/.exec(source);
   if (m) return parseInt(m[1], 10);
-  return DIRECTORY_YEAR;
+  return configuredBrcYear();
 }
 
 /** Resolve a source only to exact-year BRC geometry.
@@ -55,11 +42,12 @@ export function brcForSource(source: Source): BrcMapData | null {
 
 /** Sources embedded in this build, in declaration order (first = default). */
 export function availableSources(): Source[] {
-  if (typeof document === 'undefined') return ['directory'];
+  const fallback = [`api-${configuredBrcYear()}`];
+  if (typeof document === 'undefined') return fallback;
   const m = document.querySelector('meta[name="bm-sources"]');
   const raw = (m?.getAttribute('content') ?? '').trim();
-  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
-  return parts.length > 0 ? parts : ['directory'];
+  const parts = raw.split(',').map((s) => s.trim()).filter((s) => /^api-\d{4}$/.test(s));
+  return parts.length > 0 ? parts : fallback;
 }
 
 /** Pick the source that visible labels and source-specific notices should use.
@@ -70,28 +58,9 @@ export function sourceForDisplay(
   selected: Source,
   available: Source[],
 ): Source {
-  return available.includes(selected) ? selected : (available[0] ?? selected);
-}
-
-/** One-shot copy of legacy unsuffixed keys → `<key>/directory`.
- *  Idempotent: safe to call on every mount; the flag short-circuits
- *  after the first run. Bare keys are NOT removed (compat for any
- *  cached older bundle still running in another tab). */
-export function migrateLegacyKeysOnce(): void {
-  if (typeof localStorage === 'undefined') return;
-  const flag = readString(LS.legacyKeysMigrated, '');
-  if (flag === '1') return;
-  for (const base of SCOPED_BASE_KEYS) {
-    const legacy = readString(base, '');
-    if (!legacy) continue;
-    const target = `${base}/directory`;
-    // Don't overwrite a per-source value that already exists — the
-    // user might have run a newer bundle in some other tab first.
-    const existing = readString(target, '');
-    if (existing) continue;
-    writeString(target, legacy);
-  }
-  writeString(LS.legacyKeysMigrated, '1');
+  return available.includes(selected)
+    ? selected
+    : (available[0] ?? `api-${configuredBrcYear()}`);
 }
 
 export interface SourceApi {

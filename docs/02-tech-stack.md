@@ -10,8 +10,8 @@ status: current
 ## Overview
 
 Each library and tool was picked to minimize ongoing operational cost.
-The site lives at the edge (Pages CDN); maintenance is mostly "do
-nothing and the cron keeps refreshing it."
+The site lives at the edge (Pages CDN); code changes deploy from `main`, while
+data refreshes remain explicit operator actions.
 
 ## Decisions
 
@@ -77,8 +77,9 @@ nothing and the cron keeps refreshing it."
 - **Three-job workflow** (test → build → deploy): test gate prevents a
   broken parser from ever overwriting the live site. See
   `.github/workflows/refresh.yml`.
-- **Nightly cron at 08:00 UTC** (≈ 01:00 PT): low-traffic time, fresh
-  data ready before anyone in PST wakes up.
+- **No scheduled build**: PRs get validation-only CI; merges and direct pushes
+  to `main` test and deploy. Manual dispatches refresh selected API years and
+  handle date-boundary spirit unlocks without spending minutes every night.
 
 ### Dependency management — Renovate
 

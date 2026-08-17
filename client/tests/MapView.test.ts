@@ -123,7 +123,7 @@ afterEach(() => {
 });
 
 function mountMap(
-  source = 'directory',
+  source = 'api-2026',
   overrides: Partial<Parameters<typeof MapView>[0]> = {},
 ) {
   render(h(MapView, {
@@ -232,15 +232,15 @@ describe('<MapView> official POIs', () => {
   test('uses distinct silhouettes for favorites, home, art, and rendezvous', async () => {
     const camp = {
       id: 'camp-favorite', name: 'Favorite Camp', location: '7:30 & E',
-      description: '', website: '', url: '', tags: [], events: [],
+      description: '', website: '', tags: [], events: [],
     };
     const home = { ...camp, id: 'home', name: 'Home Camp', location: '6:00 & G' };
     const art = {
       id: 'art-1', name: 'Favorite Art', location: "8:00 4000', Open Playa",
-      description: '', url: '', artist: '', hometown: '', category: '',
+      description: '', artist: '', hometown: '', category: '',
       program: '', image_url: '', year: 2026, tags: [],
     };
-    mountMap('directory', {
+    mountMap('api-2026', {
       camps: [camp, home],
       favCampIds: new Set([camp.id, home.id]),
       myCampId: home.id,
@@ -263,18 +263,18 @@ describe('<MapView> official POIs', () => {
     const camps = [
       {
         id: 'mapped', name: 'Mapped Camp', location: '7:30 & E',
-        description: '', website: '', url: '', tags: [], events: [],
+        description: '', website: '', tags: [], events: [],
       },
       {
         id: 'unlisted', name: 'Unlisted Camp', location: '',
-        description: '', website: '', url: '', tags: [], events: [],
+        description: '', website: '', tags: [], events: [],
       },
       {
         id: 'unknown', name: 'Unknown Address Camp', location: 'somewhere near Center Camp',
-        description: '', website: '', url: '', tags: [], events: [],
+        description: '', website: '', tags: [], events: [],
       },
     ];
-    mountMap('directory', {
+    mountMap('api-2026', {
       camps,
       favCampIds: new Set(camps.map((camp) => camp.id)),
     });
@@ -291,9 +291,9 @@ describe('<MapView> official POIs', () => {
   test('anchors a Center Camp sub-address home tent above the official POI', async () => {
     const home = {
       id: 'center-home', name: 'Center Home', location: 'Center Camp @ 3:00',
-      description: '', website: '', url: '', tags: [], events: [],
+      description: '', website: '', tags: [], events: [],
     };
-    mountMap('directory', { camps: [home], myCampId: home.id });
+    mountMap('api-2026', { camps: [home], myCampId: home.id });
 
     const center = await waitFor<SVGGElement>('.brc-poi-center-camp');
     const tent = mount.querySelector<SVGGElement>('.brc-my-camp');
@@ -493,7 +493,7 @@ describe('<MapView> official POIs', () => {
   test('renders a released api-2026 camp location on 2026 geometry', async () => {
     const releasedCamp = {
       id: 'released-2026-camp', name: 'Future Location Camp',
-      location: '6:00 & E', description: '', website: '', url: '', tags: [], events: [],
+      location: '6:00 & E', description: '', website: '', tags: [], events: [],
     };
     mountMap('api-2026', {
       camps: [releasedCamp],

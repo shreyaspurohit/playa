@@ -55,7 +55,6 @@ function makeCamp(overrides: Partial<Camp> = {}): Camp {
     location: '4:00 & B',
     description: 'test camp',
     website: 'https://example.com',
-    url: 'https://directory.burningman.org/camps/c1/',
     tags: [],
     events: [],
     ...overrides,
@@ -69,7 +68,7 @@ function mountFood(props: Partial<Parameters<typeof FoodView>[0]> = {}) {
     onToggleEventFav: () => {},
     friendFavEventIds: () => [],
     onGotoCamp: () => {},
-    source: 'directory' as const,
+    source: 'api-2026' as const,
     ...props,
   };
   render(h(FoodView, full), mount);
@@ -104,7 +103,7 @@ describe('<FoodView>', () => {
   });
 
   test('Near me includes Hours not listed and toggles back to the prior list', async () => {
-    const brc = brcForSource('directory')!;
+    const brc = brcForSource('api-2026')!;
     const simulated = addressToLatLng('4:00 & B', brc)!;
     location.href = `http://localhost/?gps=${simulated.lat},${simulated.lng}#food`;
     const near = makeCamp({
@@ -255,7 +254,7 @@ describe('<FoodView>', () => {
     });
     mountFood({ camps: [noLoc] });
     assert.equal(mount.querySelector('.food-loc'), null);
-    assert.doesNotMatch(mount.innerHTML, /location on directory/);
+    assert.doesNotMatch(mount.innerHTML, /external record link/);
   });
 
   test('clicking a food row expands it inline (and toggles closed)', async () => {
@@ -439,25 +438,25 @@ describe('<FoodView>', () => {
   });
 
   test('source changes clear food-type filters', async () => {
-    const directoryCamp = makeCamp({
-      id: 'directory-camp',
+    const priorCamp = makeCamp({
+      id: 'prior-camp',
       events: [makeEvent({
         id: 'pizza-event', name: 'Pizza', food_tags: ['pizza'],
         parsed_time: makeParsedTime(),
       })],
     });
-    mountFood({ camps: [directoryCamp], source: 'directory' });
+    mountFood({ camps: [priorCamp], source: 'api-2025' });
     (mount.querySelector('.food-typechip') as HTMLButtonElement).click();
     await tick();
 
-    const apiCamp = makeCamp({
-      id: 'api-camp',
+    const currentCamp = makeCamp({
+      id: 'current-camp',
       events: [makeEvent({
         id: 'taco-event', name: 'Tacos', food_tags: ['tacos'],
         parsed_time: makeParsedTime(),
       })],
     });
-    mountFood({ camps: [apiCamp], source: 'api-2026' });
+    mountFood({ camps: [currentCamp], source: 'api-2026' });
     await tick();
 
     assert.match(mount.innerHTML, /Tacos/);

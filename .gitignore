@@ -1,29 +1,9 @@
-# === FETCHED CAMP DATA — deliberately not committed ===
-# The repo is public; the fetched camp content (owned by individual camps
-# per the directory.burningman.org ToS) must not live in git history.
-# All of these files are regenerated on every CI run on the ephemeral
-# GH Actions runner, uploaded as a Pages artifact, then evaporate.
-data/pages/
-data/pages-backups/
-data/meta.json
-data/camps.csv
-data/camps_tagged.csv
-data/logs/
-# Food classification exclusions (`data/food-exclusions-*.txt`) are committed
-# ID-only review decisions; do not add a wildcard that ignores them.
-# Art parallel to camps. `data/art_pages/art_NN.json` are the per-
-# page fetches off `directory.burningman.org/artwork/`; the CSVs are
-# regenerated downstream by `playa merge` / `playa tag`. Same ToS
-# stance as camps — the directory's content lives in CI/runtime, not
-# in git. The committed `data/denylist-art.txt` (and its API sibling)
-# stay tracked since they're just IDs, no fetched text.
-data/art_pages/
-data/art.csv
-data/art_tagged.csv
-# api.burningman.org cache — Phase 1 stores fetched payloads on the
-# local filesystem (see docs/15-data-sources.md, decision D7). Phase 2
-# moves this into GitHub Releases; the gitignore stays either way.
+# === EVENT DATA — deliberately not committed ===
+# Encrypted annual API snapshots are restored from GitHub Releases in CI.
+# Local copies remain outside git history.
 data/api/
+# Reviewed API-year Food exclusions are ID-only decisions and stay tracked.
+# Do not add a wildcard that ignores data/food-exclusions-api-*.txt.
 # Official annual GIS caches + normalized offline map payloads.
 data/gis/
 
@@ -38,6 +18,7 @@ site/index.html
 site/privacy.html
 site/sw.js
 site/version.txt
+site/burn-key.json
 # Code-split semantic-search chunk (ADR 21). Built on the runner from
 # client/dist and uploaded with the Pages artifact; never committed.
 site/semantic-backend.js
@@ -73,11 +54,18 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Local overrides. Put real SITE_PASSWORD / CONTACT_EMAIL in env or a repo
-# secret, not in the tree.
+# Vim/editor swap files
+*.swp
+*.swo
+*.swn
+*~
+
+# Local overrides. Put real passwords and API keys in env or repo secrets,
+# not in the tree.
 .env
 .env.local
 
 # Derived semantic-search vectors (embedding cache + output) — never committed
 data/embeddings/
 site/embeddings.json
+site/embeddings-*.json

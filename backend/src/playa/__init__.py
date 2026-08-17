@@ -1,23 +1,18 @@
-"""playa — Burning Man theme-camp directory fetcher + static site builder.
+"""playa — Burning Man API snapshot + static site builder.
 
 Entry points:
-    python -m playa fetch <page>      # one listing page + its detail pages
-    python -m playa fetch-all         # every page (parallel)
-    python -m playa meta              # write data/meta.json
-    python -m playa merge             # write data/camps.csv
-    python -m playa tag               # write data/camps_tagged.csv
+    python -m playa api-fetch --year YYYY
     python -m playa build             # build site/index.html
-    python -m playa all               # full pipeline, end-to-end
+    python -m playa all               # GIS refresh + cached API build
 
 Library entry points:
-    from playa import Config, Fetcher, Tagger, SiteBuilder, Camp, Event
+    from playa import Config, Tagger, SiteBuilder, Camp, Event
 """
 from .config import Config
 from .models import Camp, Event
-from .fetcher import Fetcher
 from .tagger import Tagger, TAGS
 from .builder import SiteBuilder
 
 __all__ = [
-    "Config", "Fetcher", "Tagger", "SiteBuilder", "Camp", "Event", "TAGS",
+    "Config", "Tagger", "SiteBuilder", "Camp", "Event", "TAGS",
 ]

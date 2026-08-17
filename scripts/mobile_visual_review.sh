@@ -42,18 +42,18 @@ trap on_exit EXIT INT TERM
 echo "==> Building current client bundle"
 (cd "$PLAYA_REVIEW_ROOT/client" && npm run build)
 
-echo "==> Building temporary directory-only plaintext review site"
+echo "==> Building temporary API-only plaintext review site"
 PLAYA_REVIEW_PLAINTEXT=1
 (
   cd "$PLAYA_REVIEW_ROOT"
-  SITE_PASSWORD= SITE_TIERS= BM_API_YEARS= \
+  SITE_PASSWORD= SITE_TIERS= BM_API_YEARS="${BM_API_YEARS:-2026}" \
     SYNC_PROVIDER="${MOBILE_REVIEW_SYNC_PROVIDER:-}" \
     SYNC_CLIENT_ID="${MOBILE_REVIEW_SYNC_CLIENT_ID:-}" \
     BURN_WINDOW_OPEN_FROM="${BURN_WINDOW_OPEN_FROM:-2026-08-30}" \
     BURN_WINDOW_OPEN_TO="${BURN_WINDOW_OPEN_TO:-2026-09-07}" \
     CAMP_LOCATION_RELEASE_AT="${CAMP_LOCATION_RELEASE_AT:-2026-08-23T00:00:00-07:00}" \
     ART_LOCATION_RELEASE_AT="${ART_LOCATION_RELEASE_AT:-2026-08-30T00:00:00-07:00}" \
-    python3 -m playa build --sources directory
+    python3 -m playa build
 )
 
 echo "==> Capturing 390x844 expanded/collapsed/revealed states"
@@ -71,9 +71,8 @@ import sys
 from pathlib import Path
 
 html = Path(sys.argv[1]).read_text()
-assert 'id="camps-data-directory-cipher"' in html
-assert 'id="camps-data-directory"' not in html
-match = re.search(r'<meta name="bm-directory-map-year" content="(\d{4})">', html)
+assert 'id="camps-data-api-2026"' in html
+match = re.search(r'<meta name="bm-brc-map-year" content="(\d{4})">', html)
 assert match is not None
 year = match.group(1)
 assert html.count(f'id="gis-data-{year}"') == 1
@@ -81,5 +80,5 @@ print(f"encrypted build restored; one {year} GIS payload embedded")
 PY
 
 trap - EXIT INT TERM
-echo "==> Review artifacts contain private directory data: $PLAYA_REVIEW_DIR"
+echo "==> Review artifacts contain private API data: $PLAYA_REVIEW_DIR"
 echo "    Inspect them, then delete that exact directory."

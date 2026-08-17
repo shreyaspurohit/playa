@@ -118,14 +118,13 @@ describe('applySnapshot + buildSnapshot round-trip', () => {
   });
 
   test('writes every field to LS and reads it back', () => {
-    // Snapshots are now per-source — the round-trip lands in the
-    // implicit default `directory` slot (`<base>/directory`).
+    // Snapshots are per-source and callers must name the owning API year.
     const original = parseSnapshot(snap())!;
-    applySnapshot(original);
+    applySnapshot(original, 'api-2026');
     assert.equal(readString(LS.nickname, ''), 'alice');
-    assert.equal(readString(LS.myCampId + '/directory', ''), '123');
+    assert.equal(readString(LS.myCampId + '/api-2026', ''), '123');
 
-    const rebuilt = buildSnapshot();
+    const rebuilt = buildSnapshot('api-2026');
     assert.equal(rebuilt.nickname, 'alice');
     assert.deepEqual(rebuilt.campFavs.sort(), ['123', '456']);
     assert.equal(rebuilt.meetSpots[0].label, 'Coffee');
@@ -135,7 +134,7 @@ describe('applySnapshot + buildSnapshot round-trip', () => {
   test('empty state builds a snapshot with all-empty arrays', () => {
     // Don't write anything, just build
     writeString(LS.favs, '');
-    const out = buildSnapshot();
+    const out = buildSnapshot('api-2026');
     assert.equal(out.schema, SNAPSHOT_SCHEMA);
     assert.deepEqual(out.campFavs, []);
     assert.deepEqual(out.meetSpots, []);

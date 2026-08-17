@@ -1,5 +1,5 @@
 // One <article> in the art results grid. Mirrors CampCard but for art:
-// shows name, artist, meta (location + canonical + navigate), image
+// shows name, artist, meta (location + navigate), image
 // thumbnail, description, tags. Star toggle, friend faving chip row,
 // and a navigate→map link when the address resolves. No events.
 import { useState } from 'preact/hooks';
@@ -57,18 +57,6 @@ export function ArtCard({
       )}
       <div class="meta">
         <span>{art.location || '—'}</span>
-        {art.url && (
-          <>
-            {' · '}
-            <a
-              class="canonical"
-              href={art.url}
-              target="_blank"
-              rel="noopener"
-              title="Open on directory.burningman.org"
-            >on directory ↗</a>
-          </>
-        )}
         {art.location && (
           <>
             {' · '}

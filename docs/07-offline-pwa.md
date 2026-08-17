@@ -39,7 +39,7 @@ shell cache.
   headroom over the current 327-image set so the whole collection caches
   without churn), and is removed by **Clear all local data**.
 - **Ask uses durable opt-in caches.** `semantic-backend.js` and
-  `embeddings.json` enter `playa-ask-v1` only after setup and survive nightly
+  `embeddings.json` enter `playa-ask-v2` only after setup and survive deploy
   version changes. Transformers.js owns `transformers-cache` for the model and
   ONNX runtime. Service-worker activation deletes only old `playa-v…` shell
   caches, never these durable caches. **Clear all local data** removes both.

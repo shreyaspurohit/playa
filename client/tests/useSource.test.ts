@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installDom, teardownDom } from './_dom';
-import { brcForSource, sourceForDisplay, yearForSource } from '../src/hooks/useSource';
+import {
+  availableSources, brcForSource, sourceForDisplay, yearForSource,
+} from '../src/hooks/useSource';
 
 beforeEach(() => { installDom(); });
 afterEach(() => { teardownDom(); });
@@ -14,22 +16,32 @@ describe('sourceForDisplay', () => {
     );
   });
 
-  test('uses the unlocked API source instead of a stale directory selection', () => {
-    assert.equal(sourceForDisplay('directory', ['api-2026']), 'api-2026');
+  test('uses the current unlocked API source instead of a stale selection', () => {
+    assert.equal(sourceForDisplay('api-2024', ['api-2026']), 'api-2026');
   });
 
   test('falls back to the selection when no source is available', () => {
-    assert.equal(sourceForDisplay('directory', []), 'directory');
+    assert.equal(sourceForDisplay('api-2026', []), 'api-2026');
+  });
+});
+
+describe('availableSources', () => {
+  test('keeps annual API sources in builder order and drops unsupported entries', () => {
+    const meta = document.createElement('meta');
+    meta.name = 'bm-sources';
+    meta.content = 'api-2026,unsupported,api-2025';
+    document.head.appendChild(meta);
+    assert.deepEqual(availableSources(), ['api-2026', 'api-2025']);
   });
 });
 
 describe('yearForSource', () => {
-  test('reads the builder-provided directory map year', () => {
+  test('reads the builder-provided current BRC year for invalid sources', () => {
     const meta = document.createElement('meta');
-    meta.name = 'bm-directory-map-year';
+    meta.name = 'bm-brc-map-year';
     meta.content = '2027';
     document.head.appendChild(meta);
-    assert.equal(yearForSource('directory'), 2027);
+    assert.equal(yearForSource('invalid'), 2027);
   });
 
   test('API source identifiers remain independently year-keyed', () => {
@@ -46,11 +58,11 @@ describe('yearForSource', () => {
     assert.equal(brcForSource('api-2027'), null);
   });
 
-  test('directory also reports unavailable when its configured year is missing', () => {
+  test('an unknown source reports unavailable when current geometry is missing', () => {
     const meta = document.createElement('meta');
-    meta.name = 'bm-directory-map-year';
+    meta.name = 'bm-brc-map-year';
     meta.content = '2027';
     document.head.appendChild(meta);
-    assert.equal(brcForSource('directory'), null);
+    assert.equal(brcForSource('invalid'), null);
   });
 });

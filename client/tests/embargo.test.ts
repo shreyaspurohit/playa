@@ -15,16 +15,16 @@ const POLICY = {
 function mkCamp(over: Partial<Camp> = {}): Camp {
   return {
     id: '1', name: 'X', location: '6:00 & A',
-    description: '', website: '', url: '', tags: [], events: [],
+    description: '', website: '', tags: [], events: [],
     ...over,
   };
 }
 
 describe('isLocationEmbargoed', () => {
-  test('directory is never embargoed', () => {
+  test('current-year API is embargoed before release', () => {
     assert.equal(
-      isLocationEmbargoed('directory', POLICY, 'camp', new Date('2026-08-01T00:00:00Z')),
-      false,
+      isLocationEmbargoed('api-2026', POLICY, 'camp', new Date('2026-08-01T00:00:00Z')),
+      true,
     );
   });
 
@@ -131,7 +131,7 @@ describe('applyLocationEmbargo', () => {
     const camps = [mkCamp()];
     assert.equal(
       applyLocationEmbargo(
-        camps, 'directory', POLICY, new Date('2026-08-01T00:00:00Z'),
+        camps, 'api-2025', POLICY, new Date('2026-08-01T00:00:00Z'),
       ),
       camps,
     );

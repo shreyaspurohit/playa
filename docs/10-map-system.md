@@ -101,7 +101,7 @@ Primary sources for the 2026 decision:
   <https://innovate.burningman.org/dataset/2026-gis-map-data/>
 - Official repository:
   <https://github.com/burningmantech/innovate-GIS-data>
-- 2026 GeoJSON directory:
+- 2026 GeoJSON folder:
   <https://github.com/burningmantech/innovate-GIS-data/tree/master/2026/GeoJSON>
 - Participant-facing descriptions and operating details:
   <https://survival.burningman.org/city-infrastructure/on-playa-resources/>
@@ -438,9 +438,8 @@ Implementation requirements:
    geographic coordinate preserves provenance and supports external-map links.
 6. Preserve polygon ring structure, including holes, even if the current toilet
    polygons do not exercise every valid GeoJSON shape.
-7. Embed one GIS payload per year, not per directory/API source and not per
-   password tier. `directory` selects `DIRECTORY_MAP_YEAR`; `api-YYYY` selects
-   `YYYY`. Two sources for the same year share one map layer.
+7. Embed one GIS payload per year, not per password tier. `api-YYYY` selects
+   `YYYY`; tiers sharing a year share one map layer.
 8. Gzip/base64 the normalized payload using the same browser-supported
    decompression path as other embedded data. The upstream GIS data is already
    public, so it does not need a separate encryption envelope; it remains
@@ -457,14 +456,12 @@ Implementation requirements:
   normalization. A version mismatch regenerates `normalized.json` from the
   cached raw GeoJSON before attempting any network download.
 - `python -m playa gis-fetch [--year YYYY] [--force]` writes raw inputs plus
-  `data/gis/YYYY/normalized.json`. With no `--year`, it resolves the directory
-  map year and configured API years; `make build`, `make rebuild`, and
+  `data/gis/YYYY/normalized.json`. With no `--year`, it resolves the current
+  BRC year and configured API years; `make build`, `make rebuild`, and
   `make dev` ensure those caches exist.
 - `SiteBuilder._gis_data_scripts()` validates and embeds each active map year
-  once as `gis-data-YYYY`, gzip/base64. A directory and API source from the
-  same year therefore do not duplicate geometry. The builder also emits
-  `bm-directory-map-year`; the client uses that value for `directory` while
-  `api-YYYY` remains self-describing.
+  once as `gis-data-YYYY`, gzip/base64. The builder also emits
+  `bm-brc-map-year`; each `api-YYYY` source remains self-describing.
 - `client/src/map/gis.ts` validates/decompresses that script and owns layer
   defaults plus icon/color mappings. `MapView.tsx` converts official WGS84
   coordinates and polygon rings through the active `BrcMapData`. The normalized
@@ -500,7 +497,7 @@ geometry or GIS export. This is an expected partial state, not a build failure:
   overlays for that year. A forced refresh that receives 404 retains a valid
   same-year cache.
 - Other HTTP failures and released-but-invalid GIS data fail the explicit,
-  strict `gis-fetch` operator command. Automatic build/nightly refresh catches
+  strict `gis-fetch` operator command. Deployment-time best-effort refresh catches
   them per year, emits a loud warning/Actions annotation, and continues with a
   valid same-year cache or no overlay. Invalid data never replaces a known good
   map, and one failed year does not prevent later years from refreshing.
@@ -526,7 +523,7 @@ replacement for that runbook.
 For each new year:
 
 1. Confirm the official GIS release page and current Terms.
-2. Inspect the repository's year directory; do not infer filenames or schema
+2. Inspect the repository's year folder; do not infer filenames or schema
    from the previous year.
 3. Fetch into the gitignored cache and print file digests, geometry types,
    counts, property keys, and coordinate bounds.
@@ -542,10 +539,10 @@ For each new year:
 8. Record the refresh date, upstream source revision, and meaningful changes in
    this ADR or the annual data manifest.
 
-The nightly production build may refresh an already-released current-year GIS
+Each production deployment may refresh an already-released current-year GIS
 cache. Actions caches `data/gis` under an exact key containing the upstream
-`innovate-GIS-data` commit and configured directory/API year set. With an exact
-hit, nightly `cmd_all` reuses validated files and does not redownload the three
+`innovate-GIS-data` commit and configured API year set. With an exact
+hit, `cmd_all` reuses validated files and does not redownload the three
 GeoJSON files. A new upstream commit or year set yields a miss and downloads
 once; there is deliberately no stale-prefix restore. HTTP 404 is the
 staged-release signal described above. Timeouts, non-404 HTTP failures,
@@ -570,14 +567,14 @@ Add focused coverage for:
 - allowlisted CPN inclusion and opaque/unapproved CPN exclusion
 - duplicate detection between official and hard-coded POIs
 - required current-year essentials and deliberate failure when absent
-- source-to-map-year selection (`directory`, `api-YYYY`, unknown future year)
+- source-to-map-year selection (`api-YYYY` and unknown future year)
 - exact-year geometry for current/historical sources and a non-rendering,
   non-failing state for a future source whose geometry is not yet available
 - staged GIS 404 with and without a validated same-year cache
 - transient network and required-name/schema failures remaining strict for an
-  explicit fetch but isolated per year during build/nightly orchestration
+  explicit fetch but isolated per year during deployment orchestration
 - a corrupt cached year being omitted without suppressing another valid year
-- nightly orchestration using `force=False`, with the workflow cache key
+- deployment orchestration using `force=False`, with the workflow cache key
   changing for an upstream revision, configured-year change, or normalizer
   code change; a stale derived cache is regenerated from cached raw GeoJSON
 - layer defaults, local persistence/versioning, and clear-local-data behavior
@@ -736,8 +733,8 @@ section.
 - **Pin density at zoom=1** can be visually noisy if a user has
   hundreds of starred camps. Mitigation: zoom in. We don't
   auto-cluster; the camps list in the sidebar is the dense view.
-- **Address ambiguity**. "7:30 & F" and "F & 7:30" both occur in the
-  directory. `parseAddress` accepts either order. Edge cases like
+- **Address ambiguity**. "7:30 & F" and "F & 7:30" both occur in source
+  records. `parseAddress` accepts either order. Edge cases like
   `None Listed` / `-` return null.
 - **Themed street names year-shift.** Each year the letters' fancy
   names change ("Ararat", "Bodhi", etc.). `parseAddress` matches

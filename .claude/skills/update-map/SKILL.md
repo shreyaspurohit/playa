@@ -185,9 +185,9 @@ export const BRC_BY_YEAR: Record<number, BrcMapData> = {
   20YY: BRC_20YY,
 };
 
-// Bump when the live directory rolls over. If BRC_20YY is not registered yet,
-// the source remains usable and its Map tab explicitly stays unavailable.
-export const DIRECTORY_YEAR = 20YY;
+// Bump with BRC_MAP_YEAR. If BRC_20YY is not registered yet, the source remains
+// usable and its Map tab explicitly stays unavailable.
+export const CURRENT_BRC_YEAR = 20YY;
 ```
 
 Also update the top-of-file comment block — especially the
@@ -285,6 +285,6 @@ git commit -m "rn: update the map and official service locations for 20YY"
 - The **city plan PDF** has its labels spatially arranged, so
   `pdftotext` reorders them randomly. Don't trust the ordering — only
   trust the presence/absence of each label.
-- If a theme is controversial and the directory gets mixed up about
+- If a theme is controversial and official communications conflict about
   street names, fall back to letter names (A–K) — the rendering code
   uses letters primarily, names are decorative.

@@ -60,10 +60,9 @@ Footer and About behavior:
 
 - Always show the exact Burning Man Project no-affiliation notice.
 - Always label app-generated tags and normalized event times.
-- Show directory attribution, directory verification links, directory data
-  provenance, and camp-owner directory takedown wording only for `directory`.
-- Never render directory-specific wording for an API-only unlock, including the
-  first frame after a stale persisted selection.
+- State that the official API snapshot may be stale or incomplete and direct
+  critical verification to current official Burning Man communications.
+- Do not render upstream record links on camps, events, art, maps, or schedules.
 
 The top-right menu opens a two-tab information modal. **How to use** covers
 Camps/Art discovery, Food availability and reversible Near Me filtering,

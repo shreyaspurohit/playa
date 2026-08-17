@@ -100,8 +100,8 @@ degraded mode. A cloud path stays out of scope (a new ADR, not a flag).
 Ranking is by **embedding similarity over real records**, so results are always
 genuine cards. No text is generated; there is nothing to hallucinate and no
 "answer" to be wrong. This is what makes the feature trustworthy enough to ship
-without a per-answer "this may be wrong" hedge (the standing "verify on the
-directory" guidance in the About modal still applies).
+without a per-answer "this may be wrong" hedge (the standing guidance to check
+critical details against current official communications still applies).
 
 ### D3 — Stack: transformers.js (CPU/WASM) + MiniLM + Orama
 
@@ -134,7 +134,7 @@ before the user accepts, cached for offline reuse. Runbook + upgrade steps:
   (`data/embeddings/cache.json`) re-embeds only records whose text changed, so a
   rebuild embeds ~nothing. The cache is gated by a config signature — any change
   to the model/revision/dtype/pooling/dim re-embeds everything. In CI the cache
-  is persisted across nightly runs via `actions/cache` (only `cache.json`, which
+  is persisted across deployment runs via `actions/cache` (only `cache.json`, which
   holds int8 vectors keyed by *text hash* — never `records.json`, which has
   source text). Embedding is gated behind `BM_EMBEDDINGS=1` (set by the `make`
   build targets and the CI build job, off for the test suite). See
@@ -143,22 +143,22 @@ before the user accepts, cached for offline reuse. Runbook + upgrade steps:
   (model@revision + dtype/pooling/normalize/dim) that must equal
   `embedModel.ts::EMBED_SIG`; the client **rejects a mismatch** rather than
   ranking against a stale embedding space after a partial upgrade.
-- **Separate file, not inlined.** The ~4–5 MB of vectors ship as
-  **`site/embeddings.json`**, fetched **only when the user opts into the
-  download** — so `index.html` stays ~2 MB for every visitor who never opens Ask.
-  A cheap `<meta name="bm-embeddings">` tells the client the index exists without
-  fetching it.
+- **Separate file, not inlined.** The vectors ship as a separate file per source
+  (**`site/embeddings-<source>.json`**, see D9), fetched **only when the user opts
+  into the download** — so `index.html` stays ~2 MB for every visitor who never
+  opens Ask. A cheap `<meta name="bm-embeddings">` manifest tells the client which
+  sources have an index without fetching one.
 - **Code-split chunk.** transformers.js + orama build to `semantic-backend.js`
   via a second esbuild entry, copied to `site/` by
   `builder.py::_copy_semantic_backend`, loaded at runtime through a
   runtime-specifier dynamic `import()` (`semanticLoader.ts`) so it stays out of
   the main bundle and is not in the SW precache SHELL.
-- **Offline across deploys.** Once fetched, `semantic-backend.js` and
-  `embeddings.json` live in the durable `playa-ask-v1` runtime cache rather than
-  the nightly versioned shell cache. Transformers.js's `transformers-cache`
-  holds the model/runtime and is likewise preserved. Activation prunes only old
-  `playa-v…` shell caches; **Clear all local data** explicitly removes both Ask
-  caches.
+- **Offline across deploys.** Once fetched, `semantic-backend.js` and each
+  `embeddings-<source>.json` live in the durable `playa-ask-v3` runtime cache
+  rather than the versioned shell cache. Transformers.js's `transformers-cache`
+  holds the model/runtime and is likewise preserved. Activation prunes every
+  older `playa-` cache (old shells + pre-v3 image/Ask namespaces); **Clear all
+  local data** explicitly removes both Ask caches.
 
 ### D6 — Filters: On now / Near me (reuse existing infra)
 
@@ -176,8 +176,8 @@ Two toggles refine results, reusing what the app already has:
 
 The surface states plainly that Ask runs entirely on the device and results are
 this app's data. Because nothing leaves the device, the app's no-cloud /
-no-tracking claims stay accurate. The About modal's "what to trust less" +
-"verify on the directory" guidance covers Ask alongside tags and event times.
+no-tracking claims stay accurate. The About modal's snapshot-freshness guidance
+covers Ask alongside tags and event times.
 
 ### D8 — Revisit in 2027
 
@@ -199,6 +199,65 @@ layer is an *optional enhancement on top of* it, never a replacement — the
 retrieval is what makes answers trustworthy. If we add one, it is an amendment to
 this ADR with a fresh capability check, not a silent swap.
 
+### D9 — One index file per source; fetch only the active year
+
+D5 shipped a single `site/embeddings.json` covering every loaded source. That is
+right for a spirit build (one year) but wasteful for demigod/god, who load
+multiple API years: the user downloads vectors for **every** configured year even
+though Ask only ever searches the year they are viewing, and the cost grows with
+each added year.
+
+**Ship one index per source and fetch it lazily.**
+
+- **Build.** `embed.mjs` is unchanged — it still produces one incremental,
+  content-hash-cached `vectors.json` keyed `source:kind:id`, so no re-embedding.
+  `builder.py::_write_embeddings` then **partitions by source prefix** and writes
+  one `site/embeddings-<source>.json` per source (e.g. `embeddings-api-2026.json`),
+  each `{model, dim, q, sig, keys, data}` holding only that source's rows. Keys
+  keep the full `source:kind:id` form (the client's record map is source-keyed and
+  filters against it, so no client change is needed there). Same vectors,
+  repackaged.
+- **Discovery.** The boolean `<meta name="bm-embeddings">` becomes a manifest of
+  sources that have an index — `content="api-2026,api-2025"`. `hasEmbeddings(source)`
+  is membership in that list; no 404-probing.
+- **Client.** `fetchEmbeddings(source)` requests `embeddings-<source>.json`.
+  `useAssistant` indexes the **active** source, and on a year switch (while set up)
+  fetches that source's file if it is not already cached and rebuilds the Orama
+  index. The ~50 MB model download stays one-time and shared across years.
+- **Offline / SW.** `ASK_ASSETS` stops hard-listing `embeddings.json`; each
+  `embeddings-<source>.json` is matched as an Ask asset (network-first, durable
+  fallback) and runtime-cached as it is first fetched, so a year already visited
+  stays available offline. Bump the Ask cache namespace to `playa-ask-v3`; the
+  activation prune is prefix-based (`playa-` minus the current three), so it
+  clears the pre-split single-file cache in the same step.
+
+**Result:** spirit fetches exactly one ~2 MB index; a demigod viewing 2026 fetches
+only 2026's, and 2025's only if they switch to it. Trade-off: one extra small
+fetch per year visited — negligible beside the one-time model download.
+
+**Migration — must not break an existing opted-in user.** This is a hard
+constraint: someone who already downloaded Ask keeps working through the deploy.
+
+- **The 50 MB model is never re-downloaded.** It lives in `transformers-cache`
+  (`MODEL_CACHE`), which every deploy preserves — D9 does not touch it. Only the
+  ~2 MB per-source index is (re)fetched.
+- **Opt-in state is preserved.** The `bm-ai-model-ready` localStorage flag and all
+  source-scoped state are untouched — no key renames, no reset. An existing user
+  still auto-loads Ask; the client just resolves the active source's index instead
+  of the single file.
+- **The orphaned single file is pruned cleanly.** `ASK_CACHE` is `playa-ask-v3`
+  and the prefix-based activation prune removes every older `playa-ask-*` (v1 and
+  the pre-split v2), alongside dropping `embeddings.json` from `ASK_ASSETS`. The
+  stale all-source `embeddings.json` leaves the cache; the new
+  `embeddings-<source>.json` populates on first fetch.
+- **Offline grace, never a hard error.** If the active source's index is not yet
+  cached and the network is unavailable, Ask shows a "reconnect once to finish
+  updating" state and plain on-screen search keeps working — the same
+  network-aware path used for a failed first download. No blank results, no crash.
+
+The deploy itself carries a new build version, so the shell updates and the
+activation prune runs on every existing client's next load.
+
 ## Failure modes & trade-offs
 
 - **Imperfect ranking**, not hallucination — the worst case is a less-relevant
@@ -208,9 +267,8 @@ this ADR with a fresh capability check, not a silent swap.
 - **The unencrypted vectors file was evaluated and deemed non-sensitive** (so it
   ships as plaintext). `site/embeddings.json` covers every source and is publicly
   fetchable, but it contains only **opaque record keys + non-invertible int8
-  vectors** — no names, descriptions, or locations. The keys are useless to an
-  outsider: directory IDs are already the public `/camps/<id>/` URLs, and API
-  uids fetch nothing without `BM_API_KEY`. Vectors are not practically
+  vectors** — no names, descriptions, or locations. Annual API UIDs fetch
+  nothing without `BM_API_KEY`. Vectors are not practically
   reversible to text, and nothing from a source the user hasn't unlocked is ever
   indexed (`allow(key)` gates on the decrypted `recordMap`) or displayed. So it
   exposes nothing an outsider couldn't already obtain — not private data. (If the
