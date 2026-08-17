@@ -20,7 +20,7 @@ function deferred<T>() {
 
 const CORPUS: AskCorpus = {
   source: 't',
-  camps: [{ id: '1', name: 'X', description: '', website: '', url: '', location: '', tags: [], events: [] } as unknown as Camp],
+  camps: [{ id: '1', name: 'X', description: '', website: '', location: '', tags: [], events: [] } as unknown as Camp],
   art: [],
   campFavs: new Set(), eventFavs: new Set(), artFavs: new Set(),
 };
@@ -48,8 +48,8 @@ beforeEach(() => {
   disposed = false;
   embedder = deferred<Embedder>();
   deps = {
-    hasEmbeddings: () => true,
-    fetchEmbeddings: async () => ({ model: 'all-MiniLM-L6-v2', dim: 3, q: 'int8', sig: 'x', keys: ['t:camp:1'], data: '' }),
+    hasEmbeddings: (_source: string) => true,
+    fetchEmbeddings: async (_source: string) => ({ model: 'all-MiniLM-L6-v2', dim: 3, q: 'int8', sig: 'x', keys: ['t:camp:1'], data: '' }),
     loadBackend: async () => ({
       loadEmbedder: async () => embedder.promise,          // stays pending until the test resolves it
       buildIndex: async () => ({} as never),

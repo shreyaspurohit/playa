@@ -20,8 +20,8 @@ afterEach(() => {
 async function mountMenu(overrides: Partial<Parameters<typeof HeaderMenu>[0]> = {}) {
   const calls = { syncNow: 0, connect: 0, cancel: 0, disconnect: 0, settings: 0 };
   render(h(HeaderMenu, {
-    source: 'directory',
-    availableSources: ['directory'],
+    source: 'api-2026',
+    availableSources: ['api-2026'],
     onSourceChange: () => {},
     currentTheme: 'paper',
     onThemeChange: () => {},

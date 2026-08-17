@@ -102,10 +102,11 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
 The per-record vectors are generated at **build** time, not hosted:
 `client/scripts/embed.mjs` embeds every camp/event/art with the same MiniLM model
 (native `onnxruntime-node`), incrementally via a content-hash cache
-(`data/embeddings/cache.json` → only changed records re-embed), and writes
-`site/embeddings.json`, which ships with the Pages artifact. Driven by
-`builder.py::_write_embeddings`, gated on `BM_EMBEDDINGS=1` (set by the `make`
-build targets). See ADR 21 D5.
+(`data/embeddings/cache.json` → only changed records re-embed). `builder.py::
+_write_embeddings` then partitions the result by source into one
+`site/embeddings-<source>.json` per year (ADR 21 D9), which ship with the Pages
+artifact. Gated on `BM_EMBEDDINGS=1` (set by the `make` build targets). See ADR
+21 D5 and D9.
 
 ## Upgrading the model / transformers.js version
 

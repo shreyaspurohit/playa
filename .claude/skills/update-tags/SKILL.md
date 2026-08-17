@@ -1,200 +1,60 @@
 ---
 name: update-tags
-description: Audit current tag coverage across directory/API camps, events, and art, then propose additions to the TAGS taxonomy in backend/src/playa/tagger.py. Use when fresh data has landed, the untagged rate or tag-per-record count looks low, or the user asks to update tags or find new themes.
+description: Audit tag coverage across configured annual API camps, events, and art, then propose additions to backend/src/playa/tagger.py. Use after an explicit API refresh or when coverage looks thin.
 ---
 
 # update-tags
 
-Grow the tag taxonomy to cover new camps without breaking existing
-tags. This is a human-in-the-loop skill — **never auto-apply changes**.
-Always show the user the proposed diff and wait for explicit approval
-before editing `backend/src/playa/tagger.py` or
-`backend/tests/test_tagger.py`.
+Grow the taxonomy without breaking existing tags. This is human-in-the-loop:
+never edit taxonomy or tests until the user approves a concrete proposal.
 
-## When to run
+## Baseline
 
-- Fresh directory or API data landed (either local fetch or a cron run).
-- The user wants to see if the taxonomy is keeping up.
-- A specific camp is coming back untagged and they want to know why.
+Load `.env`, resolve the same annual sources as the build, and use
+`make_source(source).load_snapshot(config)`. Apply `Tagger.tag_camp()` and
+`Tagger.tag_art()` in memory. Record aggregate totals, zero/one-tag counts, and
+the top 30 tag frequencies. Never print source records into logs or chat.
 
-## Baseline — capture before touching anything
+## Find and cluster gaps
 
-From the repository root:
+Build a local word-frequency table from records with at most one tag. Skip
+addresses, time strings, stopwords, one-off names, and words already covered by
+existing patterns. For each useful cluster, choose one:
 
-```bash
-make tag 2>&1 | tee /tmp/update-tags-before.log
-```
+1. extend an existing tag;
+2. propose a genuinely distinct new tag;
+3. skip it as noisy or too specific.
 
-Use the Make target because it loads the gitignored root `.env`; invoking the
-CLI directly does not.
+Validate every regex against all configured annual snapshots locally. Patterns
+must use word boundaries and cover reasonable variants without broad substring
+matches. Report only aggregate per-source counts and variant frequencies.
 
-Record:
-- total camps
-- `untagged` count (printed by `cmd_tag`)
-- top 30 tags with frequencies
+## Approval boundary
 
-Keep this — you'll compare against it in the final step.
+Present one section per proposed tag or extension, including patterns,
+additional aggregate record counts, and false-positive findings. List skipped
+clusters. Ask explicitly whether to apply or adjust the proposal. Do not edit
+before affirmative approval.
 
-## Step 1 — find the gap
+## Apply and verify
 
-Load every configured source through `playa.sources.make_source()` and run the
-current tagger against camps, their events, and art. Collect records with **0
-or 1 tags** — those are where coverage is thin. Direct page-JSON loading is a
-useful directory-only shortcut:
+After approval:
 
-```python
-from pathlib import Path
-import json
-from playa import Config, Tagger
-from playa.models import Camp
-
-config = Config.from_env()
-tagger = Tagger()
-
-thin = []
-for f in sorted(config.pages_dir.glob("page_*.json")):
-    for raw in json.loads(f.read_text()):
-        camp = Camp.from_dict(raw)
-        camp.tags = tagger.tag_camp(camp)
-        if len(camp.tags) <= 1:
-            thin.append(camp)
-
-print(f"{len(thin)} camps with ≤1 tag")
-```
-
-## Step 2 — mine keywords
-
-From the thin set, build a frequency table of content words (≥4 chars,
-skip stopwords + obvious common words like `camp`, `burn`, `playa`,
-`come`, `bring`). Focus on nouns, verbs, and adjectives that repeat.
-
-Ignore:
-- numbers, addresses, time strings
-- proper nouns that appear only once (likely record-specific names)
-- words already heavily represented in existing tags (check `TAGS` in
-  `backend/src/playa/tagger.py` first)
-
-## Step 3 — cluster into proposed tags
-
-For each cluster of related keywords, decide one of:
-
-1. **Extend an existing tag** — the word fits an existing theme.
-   Example: "mezcal" should go into the existing `booze` tag, not a new one.
-2. **New tag** — the theme is genuinely distinct (e.g. `silent_disco`,
-   `ice_bar`, `gender_play` — all were real additions in prior rounds).
-3. **Skip** — too noisy, too specific to one camp, or a proper noun.
-
-## Step 4 — validate every proposed pattern
-
-Before proposing, each regex MUST:
-
-1. Use `\b` word boundaries: `r"\bkeyword\b"` not `r"keyword"`. This is
-   the #1 taxonomy bug. Example: `\bart\b` matches "art" but not
-   "heart" or "cart"; `\byoga\b` matches "yoga" but not "yogurt".
-2. Handle plurals/variants where reasonable:
-   `r"\bsnuggl(?:e|es|ing|y)\b"`.
-3. Scan the raw data locally to sanity-check the matches, but output only
-   aggregate counts and regex-variant frequencies. Never print camp names,
-   descriptions, events, or decrypted source records into logs or chat. If
-   local inspection shows off-theme hits, refine the pattern.
-
-## Step 5 — present the diff to the user
-
-Show a structured proposal. One section per proposed change:
-
-```
-### Extend `booze`
-+ r"\bmezcal\b"
-+ r"\bsake\b"
-3 additional camps would receive this label; validated against all local
-matches with no off-theme hits.
-
-### New tag `ice_bar`
-patterns:
-  - r"\bice\s*bar\b"
-  - r"\bsub[-\s]?zero\s*(?:lounge|bar)\b"
-8 additional camps would receive this label; report source-level aggregate
-counts without reproducing records.
-
-### Skipped
-  - "interstellar": only 2 hits, one is a space-theme camp already
-    tagged via `space`, the other is a metaphor. Not worth a tag.
-```
-
-Then explicitly ask:
-> **Apply these changes? Any to drop or adjust?**
-
-Do not edit anything until the user responds affirmatively. If they
-request changes, revise the proposal and ask again.
-
-## Step 6 — apply (only after user approves)
-
-1. **Edit `backend/src/playa/tagger.py`** — insert into the appropriate section
-   of `TAGS`. For new tags, pick a section comment (e.g. `# --- Food &
-   drink ---`) that fits; for extensions, add to the existing list.
-
-2. **Edit `backend/tests/test_tagger.py`** — every new tag gets a positive and
-   (where a plausible false-positive risk exists) a negative case:
-   ```python
-   def test_ice_bar_tag(self):
-       self.assertIn("ice_bar", self.match("frozen ice bar with cocktails"))
-       # negative case: bare word shouldn't match
-       self.assertNotIn("ice_bar", self.match("ice water is free"))
-   ```
-
-3. **Run tests** — must pass before the rebuild step:
-   ```bash
-   make test
-   ```
-
-4. **Rebuild** — regenerate the site and tagged CSV:
-   ```bash
-   make rebuild
-   ```
-
-5. **Compare vs baseline** — report what changed:
-   - untagged: before → after
-   - new tags added (and their camp counts from the new top-30 summary)
-   - total camps newly tagged
-   - any existing tag whose count shifted by >5 (possible over-broadening)
+1. Edit `backend/src/playa/tagger.py` in the appropriate taxonomy section.
+2. Add positive and plausible negative cases to
+   `backend/tests/test_tagger.py`.
+3. Run `make test`.
+4. Run `make rebuild` against configured API snapshots.
+5. Recompute the baseline and report before/after zero-tag counts, newly tagged
+   records, new tag totals, and any existing tag count that moved by more than
+   five.
 
 ## Hard rules
 
-- **No word boundaries = no merge.** Any pattern without `\b` is a bug.
-- **Never auto-apply.** The diff-then-approve cycle is the whole point.
-- **Never expose fetched records.** Report aggregate counts only; source data
-  stays local and out of logs/chat.
-- **Never silently suppress a test failure.** If `make test` fails,
-  investigate; don't edit the test to make it pass.
-- **Don't touch tests for unrelated tags.** Only add tests for new
-  or modified patterns.
-- **Keep the taxonomy stable.** Don't rename existing tags (breaks
-  users' saved filter state in localStorage).
-
-## Debugging helpers
-
-```bash
-# How many camps already tag as X?
-python3 -c "
-from playa import Config, Tagger
-from playa.models import Camp
-import json, glob
-t = Tagger()
-n = 0
-for f in glob.glob('data/pages/page_*.json'):
-    for c in json.loads(open(f).read()):
-        camp = Camp.from_dict(c)
-        if 'YOUR_TAG_HERE' in t.tag_camp(camp):
-            n += 1
-print(n)
-"
-
-# What does a specific pattern match?
-python3 -c "
-import re
-for f in sorted(__import__('pathlib').Path('data/pages').glob('page_*.json')):
-    for c in __import__('json').loads(f.read_text()):
-        if re.search(r'YOUR_REGEX', c['description'], re.IGNORECASE):
-            print(c['name'], '—', c['description'][:120])
-" | head -20
-```
+- No broad unbounded regex.
+- Never auto-apply.
+- Never expose Event Data or generated record text.
+- Never silence a failing test.
+- Do not rename existing tags; saved filter state depends on stable names.
+- Do not introduce intermediate CSV or page-cache assumptions. The source
+  snapshot interface is the only audit input.

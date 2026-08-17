@@ -1,5 +1,4 @@
-"""Parse event time strings from directory.burningman.org into structured
-form + a clean display string.
+"""Parse API event time strings into structured form and a clean display.
 
 Raw strings come in two main shapes (empirically, ~99% of 4167 events):
 
@@ -61,7 +60,7 @@ _DAY_SUFFIX_RE = re.compile(r"\d+$")
 
 
 def _normalize_day(token: str) -> Optional[str]:
-    """'Mon' -> 'Mon'. 'Sun2' -> 'Sun' (the directory's suffix for the
+    """'Mon' -> 'Mon'. 'Sun2' -> 'Sun' (a source suffix for the
     closing Sunday). Unknown tokens return None."""
     s = _DAY_SUFFIX_RE.sub("", token.strip()).title()
     return s if s.lower() in _DAY_INDEX else None
@@ -153,7 +152,7 @@ def derive_week_map(parsed_events) -> dict[str, str]:
 
     Kept for tests/callers that want to see what dates the fetched data
     *claims*. Production uses `canonical_week_map()` instead because the
-    directory's per-event tuples are often stale (e.g., 2024 dates still
+    API event tuples can be stale (e.g., 2024 dates still
     present when we're building the 2026 site).
 
     If a day surfaces with multiple dates (e.g., both opening-Sunday and
@@ -179,7 +178,7 @@ def canonical_week_map(burn_start: str, burn_end: str) -> dict[str, str]:
     The `burn_start` passed here is typically the *effective* start —
     the earliest event date rather than the official gate-open day.
     Volunteers and early-arrival crews run events before gates, and
-    they appear in the directory with pre-gates dates; we want those
+    they appear in the snapshot with pre-gates dates; we want those
     visible on the calendar. See `effective_burn_start()`.
     """
     start = date.fromisoformat(burn_start)
@@ -229,7 +228,7 @@ def effective_burn_start(
 
     Rationale: the official burn gates open at `configured_start`
     (e.g., Sun 8/30 for 2026), but camps routinely host pre-gates
-    events for early-arrival crews. Those appear in the directory
+    events for early-arrival crews. Those appear in the snapshot
     with dates like (8/26). Letting them drive the calendar's left
     edge means the schedule shows what the corpus actually contains
     instead of hiding early work behind an arbitrary cutoff.
@@ -290,7 +289,7 @@ def _compact_days(days) -> str:
 def _overnight_end_date(start_date: str, start_day: str, end_day: str) -> Optional[str]:
     """Derive an overnight end date from the event's dated start.
 
-    The directory gives the end weekday but not its date. Looking it up in
+    The source gives the end weekday but not its date. Looking it up in
     the first-occurrence week map is wrong for events in the second week of
     the burn (for example Sat 9/5 → Sun 9/6, where Sun also maps to 8/30).
     """
@@ -312,7 +311,7 @@ def resolve_single_start_date(
 ) -> Optional[str]:
     """Keep a valid explicit occurrence date; repair stale source tuples.
 
-    A burn window can contain the same weekday twice. The directory's explicit
+    A burn window can contain the same weekday twice. The source's explicit
     ``M/D`` is therefore the only way to distinguish opening Saturday from the
     following Saturday. We preserve it when it falls inside the configured
     window and agrees with the supplied weekday. Old-year tuples fail that

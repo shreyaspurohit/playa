@@ -125,7 +125,7 @@ export function MapInfoModal({ open, onClose, brc }: Props) {
             the city grid (clock + letter ring), but a lot of art sits
             either in the <em>open playa</em> beyond <code>K</code> street
             or in the <em>Man Pavilion</em> right around the Man, where
-            the ring grid doesn&rsquo;t apply. The directory addresses
+            the ring grid doesn&rsquo;t apply. API location strings describe
             those pieces with <code>clock + raw distance in feet</code>{' '}
             from the Man instead:
           </p>

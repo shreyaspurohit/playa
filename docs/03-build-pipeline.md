@@ -1,142 +1,69 @@
----
-title: Build Pipeline
-date: 2026-04-27
-status: current
----
-
 # Build Pipeline
+
+**Status:** Accepted
+**Last updated:** 2026-08-16
 
 ## Overview
 
-The build is the only mutation path between upstream directory/API caches and
-the live site. Locally a single `make rebuild` walks the entire
-pipeline; in CI three Actions jobs (`test → build → deploy`) wrap it
-with the safety + artifact-upload story.
+The build transforms cached annual API snapshots and optional annual GIS data
+into a static, encrypted-capable PWA. The normal build path performs no Event
+Data network request.
 
 ## Decisions
 
-- **Two-stage build, single artifact.** Client is bundled into one
-  IIFE with esbuild; Python builder inlines that IIFE into the HTML
-  shell along with the data. Output is one self-contained
-  `index.html` plus a couple of small auxiliary files. No multi-asset
-  loader, no chunk splitting — keeps the install + offline story
-  simple.
-- **Pure functions where possible.** Each stage (`fetch`, `merge`,
-  `tag`, `meta`, `build`) is a separate idempotent step that reads its
-  inputs and writes its outputs to disk. Lets us iterate on tags or
-  template tweaks via `make rebuild` without re-fetching.
-- **Min-camps rail.** `SiteBuilder.build()` refuses to produce a site
-  with fewer than `MIN_CAMPS` (default 500) camps loaded. Prevents a
-  parser regression from overwriting the live deploy with a broken
-  near-empty build.
+- `playa api-fetch --year YYYY` is an explicit operator action.
+- `playa all` means best-effort GIS refresh followed by a cached API-only build.
+- Source resolution is strict and current-year-first.
+- A source cache is decrypted and parsed once into camps, events, art, and
+  `fetched_at`.
+- Classification happens in memory; no intermediate CSV or freshness file is
+  produced.
+- Visible freshness and application version are separate values.
+- `MIN_CAMPS` validates the current-year primary snapshot.
+- Ask embeddings are generated from API records only and use a cutover-specific
+  cache namespace.
 
-## Mechanism
+## Stages
 
-```mermaid
-flowchart TD
-  PagesDir[/data/pages/page_NN.json/] -->|read| Merger
-  PagesDir -->|read| Tagger[Tagger]
-  PagesDir -->|read| Meta[meta.json writer]
-  Merger[merger.py<br>dedupe + sort] -->|writes| CampsCSV[/data/camps.csv/]
-  Tagger -->|writes| TaggedCSV[/data/camps_tagged.csv/]
-  Meta -->|writes| MetaJSON[/data/meta.json/]
+1. Bundle the Preact application and lazy semantic runtime.
+2. Resolve explicit `--sources` or `BM_API_YEARS`; require `BRC_MAP_YEAR`.
+3. Best-effort refresh official GIS layers when running `all`.
+4. Load every configured annual API cache; fail if any is missing or malformed.
+5. Normalize records and add tags, time formatting, and food classifications.
+6. Enforce the current-year `MIN_CAMPS` safety rail.
+7. Derive `Updated` from the primary cache's `fetched_at`; derive `vYYYY.MM.DD.HHMM`
+   from build time.
+8. Gzip and embed or envelope-encrypt each source, including tier wrappers.
+9. Generate semantic vectors when enabled.
+10. Generate `site/index.html`, `privacy.html`, `sw.js`, and `version.txt`.
 
-  subgraph Builder["SiteBuilder.build()"]
-    direction TB
-    LoadCamps[load_camps]
-    EnrichTimes[_enrich_event_times]
-    Encrypt[encrypt_payload<br>or plaintext]
-    ReadBundle[_read_bundle]
-    ReleaseNotes[_collect_release_notes<br>git log filter rn:]
-    Substitute[template.replace - all placeholders]
-    LoadCamps --> EnrichTimes --> Encrypt
-    Encrypt --> Substitute
-    ReadBundle --> Substitute
-    ReleaseNotes --> Substitute
-  end
+## Commands
 
-  TaggedCSV --> LoadCamps
-  PagesDir --> LoadCamps
-  MetaJSON --> Substitute
-  Bundle[/client/dist/bundle.js/] --> ReadBundle
-  Template[/templates/site.html/] --> Substitute
-
-  Substitute --> SiteHTML[/site/index.html/]
-  Substitute --> SW[/site/sw.js/]
-  Substitute --> VersionTxt[/site/version.txt/]
+```bash
+make fetch-api YEAR=2026  # explicit API refresh
+make rebuild              # cached snapshots -> full generated site
+make build                # same API-only site assembly
+python3 -m playa all      # optional GIS refresh + cached build
 ```
 
-### Stages, in order
+`BM_API_YEARS` is required unless `--sources` is supplied. A production shape is
+`BM_API_YEARS=2025,2026 BRC_MAP_YEAR=2026`; resolution becomes
+`api-2026,api-2025`.
 
-1. **`fetch` / `fetch-all`** (`Fetcher`) — pulls listing pages 1..N
-   in parallel via `ThreadPoolExecutor`, walks each detail page,
-   writes `data/pages/page_NN.json`. Sleeps 200 ms between detail
-   fetches to stay polite. Falls back to listing-page data if a
-   detail fetch fails.
-   `api-fetch --year YYYY` is separate: it pulls bulk camp/event/art JSON once
-   and writes the encrypted-or-plaintext `data/api/YYYY.json` year cache.
-   `gis-fetch [--year YYYY]` separately downloads and validates the official
-   annual CPN/toilet GeoJSON, then atomically writes the normalized offline map
-   payload to `data/gis/YYYY/normalized.json`. The explicit `gis-fetch` command
-   is strict so annual review catches network, schema, and required-name drift.
-   Normal `build`/`rebuild`/`dev` and nightly `all` orchestration use
-   `--best-effort`. CI restores an exact cache keyed by the upstream GIS commit
-   and configured year set, so unchanged nightly runs make no GeoJSON request;
-   an upstream/year change causes a cache miss and one refresh. A new-year HTTP
-   404 is an expected staged-release state. Any other GIS-only failure is
-   reported per year (as a GitHub Actions warning in CI), then assembly uses a
-   valid same-year cache or continues without that year's overlays. It does not
-   cancel the camp/event/art build or prevent later GIS years from refreshing.
-2. **`meta`** (`write_meta`) — counts pages/camps/events, stamps an
-   ISO timestamp + Pacific date + version (`vYYYY.MM.DD.HHMM`).
-3. **`merge`** (`merge_csv`) — dedupes by id, sorts alphabetically,
-   writes `data/camps.csv` (tags column blank).
-4. **`tag`** (`Tagger`) — runs the keyword taxonomy from
-   `tagger.py` over the haystack (name + description + events) for
-   each camp and the corresponding art haystack, writes
-   `data/camps_tagged.csv` and `data/art_tagged.csv`.
-5. **`build`** (`SiteBuilder.build`) — loads each configured source's camps and
-   art, enriches event times, applies tags, gzip-compresses, emits plaintext,
-   legacy encrypted, or tiered envelope payloads, embeds one gzip-compressed
-   official GIS payload per active map year, reads the
-   bundle, collects `rn:` release notes, fills template placeholders,
-   writes `site/index.html` + `site/sw.js` + `site/version.txt`.
+## Failure modes and trade-offs
 
-`make fetch` runs all five. `make rebuild` skips step 1 (and uses
-existing `data/pages/`). `make dev` lazy-fetches once when the cache
-is empty, otherwise rebuilds.
-
-### Safety rails
-
-- **`MIN_CAMPS` rail** in `SiteBuilder.build`: aborts when too few
-  camps loaded. CI relies on this to avoid pushing a broken artifact.
-- **Bundle `</script>` guard**: the builder rejects any bundle that
-  contains a literal `</script>`, since that string would terminate
-  the inline `<script>` block early. esbuild doesn't produce one,
-  but the check is a defensive belt-and-suspenders.
-- **`fetch-all` snapshot**: `make fetch` first moves the existing
-  `data/pages/*.json` to `data/pages-backups/<timestamp>/` before
-  re-fetching. Lets us roll back to a known-good fetch if upstream
-  HTML drifts.
-
-## Failure modes & trade-offs
-
-- **Polite-but-slow fetch (5 parallel × 30 pages × 50 camps × 200 ms ≈
-  60 s)** is fine for nightly cron, painful for local iteration. Hence
-  `fetch-small` (3 pages) and the snapshot/restore flow.
-- **Tag taxonomy is keyword-based**, so semantic misses are common.
-  The /update-tags Claude skill walks the periodic audit.
-- **One artifact = no incremental updates.** A typo fix in the legend
-  text re-uploads the whole site. The historical directory-only artifact was
-  ~2.7 MB; gzip-before-encrypt reduced it substantially, while each additional
-  embedded API year increases it again. Acceptable since deploy is ~30 s
-  end-to-end and offline reliability is the priority.
+- Missing API cache, invalid source, absent current year, invalid tier source,
+  or too-small primary source: fail loud.
+- GIS download/schema failure: warn and build without that optional overlay.
+- Semantic generation failure: fail a production embeddings-enabled build.
+- A push-triggered or ordinary manual cache miss never becomes an implicit
+  network refresh.
 
 ## Code references
 
-- `backend/src/playa/builder.py` — orchestrator
-- `backend/src/playa/cli.py` — CLI subcommand routing
-- `backend/src/playa/fetcher.py` — HTTP, retries, parallelism
-- `backend/src/playa/tagger.py` — taxonomy + matching
-- `backend/src/playa/timeparser.py` — event time normalization
-- `Makefile` — `dev`, `fetch`, `fetch-small`, `rebuild`, etc.
+- `backend/src/playa/cli.py`
+- `backend/src/playa/builder.py`
+- `backend/src/playa/sources/api.py`
+- `client/esbuild.config.mjs`
+- `client/scripts/embed.mjs`
+- `Makefile`

@@ -95,7 +95,7 @@ class ParseFromFormTests(unittest.TestCase):
         self.assertEqual(p["days"], ["Wed"])
 
     def test_accepts_day2_suffix(self):
-        # The directory uses "Sun2" / "Mon2" to disambiguate the second
+        # Some source strings use "Sun2" / "Mon2" to disambiguate the second
         # occurrence (closing Sunday vs opening Sunday). We collapse them
         # to the base day name — duplicates get deduped.
         p = parse_event_time("From 10:00 AM to 5:00 PM on Mon, Tue, Wed, Thu, Fri, Sat, Sun2")
@@ -188,7 +188,7 @@ class CanonicalWeekMapTests(unittest.TestCase):
 class EffectiveBurnStartTests(unittest.TestCase):
     """The calendar's left edge comes from the corpus, not the config —
     volunteers + early crews run events before gates, and those show up
-    in the directory with dates like (8/26)."""
+    in source data with dates like (8/26)."""
 
     CFG_START = "2026-08-30"
     CFG_END = "2026-09-07"

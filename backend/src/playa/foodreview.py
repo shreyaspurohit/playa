@@ -421,14 +421,14 @@ def _review_model(
 def _resolve_sources(value: str | None, config: Config) -> list[str]:
     if value and value.strip():
         return [part.strip() for part in value.split(",") if part.strip()]
-    return ["directory", *[f"api-{year}" for year in config.parsed_api_years()]]
+    return [f"api-{year}" for year in config.parsed_api_years()]
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Review Food Hours-not-listed candidates with local Ollama",
     )
-    parser.add_argument("--sources", help="comma-separated directory/api-YYYY sources")
+    parser.add_argument("--sources", help="comma-separated api-YYYY sources")
     parser.add_argument("--model", default=os.environ.get("FOOD_REVIEW_MODEL", "qwen3:30b"))
     parser.add_argument(
         "--verifier-model",
@@ -468,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     candidates: list[Candidate] = []
     source_counts: Counter[tuple[str, str]] = Counter()
     for source in sources:
-        found = collect_candidates(source, builder.load_camps_for_source(source))
+        found = collect_candidates(source, builder.load_snapshot_for_source(source).camps)
         candidates.extend(found)
         source_counts.update((candidate.source, candidate.kind) for candidate in found)
 

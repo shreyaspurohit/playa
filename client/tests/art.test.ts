@@ -16,7 +16,7 @@ afterEach(() => { teardownDom(); });
 function mkArt(over: Partial<Art> = {}): Art {
   return {
     id: 'a1', name: 'Sky Portal', location: '1:44 6400\', Open Playa',
-    description: 'A meditative dome.', url: '',
+    description: 'A meditative dome.',
     artist: 'Jane Doe', hometown: 'Reno, NV',
     category: 'Sculpture', program: 'Honorarium',
     image_url: '', year: 2026, tags: ['interactive_art'],
@@ -32,12 +32,12 @@ function gzipBase64(payload: unknown): string {
 describe('readEmbeddedArt', () => {
   test('reads plain gzip+base64 from art-data-<source>', async () => {
     const s = document.createElement('script');
-    s.id = 'art-data-directory';
+    s.id = 'art-data-api-2026';
     s.setAttribute('type', 'application/x-gzip-base64');
     s.textContent = gzipBase64([mkArt()]);
     document.body.appendChild(s);
 
-    const p = await readEmbeddedArt('directory');
+    const p = await readEmbeddedArt('api-2026');
     assert.equal(p.kind, 'plain');
     if (p.kind === 'plain') {
       assert.equal(p.art.length, 1);
@@ -47,7 +47,7 @@ describe('readEmbeddedArt', () => {
 
   test('returns empty plain when no art script is present', async () => {
     // No tier-wrappers manifest, no art-data script — fallback path.
-    const p = await readEmbeddedArt('directory');
+    const p = await readEmbeddedArt('api-2026');
     assert.equal(p.kind, 'plain');
     if (p.kind === 'plain') assert.equal(p.art.length, 0);
   });
@@ -55,9 +55,9 @@ describe('readEmbeddedArt', () => {
   test('signals envelope mode when bm-tier-wrappers is present', async () => {
     const m = document.createElement('meta');
     m.setAttribute('name', 'bm-tier-wrappers');
-    m.setAttribute('content', 'directory:0');
+    m.setAttribute('content', 'api-2026:0');
     document.head.appendChild(m);
-    const p = await readEmbeddedArt('directory');
+    const p = await readEmbeddedArt('api-2026');
     assert.equal(p.kind, 'envelope');
   });
 });
@@ -118,10 +118,10 @@ describe('applyArtLocationEmbargo', () => {
     assert.equal(out, art);
   });
 
-  test('directory source: never embargoed', () => {
+  test('past-year API source is not subject to the current embargo', () => {
     const art = [mkArt({ location: '6:00 & A' })];
     const out = applyArtLocationEmbargo(
-      art, 'directory', POLICY, new Date('2026-04-30T00:00:00Z'),
+      art, 'api-2025', POLICY, new Date('2026-04-30T00:00:00Z'),
     );
     assert.equal(out[0].location, '6:00 & A');
   });

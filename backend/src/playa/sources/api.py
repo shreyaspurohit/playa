@@ -15,22 +15,18 @@ Caching strategy:
     openssl's native binary "Salted__||salt||ciphertext" format
     (the cache is read back by Python, never by a browser, so we
     skip the JSON envelope).
-  * `load_camps()` decrypts on read with the same key. If the file
+  * `load_snapshot()` decrypts on read with the same key. If the file
     looks plaintext (legacy local dev), it falls through and parses
     as JSON.
-  * The CI workflow (.github/workflows/refresh.yml) treats one cache
-    file per year as a GitHub Release asset: download the encrypted
-    blob from the release, decrypt+parse at build time. Re-fetching
-    the API only happens on first build for a year, or when the user
-    deliberately bumps the release.
+  * The CI workflow (.github/workflows/refresh.yml) treats one cache file per
+    year as a GitHub Release asset: push-triggered and ordinary manual builds
+    require and download the encrypted blob; only an explicit refresh dispatch
+    may replace it.
 
 Schema mapping notes:
-  * `Camp.id` ← `uid` (18-char SFDC). Numeric directory IDs and SFDC
-    UIDs don't cross — that's why user state is per-source.
+  * `Camp.id` ← `uid` (18-char SFDC). User state remains per annual source.
   * `Camp.location` ← `location_string` (e.g., "Esplanade & 6:30");
     the existing address parser handles this format.
-  * `Camp.url` is left empty for API-source camps (no canonical
-    directory page); the UI omits the "on directory ↗" link.
   * Events come back flat with `hosted_by_camp` (camp uid). We group
     by uid and attach to the matching camp.
   * `EventOccurrenceModel.start_time` / `end_time` are ISO-8601 strings
@@ -44,11 +40,12 @@ import shutil
 import subprocess
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config import Config
 from ..models import Art, Camp, Event
+from . import SourceSnapshot
 
 
 # Openssl produces files starting with this 8-byte literal when
@@ -69,8 +66,8 @@ class APISource:
 
     # ---- public surface ------------------------------------------------
 
-    def load_camps(self, config: Config) -> list[Camp]:
-        """Read the cached payload from disk and normalize.
+    def load_snapshot(self, config: Config) -> SourceSnapshot:
+        """Read and normalize camps, events, art, and cache freshness once.
 
         The file may be either an openssl-encrypted blob (when
         BM_CACHE_PASSWORD or SITE_PASSWORD was set at fetch time) or
@@ -95,6 +92,10 @@ class APISource:
         raw = json.loads(blob.decode("utf-8"))
         camps_raw = raw.get("camps", [])
         events_raw = raw.get("events", [])
+        art_raw = raw.get("art", [])
+        fetched_at = raw.get("fetched_at")
+        if not isinstance(fetched_at, str) or not fetched_at.strip():
+            raise RuntimeError(f"API cache {f} has no valid fetched_at timestamp")
 
         # Group events by hosted_by_camp uid for O(1) attachment.
         events_by_camp: dict[str, list[Event]] = {}
@@ -121,32 +122,6 @@ class APISource:
             camps.append(camp)
         if skipped:
             print(f"  (skipped {skipped} camp(s) per denylist-api)")
-        return camps
-
-    def load_art(self, config: Config) -> list[Art]:
-        """Read the same cache file used by `load_camps` and normalize
-        the `art` array into `Art` objects. Older cache files (written
-        before art was added) lack the key; treated as zero art rather
-        than failing — the build continues and the user gets an
-        empty Art tab for that source until the cache refreshes."""
-        f = config.api_payload_file(self.year)
-        if not f.exists():
-            raise FileNotFoundError(
-                f"no cached payload at {f}. Run "
-                f"`playa api-fetch --year {self.year}` first."
-            )
-        blob = f.read_bytes()
-        if blob.startswith(_OPENSSL_MAGIC):
-            password = config.effective_cache_password
-            if not password:
-                raise RuntimeError(
-                    f"{f} is encrypted but no cache password is set. "
-                    "Set BM_CACHE_PASSWORD or SITE_PASSWORD."
-                )
-            blob = _openssl_decrypt(blob, password, config.pbkdf2_iter)
-        raw = json.loads(blob.decode("utf-8"))
-        art_raw = raw.get("art", [])
-
         denied = _load_art_api_denylist(config)
         skipped = 0
         art: list[Art] = []
@@ -160,12 +135,12 @@ class APISource:
             art.append(piece)
         if skipped:
             print(f"  (skipped {skipped} art piece(s) per denylist-art-api)")
-        return art
+        return SourceSnapshot(camps=camps, art=art, fetched_at=fetched_at)
 
     def fetch_and_cache(self, config: Config) -> dict:
         """Hit the API, persist the raw payload to disk, return it.
 
-        Two requests: /api/camp + /api/event. Stops on first failure
+        Three bulk requests for camps, events, and art. Stops on first failure
         (no half-cached file). When `BM_CACHE_PASSWORD` (or its
         `SITE_PASSWORD` fallback) is set, the on-disk file is
         AES-256-CBC encrypted in openssl's native format so the cache
@@ -204,7 +179,7 @@ class APISource:
             default_on_404=[],
         )
         payload = {
-            "fetched_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "year": self.year,
             "camps": camps,
             "events": events,
@@ -262,7 +237,7 @@ def _request_json(
         url = url + "?" + urllib.parse.urlencode(params)
 
     last_err: str = ""
-    for attempt in range(config.fetch_retries):
+    for attempt in range(config.bm_api_retries):
         # `-w "\n%{http_code}"` appends the status code on its own
         # line after the body. `--compressed` requests + transparently
         # decodes gzip. `--http2` upgrades the TLS connection if the
@@ -286,7 +261,7 @@ def _request_json(
         if proc.returncode != 0:
             stderr = proc.stderr.decode("utf-8", "replace").strip()
             last_err = f"curl exit {proc.returncode}: {stderr}"
-            wait = config.fetch_backoff ** attempt
+            wait = config.bm_api_backoff ** attempt
             print(f"  api: network error ({stderr}), retrying in {wait:.1f}s")
             time.sleep(wait)
             continue
@@ -309,13 +284,13 @@ def _request_json(
         if status == 200:
             return json.loads(body)
         if status == 429:
-            wait = config.fetch_backoff ** attempt
+            wait = config.bm_api_backoff ** attempt
             print(f"  api: 429 rate limit, waiting {wait:.1f}s")
             time.sleep(wait)
             last_err = "HTTP 429"
             continue
         if 500 <= status < 600:
-            wait = config.fetch_backoff ** attempt
+            wait = config.bm_api_backoff ** attempt
             print(f"  api: HTTP {status}, retrying in {wait:.1f}s")
             time.sleep(wait)
             last_err = f"HTTP {status}"
@@ -332,7 +307,7 @@ def _request_json(
 
     raise RuntimeError(
         f"api request to {url} failed after "
-        f"{config.fetch_retries} attempts: {last_err}",
+        f"{config.bm_api_retries} attempts: {last_err}",
     )
 
 
@@ -346,13 +321,9 @@ def _camp_from_api(d: dict[str, Any]) -> Camp | None:
     return Camp(
         id=str(uid),
         name=d.get("name", "") or "",
-        # The directory's location parser accepts "X & Y" — same shape.
         location=d.get("location_string") or "",
         description=d.get("description") or "",
         website=d.get("url") or "",
-        # No canonical "directory page" link for API-sourced camps. The
-        # UI omits the "on directory ↗" link when this is empty.
-        url="",
         events=[],
         tags=[],
     )
@@ -378,7 +349,6 @@ def _art_from_api(d: dict[str, Any], *, year: int) -> Art | None:
         name=d.get("name", "") or "",
         location=d.get("location_string") or "",
         description=d.get("description") or "",
-        url="",  # no canonical directory page for API-sourced art
         artist=d.get("artist") or "",
         hometown=d.get("hometown") or "",
         category=d.get("category") or "",
@@ -581,7 +551,7 @@ def _openssl_decrypt(blob: bytes, password: str, iters: int) -> bytes:
 # --- denylist -------------------------------------------------------------
 
 def _load_denylist(config: Config) -> set[str]:
-    """Read data/denylist-api.txt; same comment + blank rules as directory."""
+    """Read data/denylist-api.txt, ignoring comments and blank lines."""
     if not config.api_denylist_file.exists():
         return set()
     ids: set[str] = set()

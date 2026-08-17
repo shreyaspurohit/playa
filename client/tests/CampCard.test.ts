@@ -25,8 +25,7 @@ function baseCamp(over: Partial<Camp> = {}): Camp {
     location: '4:00 & B',
     description: 'a quiet camp',
     website: 'https://example.com',
-    url: 'https://directory.burningman.org/camps/779/',
-    tags: ['yoga', 'food'],
+        tags: ['yoga', 'food'],
     events: [
       { id: 'e1', name: 'Morning Vinyasa', description: 'daily yoga',
         time: 'From 7 to 8', display_time: 'Mon–Fri · 7:00 AM – 8:00 AM', parsed_time: null },
@@ -60,13 +59,13 @@ function mountCard(props: Partial<Parameters<typeof CampCard>[0]> = {}) {
 }
 
 describe('<CampCard>', () => {
-  test('renders name, location, tags, and canonical link', () => {
+  test('renders name, location, tags, and no external record link', () => {
     const el = mountCard();
     assert.match(el.innerHTML, /Zen Tent/);
     assert.match(el.innerHTML, /4:00 &amp; B/);
     assert.match(el.innerHTML, /yoga/);
     assert.match(el.innerHTML, /food/);
-    assert.match(el.innerHTML, /directory\.burningman\.org\/camps\/779\//);
+    assert.equal(el.querySelector('h3 a'), null);
   });
 
   test('renders an empty placeholder when description is blank', () => {
@@ -105,11 +104,11 @@ describe('<CampCard>', () => {
     assert.equal(clicked, 'yoga');
   });
 
-  test('renders event name as a link to directory.burningman.org/events/<id>/', () => {
+  test('renders event name without an external record link', () => {
     mountCard();
-    const link = mount.querySelector('.evname') as HTMLAnchorElement;
-    assert.equal(link.tagName, 'A');
-    assert.ok(link.href.includes('/events/e1/'));
+    const name = mount.querySelector('.evname') as HTMLElement;
+    assert.equal(name.tagName, 'SPAN');
+    assert.equal(name.closest('a'), null);
   });
 
   test('auto-opens events section when any event is favorited', () => {

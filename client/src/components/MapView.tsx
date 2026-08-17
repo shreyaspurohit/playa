@@ -1670,11 +1670,7 @@ export function MapView({
                                   const youStarred = favEventIds.has(e.id);
                                   return (
                                     <li key={e.id}>
-                                      <a
-                                        href={`https://directory.burningman.org/events/${encodeURIComponent(e.id)}/`}
-                                        target="_blank" rel="noopener"
-                                        onClick={(ev) => ev.stopPropagation()}
-                                      >{e.name}</a>
+                                      <span>{e.name}</span>
                                       {e.display_time && <span class="map-ev-time"> · {e.display_time}</span>}
                                       {(youStarred || eventFriends.length > 0) && (
                                         <span class="map-ev-faved">

@@ -10,12 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-_DEFAULT_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
-)
-
-
 @dataclass(frozen=True)
 class Config:
     """Paths derive from `root`; other fields are runtime settings.
@@ -27,17 +21,14 @@ class Config:
 
     # Runtime settings (via env when using Config.from_env()).
     site_password: str = ""
-    contact_email: str = "bm-camps@example.com"
     pbkdf2_iter: int = 200_000
-    pages: int = 30
-    parallel: int = 5
 
-    # Burn week / spirit-access window (ISO YYYY-MM-DD).
+    # Burn-week calendar window (ISO YYYY-MM-DD).
     #
-    # `burn_start` = the spirit-mode auto-unlock window's open edge
-    # (D13) and the schedule's configured fallback start.
-    # `burn_end` = end of the public-access window (D13) and the
-    # calendar's last column.
+    # `burn_start` is the schedule's configured fallback start and `burn_end`
+    # is the calendar's last column. Password-free spirit access uses separate
+    # SITE_UNLOCK_START/END repo variables evaluated by the deploy workflow;
+    # those values are intentionally not part of Config.
     #
     # In practice the builder may further override `burn_start` to
     # the EARLIEST fetched event date (volunteers + early crews run
@@ -58,48 +49,36 @@ class Config:
     # locations to users one week before art locations. Values must
     # be timezone-aware ISO-8601 timestamps so the client observes
     # Pacific midnight exactly rather than UTC midnight. Required
-    # when `api-<directory_map_year>` is embedded; past-year API and
-    # directory-only builds do not need them.
+    # when `api-<brc_map_year>` is embedded; past-year API builds do not
+    # need them.
     camp_location_release_at: str = ""
     art_location_release_at: str = ""
 
-    # HTTP client settings (directory + API share these).
-    base_url: str = "https://directory.burningman.org"
-    user_agent: str = _DEFAULT_UA
-    fetch_timeout: int = 30
-    fetch_retries: int = 3
-    fetch_backoff: float = 1.5
-    per_camp_sleep: float = 0.2
-
-    # api.burningman.org settings. Empty key → API source disabled (any
+    # api.burningman.org settings. Empty key → API fetching disabled (cached
+    # builds remain available).
     # build attempting it will raise rather than fall back silently).
     bm_api_key: str = ""
     bm_api_base_url: str = "https://api.burningman.org"
     bm_api_year_min: int = 2015   # spec exclusiveMinimum: 2014
-    # Bulk endpoints return ~MB of JSON in one shot — much slower than
-    # the directory's per-page fetches. Override via BM_API_TIMEOUT for
-    # extreme-payload years or rate-limited servers.
+    # Bulk endpoints return several MB of JSON in one request. Override via
+    # BM_API_TIMEOUT for extreme-payload years or rate-limited servers.
     bm_api_timeout: int = 120
-    # Identify ourselves clearly to the API. Distinct from `user_agent`
-    # which mimics a browser for the directory HTML scrape — that
-    # string makes WAFs throttle JSON-endpoint clients on the
-    # assumption it's a scraper. A clean app/version + contact URL
-    # gets fast-pathed.
+    bm_api_retries: int = 3
+    bm_api_backoff: float = 1.5
+    # Identify ourselves clearly to the API.
     bm_api_user_agent: str = "playa-camps/1.0 (+https://playa.purohit.dev)"
 
     # Official annual GIS repository. The map renderer is year-stable; adding
-    # a year means fetching this directory and reviewing the CPN allowlist.
+    # a year means fetching that year's files and reviewing the CPN allowlist.
     gis_base_url: str = (
         "https://raw.githubusercontent.com/burningmantech/"
         "innovate-GIS-data/master"
     )
     gis_timeout: int = 30
-    directory_map_year: int = 2026
+    brc_map_year: int = 2026
 
     # Comma-separated years to auto-fetch + auto-include in the build
-    # when --sources isn't passed explicitly. Empty → CLI default of
-    # `directory` only.
-    #   BM_API_YEARS="2024,2025"  → sources = directory,api-2024,api-2025
+    # when --sources isn't passed explicitly. Empty is invalid for build/all.
     bm_api_years: str = ""
 
     # Multi-tier access manifest (ADR D10). Format:
@@ -116,7 +95,7 @@ class Config:
     # identifiers — operator can pick anything.
     #
     # Conventionally:
-    #   SITE_TIERS="god-mode:$GOD_PW=directory+api-2025+api-2026,
+    #   SITE_TIERS="god-mode:$GOD_PW=api-2025+api-2026,
     #               demigod-mode:$DEMIGOD_PW=api-2025+api-2026,
     #               spirit-mode:$SPIRIT_PW=api-2026"
     # — literal passwords stay out of workflow YAML via per-tier
@@ -143,42 +122,20 @@ class Config:
     @property
     def data_dir(self) -> Path:       return self.root / "data"
     @property
-    def pages_dir(self) -> Path:      return self.data_dir / "pages"
-    @property
-    def art_pages_dir(self) -> Path:  return self.data_dir / "art_pages"
-    @property
-    def logs_dir(self) -> Path:       return self.data_dir / "logs"
-    @property
-    def meta_file(self) -> Path:      return self.data_dir / "meta.json"
-    @property
-    def camps_csv(self) -> Path:      return self.data_dir / "camps.csv"
-    @property
-    def camps_tagged_csv(self) -> Path: return self.data_dir / "camps_tagged.csv"
-    @property
-    def art_csv(self) -> Path:        return self.data_dir / "art.csv"
-    @property
-    def art_tagged_csv(self) -> Path: return self.data_dir / "art_tagged.csv"
-    @property
-    def denylist_file(self) -> Path:  return self.data_dir / "denylist.txt"
-    @property
     def api_denylist_file(self) -> Path: return self.data_dir / "denylist-api.txt"
-    @property
-    def art_denylist_file(self) -> Path: return self.data_dir / "denylist-art.txt"
     @property
     def art_api_denylist_file(self) -> Path: return self.data_dir / "denylist-art-api.txt"
     def food_exclusion_file(self, source_spec: str) -> Path:
-        """Year/source-scoped Food-only classification exclusions.
-
-        Directory data follows BRC_MAP_YEAR; API specs already carry a year.
-        These lists never remove records from Camps, Schedule, Art, or Map.
-        """
-        if source_spec == "directory":
-            source_key = f"directory-{self.directory_map_year}"
-        elif source_spec.startswith("api-") and source_spec[4:].isdigit():
-            source_key = source_spec
-        else:
-            raise ValueError(f"unknown source for food exclusions: {source_spec!r}")
-        return self.data_dir / f"food-exclusions-{source_key}.txt"
+        """API-year-scoped Food-only classification exclusions."""
+        if not (
+            source_spec.startswith("api-")
+            and len(source_spec) == 8
+            and source_spec[4:].isdigit()
+        ):
+            raise ValueError(
+                f"Food exclusions require an api-YYYY source, got {source_spec!r}",
+            )
+        return self.data_dir / f"food-exclusions-{source_spec}.txt"
     @property
     def api_dir(self) -> Path:        return self.data_dir / "api"
     def api_payload_file(self, year: int) -> Path:
@@ -218,10 +175,7 @@ class Config:
         return cls(
             root=root or cls.project_root(),
             site_password=os.environ.get("SITE_PASSWORD", "").strip(),
-            contact_email=os.environ.get("CONTACT_EMAIL", "bm-camps@example.com").strip(),
             pbkdf2_iter=int(os.environ.get("PBKDF2_ITER", "200000")),
-            pages=int(os.environ.get("PAGES", "30")),
-            parallel=int(os.environ.get("PARALLEL", "5")),
             # No hardcoded fallback — operator MUST set the burn-window
             # repo variables in CI (or `export BURN_WINDOW_OPEN_FROM=…
             # BURN_WINDOW_OPEN_TO=…` locally). Empty values surface as
@@ -244,13 +198,15 @@ class Config:
             bm_api_years=os.environ.get("BM_API_YEARS", "").strip(),
             bm_cache_password=os.environ.get("BM_CACHE_PASSWORD", "").strip(),
             bm_api_timeout=int(os.environ.get("BM_API_TIMEOUT", "120")),
+            bm_api_retries=int(os.environ.get("BM_API_RETRIES", "3")),
+            bm_api_backoff=float(os.environ.get("BM_API_BACKOFF", "1.5")),
             gis_base_url=os.environ.get(
                 "BM_GIS_BASE_URL",
                 "https://raw.githubusercontent.com/burningmantech/"
                 "innovate-GIS-data/master",
             ).strip(),
             gis_timeout=int(os.environ.get("BM_GIS_TIMEOUT", "30")),
-            directory_map_year=int(os.environ.get("BRC_MAP_YEAR", "2026")),
+            brc_map_year=int(os.environ.get("BRC_MAP_YEAR", "2026")),
             site_tiers=os.environ.get("SITE_TIERS", "").strip(),
             sync_provider=os.environ.get("SYNC_PROVIDER", "").strip().lower(),
             sync_client_id=os.environ.get("SYNC_CLIENT_ID", "").strip(),
@@ -266,19 +222,24 @@ class Config:
         return self.bm_cache_password or self.site_password
 
     def parsed_api_years(self) -> list[int]:
-        """Parse `bm_api_years` into a sorted unique year list. Bad
-        entries are silently dropped; the empty string returns []."""
+        """Parse `bm_api_years` into a sorted unique year list.
+
+        Blank entries are ignored, but malformed or unsupported years fail
+        rather than quietly changing the configured source manifest.
+        """
         out: set[int] = set()
         for part in self.bm_api_years.split(","):
             part = part.strip()
             if not part:
                 continue
-            try:
-                y = int(part)
-            except ValueError:
-                continue
-            if y >= self.bm_api_year_min:
-                out.add(y)
+            if len(part) != 4 or not part.isdigit():
+                raise ValueError(f"invalid BM_API_YEARS entry {part!r}; expected YYYY")
+            y = int(part)
+            if y < self.bm_api_year_min:
+                raise ValueError(
+                    f"BM_API_YEARS entry {y} is below {self.bm_api_year_min}",
+                )
+            out.add(y)
         return sorted(out)
 
     def parsed_tiers(self) -> list[tuple[str, str, list[str]]]:

@@ -260,12 +260,12 @@ export const BRC_BY_YEAR: Record<number, BrcMapData> = {
 };
 
 /**
- * Year that the `directory` source represents. Bumped by the
- * `/update-map` skill when the directory source rolls over. Geometry may be
+ * Current BRC year used by source-independent defaults. Bumped by the
+ * annual map-update workflow. Geometry may be
  * published later; until the matching `BRC_BY_YEAR` entry lands, source-aware
  * map consumers deliberately show an unavailable state.
  */
-export const DIRECTORY_YEAR = 2026;
+export const CURRENT_BRC_YEAR = 2026;
 
 /** Resolve a year only when its exact geometry is present.
  *
@@ -283,4 +283,4 @@ export function getBrcForYear(year: number): BrcMapData | null {
  * must use the nullable exact-year resolver instead; this compatibility export
  * must never be used to place records from an arbitrary source year.
  */
-export const BRC: BrcMapData = BRC_BY_YEAR[DIRECTORY_YEAR] ?? BRC_2026;
+export const BRC: BrcMapData = BRC_BY_YEAR[CURRENT_BRC_YEAR] ?? BRC_2026;

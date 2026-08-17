@@ -1,9 +1,6 @@
-"""Unit tests for playa.builder (SiteBuilder).
+"""API-only builder, tier, freshness, and service-worker tests."""
+from __future__ import annotations
 
-Covers denylist parsing, load_meta fallbacks, load_camps dedupe + denylist,
-and the full openssl encrypt round-trip against the same parameters the
-browser uses.
-"""
 import base64
 import contextlib
 import gzip
@@ -14,1055 +11,321 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 from playa.builder import SiteBuilder
 from playa.config import Config
-from playa.models import Camp, Event
+from playa.models import Art, Camp
 
 
 HAS_OPENSSL = shutil.which("openssl") is not None
 
 
-class _TmpConfigMixin:
-    """Shared tmp-root fixture. Subclass via plain inheritance in setUp.
-
-    Production `Config` has empty burn-date defaults (CI repo vars
-    are the source of truth — no hardcoded years in code). Tests
-    that exercise the build path need real dates, so this fixture
-    seeds 2026 placeholders. Override via `_make_config(burn_start=…)`."""
-
-    def _make_config(self, **overrides) -> Config:
+class BuilderFixture(unittest.TestCase):
+    def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        root = Path(self.tmp.name)
-        defaults = {
-            "burn_start": "2026-08-30",
-            "burn_end":   "2026-09-07",
-            "camp_location_release_at": "2026-08-23T00:00:00-07:00",
-            "art_location_release_at": "2026-08-30T00:00:00-07:00",
+        self.root = Path(self.tmp.name)
+        self.config = Config(
+            root=self.root,
+            burn_start="2026-08-30",
+            burn_end="2026-09-07",
+            camp_location_release_at="2026-08-23T00:00:00-07:00",
+            art_location_release_at="2026-08-30T00:00:00-07:00",
+            brc_map_year=2026,
+            pbkdf2_iter=1000,
+        )
+        self.config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write_cache(self, year: int, *, camps: int = 1, fetched_at: str | None = None):
+        self.config.api_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "fetched_at": fetched_at or f"{year}-08-15T12:34:56Z",
+            "year": year,
+            "camps": [
+                {
+                    "uid": f"camp-{year}-{i}",
+                    "name": f"Camp {i}",
+                    "location_string": "6:00 & A",
+                    "description": "tea and art",
+                    "url": "https://example.com",
+                }
+                for i in range(camps)
+            ],
+            "events": [],
+            "art": [{
+                "uid": f"art-{year}",
+                "name": "API Art",
+                "location_string": "The Man",
+                "description": "Light",
+            }],
         }
-        defaults.update(overrides)
-        base = Config(root=root, **defaults)
-        (root / "data").mkdir()
-        (root / "data" / "pages").mkdir()
-        return base
+        self.config.api_payload_file(year).write_text(json.dumps(payload))
+
+    def write_bundle(self):
+        dist = self.root / "client" / "dist"
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / "bundle.js").write_text('"use strict";(()=>{})();')
+        (dist / "semantic-backend.js").write_text("export const ready=true;")
 
 
-@unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
-class EncryptPayloadTests(unittest.TestCase, _TmpConfigMixin):
-    """Verify the wire format the browser will decrypt."""
-
-    def setUp(self):
-        self.config = self._make_config(site_password="pw", pbkdf2_iter=1000)
-        self.builder = SiteBuilder(self.config)
-
-    def test_returns_expected_schema(self):
-        enc = self.builder.encrypt_payload(b"x")
-        # `compressed: True` is the D12 flag — clients pipe through
-        # DecompressionStream after AES decode when it's set.
-        self.assertEqual(set(enc.keys()), {"salt", "iter", "ct", "compressed"})
-        self.assertEqual(enc["iter"], 1000)
-        self.assertIs(enc["compressed"], True)
-        # OpenSSL default salt length is 8 bytes.
-        self.assertEqual(len(base64.b64decode(enc["salt"])), 8)
-
-    def test_roundtrip_via_openssl(self):
-        data = b'{"hello":"world","camps":[1,2,3]}'
-        enc = self.builder.encrypt_payload(data)
-        salt = base64.b64decode(enc["salt"])
-        ct = base64.b64decode(enc["ct"])
-        blob = b"Salted__" + salt + ct
-        proc = subprocess.run(
-            ["openssl", "enc", "-aes-256-cbc", "-d", "-pbkdf2",
-             "-iter", "1000", "-pass", "pass:pw"],
-            input=blob, capture_output=True, check=True,
+class SnapshotAndMetadataTests(BuilderFixture):
+    def test_snapshot_loads_camps_art_and_fetched_at_once(self):
+        self.write_cache(2026, fetched_at="2026-08-14T23:45:00Z")
+        snapshot = SiteBuilder(self.config, sources=["api-2026"]).load_snapshot_for_source(
+            "api-2026",
         )
-        # AES output is gzipped — decompress to recover the original.
-        self.assertEqual(gzip.decompress(proc.stdout), data)
+        self.assertEqual(snapshot.fetched_at, "2026-08-14T23:45:00Z")
+        self.assertEqual(len(snapshot.camps), 1)
+        self.assertEqual(len(snapshot.art), 1)
+        self.assertNotIn("url", snapshot.camps[0].to_dict())
+        self.assertNotIn("url", snapshot.art[0].to_dict())
 
-    def test_wrong_password_fails(self):
-        # The check has two valid outcomes — wrong password is "wrong"
-        # if EITHER:
-        #   1. openssl rejects the ciphertext at PKCS7 padding
-        #      validation (most common — exits non-zero), OR
-        #   2. (~0.4% chance) PKCS7 validates by luck on a random
-        #      last-byte, openssl exits 0 with garbage stdout, but
-        #      the garbage isn't valid gzip of our plaintext.
-        # Asserting only outcome #1 (CalledProcessError) makes this test
-        # flaky on CI; encrypted payload is just `b"data"` → 1-2 AES
-        # blocks → small enough that the random PKCS7-pass happens
-        # occasionally. Accept either signal.
-        plaintext = b"data"
-        enc = self.builder.encrypt_payload(plaintext)
-        salt = base64.b64decode(enc["salt"])
-        ct = base64.b64decode(enc["ct"])
-        blob = b"Salted__" + salt + ct
-        try:
-            proc = subprocess.run(
-                ["openssl", "enc", "-aes-256-cbc", "-d", "-pbkdf2",
-                 "-iter", "1000", "-pass", "pass:wrong"],
-                input=blob, capture_output=True, check=True,
-            )
-        except subprocess.CalledProcessError:
-            return  # outcome #1 — openssl rejected wrong password
-        # outcome #2 — openssl returned 0 by chance; the output must
-        # NOT be the plaintext (or any gzipped form of it).
-        self.assertNotEqual(proc.stdout, plaintext)
-        with self.assertRaises(Exception):
-            gzip.decompress(proc.stdout)
+    def test_food_exclusion_path_accepts_api_year_and_rejects_directory(self):
+        self.assertEqual(
+            self.config.food_exclusion_file("api-2026").name,
+            "food-exclusions-api-2026.txt",
+        )
+        with self.assertRaisesRegex(ValueError, "api-YYYY"):
+            self.config.food_exclusion_file("directory")
 
-    def test_fresh_salt_each_call(self):
-        a = self.builder.encrypt_payload(b"same data")
-        b = self.builder.encrypt_payload(b"same data")
-        self.assertNotEqual(a["salt"], b["salt"])
-        self.assertNotEqual(a["ct"], b["ct"])
-
-    def test_compression_actually_shrinks_realistic_payload(self):
-        """Sanity-check pipeline order: gzip BEFORE AES, not after.
-        Gzipping AES output (which is near-random) would produce a
-        ciphertext slightly LARGER than the plaintext — this regression
-        guard catches that mistake."""
-        # Realistic-shape JSON with repeated keys + English prose.
-        payload = json.dumps([
-            {"id": str(i), "name": f"Camp {i}",
-             "description": "free pancakes morning yoga gifting tea",
-             "events": [{"id": f"e{i}", "name": "thing", "time": "Mon 9am"}]}
-            for i in range(200)
-        ]).encode("utf-8")
-        enc = self.builder.encrypt_payload(payload)
-        ct_size = len(base64.b64decode(enc["ct"]))
-        # Allow up to 50% of plaintext post-compress + AES padding overhead.
-        # Real numbers are well under that (~25-30%) but the CI runner's
-        # gzip might produce slightly different output than local —
-        # don't make this brittle.
-        self.assertLess(
-            ct_size, len(payload) * 0.5,
-            f"expected encrypted+compressed output to be <50% of plaintext "
-            f"({len(payload)} bytes); got {ct_size}",
+    def test_reads_api_camp_and_event_food_exclusions(self):
+        self.config.food_exclusion_file("api-2026").write_text(
+            "# Food only\n"
+            "camp:camp-1\n"
+            "event:event-1 # inline comment\n",
+        )
+        builder = SiteBuilder(self.config, sources=["api-2026"])
+        self.assertEqual(
+            builder.load_food_exclusions("api-2026"),
+            {("camp", "camp-1"), ("event", "event-1")},
         )
 
+    def test_rejects_malformed_api_food_exclusion(self):
+        self.config.food_exclusion_file("api-2026").write_text("camp-1\n")
+        builder = SiteBuilder(self.config, sources=["api-2026"])
+        with self.assertRaisesRegex(ValueError, "expected `camp:<id>`"):
+            builder.load_food_exclusions("api-2026")
 
-@unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
-class EnvelopeEncryptionTests(unittest.TestCase, _TmpConfigMixin):
-    """Round-trip envelope mode (D10): per-source DEK encrypts the
-    cipher; per-(source, tier) wrapper PBKDF2-encrypts the DEK+IV
-    against each tier's password."""
-
-    def setUp(self):
-        self.config = self._make_config(pbkdf2_iter=1000)
-        self.builder = SiteBuilder(self.config)
-
-    def test_aes_cbc_encrypt_round_trip(self):
-        """Raw key+iv path used to encrypt source data with the random DEK."""
-        key = b"\x01" * 32
-        iv = b"\x02" * 16
-        plaintext = b"hello, envelope world. " * 100
-        ct = self.builder._aes_cbc_encrypt(plaintext, key, iv)
-        # openssl -d with the same key + iv decrypts back.
-        proc = subprocess.run(
-            ["openssl", "enc", "-d", "-aes-256-cbc",
-             "-K", key.hex(), "-iv", iv.hex()],
-            input=ct, capture_output=True, check=True,
-        )
-        self.assertEqual(proc.stdout, plaintext)
-
-    def test_wrap_with_password_round_trip(self):
-        """PBKDF2 wrapper used to encrypt the 48-byte DEK+IV per tier."""
-        secret = b"R" * 48
-        wrapper = self.builder._wrap_with_password(secret, "tier-pw")
-        # Reconstruct the openssl-format blob and decrypt with -d.
-        salt = base64.b64decode(wrapper["salt"])
-        ct = base64.b64decode(wrapper["ct"])
-        blob = b"Salted__" + salt + ct
-        proc = subprocess.run(
-            ["openssl", "enc", "-d", "-aes-256-cbc", "-pbkdf2",
-             "-iter", "1000", "-pass", "pass:tier-pw"],
-            input=blob, capture_output=True, check=True,
-        )
-        self.assertEqual(proc.stdout, secret)
-
-    def test_envelope_emits_one_cipher_per_source(self):
-        """One source → one cipher script + one wrapper per tier."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("directory", camps)]
-        tiers = [
-            ("god-mode", "god-pw", ["directory"]),
-            ("demigod-mode", "demi-pw", ["directory"]),
-        ]
-        scripts, manifest_meta, modes, source_keys = self.builder._envelope_data_scripts(
-            loaded, tiers,
-        )
-        # source_keys returned for D13's BURN_OPEN path. 32-byte DEK
-        # + 16-byte IV per source.
-        self.assertIn("directory", source_keys)
-        self.assertEqual(len(source_keys["directory"][0]), 32)  # DEK
-        self.assertEqual(len(source_keys["directory"][1]), 16)  # IV
-        # Cipher: exactly one for the source.
-        self.assertEqual(scripts.count('id="camps-data-directory-cipher"'), 1)
-        # Two wrappers (one per tier).
-        self.assertIn('id="cdk-directory-0"', scripts)
-        self.assertIn('id="cdk-directory-1"', scripts)
-        # Manifest lists both indices.
-        self.assertIn('content="directory:0,1"', manifest_meta)
-        # Mode log mentions wrapper count.
-        self.assertEqual(len(modes), 1)
-        self.assertIn("envelope", modes[0])
-        self.assertIn("2 wrappers", modes[0])
-
-    def test_envelope_two_sources_three_tiers(self):
-        """Mirrors the real god/demigod/spirit shape: directory in
-        god-only, api in all three. Wrapper counts must match."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("directory", camps), ("api-2026", camps)]
-        tiers = [
-            ("god-mode", "god-pw", ["directory", "api-2026"]),
-            ("demigod-mode", "demi-pw", ["api-2026"]),
-            ("spirit-mode", "spirit-pw", ["api-2026"]),
-        ]
-        scripts, manifest_meta, _, _ = self.builder._envelope_data_scripts(
-            loaded, tiers,
-        )
-        # directory: 1 wrapper. api-2026: 3 wrappers.
-        self.assertIn('id="camps-data-directory-cipher"', scripts)
-        self.assertIn('id="camps-data-api-2026-cipher"', scripts)
-        self.assertIn('id="cdk-directory-0"', scripts)
-        self.assertNotIn('id="cdk-directory-1"', scripts)
-        self.assertIn('id="cdk-api-2026-0"', scripts)
-        self.assertIn('id="cdk-api-2026-1"', scripts)
-        self.assertIn('id="cdk-api-2026-2"', scripts)
-        # Manifest reflects per-source wrapper indices.
-        self.assertIn("directory:0", manifest_meta)
-        self.assertIn("api-2026:0,1,2", manifest_meta)
-
-    def test_envelope_rejects_unknown_source_in_tier(self):
-        """Operator typo guard: tier listing a source not in --sources
-        fails the build loudly rather than silently dropping it."""
-        loaded = [("directory", [])]
-        tiers = [("god-mode", "pw", ["directory", "api-9999"])]
-        with self.assertRaises(RuntimeError) as cm:
-            self.builder._envelope_data_scripts(loaded, tiers)
-        self.assertIn("api-9999", str(cm.exception))
-
-    def test_trusted_manifest_lists_only_god_mode_wrappers(self):
-        """`bm-trusted-wrappers` should expose ONLY the wrappers
-        belonging to the `god-mode` tier — never demigod or spirit.
-        Lets the client grant per-tier privileges (today: bypassing
-        the pre-burn location embargo) without leaking tier names
-        into the DOM."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("directory", camps), ("api-2026", camps)]
-        tiers = [
-            ("god-mode", "god-pw", ["directory", "api-2026"]),
-            ("demigod-mode", "demi-pw", ["api-2026"]),
-            ("spirit-mode", "spirit-pw", ["api-2026"]),
-        ]
-        _, manifest_meta, _, _ = self.builder._envelope_data_scripts(
-            loaded, tiers,
-        )
-        # Tier name must NOT appear anywhere in the meta tags — the
-        # manifest's whole point is to grant tier privileges by
-        # wrapper position, not by name.
-        self.assertNotIn("god-mode", manifest_meta)
-        self.assertNotIn("demigod-mode", manifest_meta)
-        self.assertNotIn("spirit-mode", manifest_meta)
-        # Trusted manifest exists and lists god-mode's slots:
-        # directory: only god (idx 0)
-        # api-2026: god is the FIRST tier so it owns idx 0; demigod=1, spirit=2.
-        self.assertIn('name="bm-trusted-wrappers"', manifest_meta)
-        # Inspect only the trusted-manifest tag — bm-tier-wrappers
-        # legitimately lists the full set including 1,2.
-        trusted_tag = manifest_meta.split('bm-trusted-wrappers"', 1)[1]
-        self.assertIn("directory:0", trusted_tag)
-        self.assertIn("api-2026:0", trusted_tag)
-        # demigod (1) and spirit (2) MUST NOT appear in the trusted
-        # api-2026 slot list.
-        self.assertNotIn("api-2026:0,1", trusted_tag)
-        self.assertNotIn("api-2026:0,2", trusted_tag)
-        self.assertNotIn("api-2026:0,1,2", trusted_tag)
-
-    def test_no_trusted_manifest_when_god_mode_absent(self):
-        """If the operator doesn't define a `god-mode` tier, the
-        trusted meta tag is omitted entirely — every tier remains
-        ToS-bound to honor §6.2."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("api-2026", camps)]
-        tiers = [
-            ("demigod-mode", "demi-pw", ["api-2026"]),
-            ("spirit-mode", "spirit-pw", ["api-2026"]),
-        ]
-        _, manifest_meta, _, _ = self.builder._envelope_data_scripts(
-            loaded, tiers,
-        )
-        self.assertIn('name="bm-tier-wrappers"', manifest_meta)
-        self.assertNotIn("bm-trusted-wrappers", manifest_meta)
-
-    def test_art_cipher_emitted_alongside_camps(self):
-        """Each source emits BOTH a `camps-data-<spec>-cipher` AND an
-        `art-data-<spec>-cipher` script. Camps + art share the source's
-        DEK but get distinct IVs (CBC-IV reuse across plaintexts is
-        avoided)."""
-        from playa.models import Art
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        art = [Art(id="a1", name="Sky Portal", location="3:00 & C",
-                   description="", url="")]
-        loaded = [("api-2026", camps)]
-        loaded_art = [("api-2026", art)]
-        tiers = [("god-mode", "god-pw", ["api-2026"])]
-        scripts, _, _, source_keys = self.builder._envelope_data_scripts(
-            loaded, tiers, loaded_art,
-        )
-        self.assertIn('id="camps-data-api-2026-cipher"', scripts)
-        self.assertIn('id="art-data-api-2026-cipher"', scripts)
-        # One wrapper, one source (camps + art share it).
-        self.assertEqual(scripts.count('id="cdk-api-2026-0"'), 1)
-        # source_keys still keys per-source (the DEK is shared between
-        # camps + art ciphers for that source).
-        self.assertIn("api-2026", source_keys)
-
-    def test_art_cipher_emitted_when_art_loaded_empty(self):
-        """When a source has zero art (e.g., legacy cache pre-art),
-        an empty `art-data-<spec>-cipher` is still emitted so the
-        client always finds a script tag."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("directory", camps)]
-        loaded_art = [("directory", [])]
-        tiers = [("god-mode", "g", ["directory"])]
-        scripts, _, _, _ = self.builder._envelope_data_scripts(
-            loaded, tiers, loaded_art,
-        )
-        self.assertIn('id="art-data-directory-cipher"', scripts)
-
-    def test_art_cipher_emitted_when_loaded_art_omitted(self):
-        """Backward-compat: callers that don't pass loaded_art still
-        get an empty art cipher per source (so the client schema is
-        invariant)."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("directory", camps)]
-        tiers = [("god-mode", "g", ["directory"])]
-        scripts, _, _, _ = self.builder._envelope_data_scripts(
-            loaded, tiers,
-        )
-        self.assertIn('id="art-data-directory-cipher"', scripts)
-
-    def test_trusted_manifest_position_independent(self):
-        """Trust is by tier NAME, not order — moving god-mode to the
-        last slot still flags only that wrapper as trusted."""
-        camps = [Camp(id="1", name="A", location="6:00 & E",
-                      description="", website="", url="", events=[])]
-        loaded = [("api-2026", camps)]
-        tiers = [
-            ("demigod-mode", "demi-pw", ["api-2026"]),
-            ("spirit-mode", "spirit-pw", ["api-2026"]),
-            ("god-mode", "god-pw", ["api-2026"]),
-        ]
-        _, manifest_meta, _, _ = self.builder._envelope_data_scripts(
-            loaded, tiers,
-        )
-        # god-mode is now wrapper idx 2 (third tier).
-        self.assertIn('name="bm-trusted-wrappers"', manifest_meta)
-        self.assertIn("api-2026:2", manifest_meta)
-        # No spurious other indices.
-        self.assertNotIn("api-2026:0", manifest_meta.split('bm-trusted-wrappers"')[1])
-        self.assertNotIn("api-2026:1", manifest_meta.split('bm-trusted-wrappers"')[1])
-
-
-@unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
-class BurnOpenTests(unittest.TestCase, _TmpConfigMixin):
-    """ADR D13: BURN_OPEN=1 deploys site/burn-key.json so the
-    `spirit-mode` tier auto-unlocks. The spirit tier is identified
-    by NAME (not position) — operator labels each entry in
-    SITE_TIERS so the build can validate setup."""
-
-    def _camp(self) -> Camp:
-        return Camp(
-            id="1", name="X", location="6:00 & A",
-            description="", website="", url="", events=[],
-        )
-
-    def _make_builder(self, **cfg) -> SiteBuilder:
-        config = self._make_config(pbkdf2_iter=1000, **cfg)
-        # Pre-create page so MIN_CAMPS rail can be bypassed in `build()`.
-        (config.pages_dir / "page_01.json").write_text(
-            json.dumps([self._camp().to_dict()]),
-        )
-        config.site_dir.mkdir(parents=True, exist_ok=True)
-        return SiteBuilder(config, sources=["directory"])
-
-    def _drop_bundle(self, builder: SiteBuilder) -> None:
-        bundle_dir = builder.config.root / "client" / "dist"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-        bundle_dir.joinpath("bundle.js").write_text(
-            '"use strict";(()=>{})();',
-        )
-        # Code-split on-device-AI chunk (ADR 21 phase 2). build() copies it
-        # next to index.html, so a full build needs it present.
-        bundle_dir.joinpath("semantic-backend.js").write_text(
-            'export const loadEmbedder=async()=>{};',
-        )
-
-    def test_burn_open_writes_burn_key_json(self):
-        builder = self._make_builder(
-            site_tiers="god-mode:god-pw=directory,spirit-mode:spirit-pw=directory",
-        )
-        self._drop_bundle(builder)
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
-            builder.build()
-        burn_path = builder.config.site_dir / "burn-key.json"
-        self.assertTrue(burn_path.exists(), "burn-key.json should be written")
-        data = json.loads(burn_path.read_text())
-        # Spirit identified by name (`spirit-mode`). Its sources land
-        # in burn-key.json; god-mode's don't.
-        self.assertEqual(set(data.keys()), {"directory"})
-        # Value is base64 of (32 DEK + 16 IV) = 48 bytes → 64 b64 chars.
-        self.assertEqual(len(base64.b64decode(data["directory"])), 48)
-
-    def test_burn_open_unset_removes_stale_burn_key(self):
-        """Previous BURN_OPEN=1 build left site/burn-key.json behind;
-        the next BURN_OPEN-unset build must clean it up so the deploy
-        is closed."""
-        builder = self._make_builder(
-            site_tiers="god-mode:god-pw=directory,spirit-mode:spirit-pw=directory",
-        )
-        self._drop_bundle(builder)
-        # Pre-seed a stale burn-key.json.
-        stale = builder.config.site_dir / "burn-key.json"
-        stale.write_text('{"directory": "stale"}')
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}, clear=False):
-            os.environ.pop("BURN_OPEN", None)
-            builder.build()
-        self.assertFalse(stale.exists(), "stale burn-key.json should be cleaned up")
-
-    def test_burn_open_without_tiers_fails_loud(self):
-        """ADR D13 sanity check: BURN_OPEN with no SITE_TIERS = no
-        spirit tier exists. Build refuses rather than silently writing
-        nothing."""
-        builder = self._make_builder()  # no SITE_TIERS
-        self._drop_bundle(builder)
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
-            with self.assertRaises(RuntimeError) as cm:
-                builder.build()
-        self.assertIn("BURN_OPEN", str(cm.exception))
-        self.assertIn("SITE_TIERS", str(cm.exception))
-
-    def test_burn_open_only_exposes_spirit_tier_sources(self):
-        """Three tiers (god/demigod/spirit). spirit-mode is identified
-        by NAME — only its sources land in burn-key.json, not god's
-        or demigod's. Order in SITE_TIERS doesn't matter for this."""
-        # Use directory + api-2026 sources. Mock the api-2026 source
-        # to load some camps so envelope generation can run.
-        builder = self._make_builder(
-            site_tiers=(
-                "god-mode:god-pw=directory+api-2026,"
-                "demigod-mode:demigod-pw=api-2026,"
-                "spirit-mode:spirit-pw=api-2026"
-            ),
-        )
-        self._drop_bundle(builder)
-        # Drop a fake api cache so api-2026 source loads.
-        api_payload = {
-            "fetched_at": "2026-04-29T00:00:00Z",
+    def test_api_food_exclusions_clear_only_food_classification(self):
+        self.config.api_dir.mkdir(parents=True, exist_ok=True)
+        self.config.api_payload_file(2026).write_text(json.dumps({
+            "fetched_at": "2026-08-15T12:34:56Z",
             "year": 2026,
             "camps": [{
-                "uid": "uX", "name": "Y", "year": 2026,
+                "uid": "camp-1",
+                "name": "Dinner Camp",
                 "location_string": "6:00 & A",
+                "description": "Free dinner and tea",
             }],
-            "events": [],
-        }
-        builder.config.api_dir.mkdir(parents=True, exist_ok=True)
-        builder.config.api_payload_file(2026).write_text(json.dumps(api_payload))
-        builder.source_specs = ["directory", "api-2026"]
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
-            builder.build()
-        burn_path = builder.config.site_dir / "burn-key.json"
-        data = json.loads(burn_path.read_text())
-        # spirit-mode lists only api-2026 → only that source exposed.
-        self.assertEqual(set(data.keys()), {"api-2026"})
-
-    def test_burn_open_without_spirit_tier_fails_loud(self):
-        """SITE_TIERS exists but no `spirit-mode` tier → BURN_OPEN=1
-        has no target. Build must refuse with a clear message rather
-        than silently picking the wrong tier."""
-        builder = self._make_builder(
-            site_tiers="god-mode:god-pw=directory,demigod-mode:demi-pw=directory",
-        )
-        self._drop_bundle(builder)
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1"}):
-            with self.assertRaises(RuntimeError) as cm:
-                builder.build()
-        self.assertIn("spirit-mode", str(cm.exception))
-
-    def test_build_copies_semantic_chunk_into_durable_on_demand_cache(self):
-        """Ask stays opt-in but, once fetched, survives nightly SW versions."""
-        builder = self._make_builder()
-        self._drop_bundle(builder)
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
-            builder.build()
-        chunk = builder.config.site_dir / "semantic-backend.js"
-        self.assertTrue(chunk.exists(), "chunk copied into site/")
-        self.assertIn("loadEmbedder", chunk.read_text())
-        sw = (builder.config.site_dir / "sw.js").read_text()
-        shell = sw.split("const SHELL = ", 1)[1].split(";", 1)[0]
-        self.assertNotIn("semantic-backend", shell)
-        self.assertNotIn("embeddings.json", shell)
-        self.assertIn("const ASK_CACHE = 'playa-ask-v1'", sw)
-        self.assertIn("const MODEL_CACHE = 'transformers-cache'", sw)
-        self.assertIn("async function preserveAskAssets()", sw)
-        self.assertIn("k.startsWith('playa-v')", sw)
-        self.assertIn("const isAskAsset", sw)
-        self.assertIn("caches.delete(ASK_CACHE)", sw)
-        self.assertIn("caches.delete(MODEL_CACHE)", sw)
-
-    def test_build_fails_loud_when_semantic_chunk_missing(self):
-        """A partial/broken client build (bundle present, chunk absent)
-        must fail rather than deploy a site whose Ask download 404s."""
-        builder = self._make_builder()
-        bundle_dir = builder.config.root / "client" / "dist"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-        bundle_dir.joinpath("bundle.js").write_text('"use strict";(()=>{})();')
-        # Deliberately do NOT write semantic-backend.js.
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
-            with self.assertRaises(RuntimeError) as cm:
-                builder.build()
-        self.assertIn("semantic-backend.js", str(cm.exception))
-
-
-class ConfigParsedTiersTests(unittest.TestCase, _TmpConfigMixin):
-    """SITE_TIERS env-var parsing — sanity checks at build time."""
-
-    def test_empty_returns_empty_list(self):
-        cfg = self._make_config(site_tiers="")
-        self.assertEqual(cfg.parsed_tiers(), [])
-
-    def test_parses_simple(self):
-        cfg = self._make_config(
-            site_tiers="god-mode:god-pw=directory+api-2025,spirit-mode:spirit-pw=api-2026",
-        )
-        self.assertEqual(cfg.parsed_tiers(), [
-            ("god-mode", "god-pw", ["directory", "api-2025"]),
-            ("spirit-mode", "spirit-pw", ["api-2026"]),
-        ])
-
-    def test_password_with_colon(self):
-        """First `:` separates name from rest, so colons inside the
-        password are preserved. (Equals signs inside the password
-        would NOT survive — first `=` is the pw/sources separator.)"""
-        cfg = self._make_config(
-            site_tiers="god-mode:p:as:s=directory",
-        )
-        self.assertEqual(cfg.parsed_tiers(), [
-            ("god-mode", "p:as:s", ["directory"]),
-        ])
-
-    def test_rejects_duplicate_name(self):
-        cfg = self._make_config(
-            site_tiers="god-mode:a=directory,god-mode:b=api-2026",
-        )
-        with self.assertRaises(ValueError) as cm:
-            cfg.parsed_tiers()
-        self.assertIn("duplicate tier name", str(cm.exception))
-
-    def test_rejects_duplicate_password(self):
-        cfg = self._make_config(
-            site_tiers="god-mode:same=directory,spirit-mode:same=api-2026",
-        )
-        with self.assertRaises(ValueError) as cm:
-            cfg.parsed_tiers()
-        self.assertIn("duplicate password", str(cm.exception))
-
-    def test_rejects_empty_source_list(self):
-        cfg = self._make_config(site_tiers="god-mode:god-pw=")
-        with self.assertRaises(ValueError):
-            cfg.parsed_tiers()
-
-    def test_rejects_missing_colon(self):
-        """Old-format (no tier name) must fail with helpful message."""
-        cfg = self._make_config(site_tiers="god-pw=directory")
-        with self.assertRaises(ValueError) as cm:
-            cfg.parsed_tiers()
-        self.assertIn("name:password", str(cm.exception))
-
-    def test_rejects_missing_equals(self):
-        cfg = self._make_config(site_tiers="god-mode-without-eq")
-        with self.assertRaises(ValueError) as cm:
-            cfg.parsed_tiers()
-        self.assertIn("name:password", str(cm.exception))
-
-
-class LoadDenylistTests(unittest.TestCase, _TmpConfigMixin):
-    def setUp(self):
-        self.config = self._make_config()
-        self.builder = SiteBuilder(self.config)
-
-    def test_empty_set_when_file_missing(self):
-        self.assertEqual(self.builder.load_denylist(), set())
-
-    def test_reads_ids(self):
-        self.config.denylist_file.write_text("779\n1291\n212\n")
-        self.assertEqual(self.builder.load_denylist(), {"779", "1291", "212"})
-
-    def test_strips_comments_and_blanks(self):
-        self.config.denylist_file.write_text(
-            "# header\n"
-            "779\n"
-            "\n"
-            "# midline\n"
-            "   212   # inline\n"
-            "\n"
-        )
-        self.assertEqual(self.builder.load_denylist(), {"779", "212"})
-
-
-class LoadFoodExclusionsTests(unittest.TestCase, _TmpConfigMixin):
-    def setUp(self):
-        self.config = self._make_config()
-        self.builder = SiteBuilder(self.config)
-
-    def test_files_are_source_and_year_scoped(self):
-        self.assertEqual(
-            self.config.food_exclusion_file("directory").name,
-            "food-exclusions-directory-2026.txt",
-        )
-        self.assertEqual(
-            self.config.food_exclusion_file("api-2025").name,
-            "food-exclusions-api-2025.txt",
-        )
-
-    def test_reads_camp_and_event_ids(self):
-        self.config.food_exclusion_file("directory").write_text(
-            "# Food only\n"
-            "camp:779\n"
-            "event:evt-1 # inline\n",
-        )
-        self.assertEqual(
-            self.builder.load_food_exclusions("directory"),
-            {("camp", "779"), ("event", "evt-1")},
-        )
-
-    def test_rejects_malformed_entries(self):
-        self.config.food_exclusion_file("directory").write_text("779\n")
-        with self.assertRaisesRegex(ValueError, "expected `camp:<id>`"):
-            self.builder.load_food_exclusions("directory")
-
-    def test_rejects_unknown_source(self):
-        with self.assertRaises(ValueError):
-            self.config.food_exclusion_file("future-source")
-
-
-class LoadMetaTests(unittest.TestCase, _TmpConfigMixin):
-    def setUp(self):
-        self.config = self._make_config()
-        self.builder = SiteBuilder(self.config)
-
-    def test_prefers_meta_file_when_present(self):
-        self.config.meta_file.write_text(json.dumps({
-            "fetched_date": "2026-01-01",
-            "version": "v2026.01.01",
-            "fetched_at": "2026-01-01T00:00:00Z",
-        }))
-        meta = self.builder.load_meta()
-        self.assertEqual(meta["version"], "v2026.01.01")
-
-    def test_fallback_to_page_mtime(self):
-        (self.config.pages_dir / "page_01.json").write_text("[]")
-        meta = self.builder.load_meta()
-        self.assertTrue(meta["version"].startswith("v"))
-        self.assertRegex(meta["fetched_date"], r"^\d{4}-\d{2}-\d{2}$")
-
-    def test_empty_default_when_nothing(self):
-        meta = self.builder.load_meta()
-        self.assertEqual(meta["version"], "v0.0.0")
-
-    def test_recovers_from_corrupt_meta(self):
-        self.config.meta_file.write_text("not valid json{{{")
-        (self.config.pages_dir / "page_01.json").write_text("[]")
-        meta = self.builder.load_meta()
-        self.assertTrue(meta["version"].startswith("v"))
-
-
-class LoadCampsTests(unittest.TestCase, _TmpConfigMixin):
-    def setUp(self):
-        self.config = self._make_config()
-        self.builder = SiteBuilder(self.config)
-
-    def _page(self, n, camps):
-        (self.config.pages_dir / f"page_{n:02d}.json").write_text(json.dumps(camps))
-
-    def _load(self) -> list[Camp]:
-        with contextlib.redirect_stdout(io.StringIO()):
-            return self.builder.load_camps()
-
-    def test_loads_camp_and_applies_tags(self):
-        self._page(1, [{
-            "id": "1", "name": "Yoga Tent", "location": "",
-            "description": "daily yoga at sunrise", "website": "",
-            "events": [],
-        }])
-        camps = self._load()
-        self.assertEqual(len(camps), 1)
-        self.assertIn("yoga", camps[0].tags)
-
-    def test_food_exclusion_clears_only_camp_food_classification(self):
-        self._page(1, [{
-            "id": "1", "name": "Dinner Theme", "location": "6:00 & E",
-            "description": "free dinner", "website": "", "events": [],
-        }])
-        self.config.food_exclusion_file("directory").write_text("camp:1\n")
-        camp = self._load()[0]
-        self.assertEqual([], camp.food_tags)
-        self.assertIn("food", camp.tags)
-        self.assertEqual("6:00 & E", camp.location)
-
-    def test_food_exclusion_clears_only_event_food_classification(self):
-        self._page(1, [{
-            "id": "1", "name": "Music Camp", "location": "",
-            "description": "music", "website": "",
             "events": [{
-                "id": "evt-1", "name": "Cake Theme", "description": "cake",
-                "time": "Tuesday 8/25 from 2pm-3pm",
+                "uid": "event-1",
+                "title": "Cake service",
+                "description": "Serving cake",
+                "hosted_by_camp": "camp-1",
+                "occurrence_set": [{
+                    "start_time": "2026-09-01T14:00:00-07:00",
+                    "end_time": "2026-09-01T15:00:00-07:00",
+                }],
             }],
-        }])
-        self.config.food_exclusion_file("directory").write_text("event:evt-1\n")
-        event = self._load()[0].events[0]
-        self.assertEqual([], event.food_tags)
-        self.assertEqual("Cake Theme", event.name)
+            "art": [],
+        }))
+        self.config.food_exclusion_file("api-2026").write_text(
+            "camp:camp-1\nevent:event-1\n",
+        )
+        snapshot = SiteBuilder(
+            self.config, sources=["api-2026"],
+        ).load_snapshot_for_source("api-2026")
+        camp = snapshot.camps[0]
+        self.assertEqual(camp.food_tags, [])
+        self.assertIn("food", camp.tags)
+        self.assertEqual(camp.location, "6:00 & A")
+        self.assertEqual(camp.events[0].food_tags, [])
+        self.assertEqual(camp.events[0].name, "Cake service")
 
-    def test_unmatched_food_exclusion_warns_without_printing_id(self):
-        self._page(1, [{
-            "id": "1", "name": "Music Camp", "location": "",
-            "description": "music", "website": "", "events": [],
-        }])
-        self.config.food_exclusion_file("directory").write_text("camp:private-id\n")
+    def test_unmatched_api_food_exclusion_warns_without_printing_id(self):
+        self.write_cache(2026)
+        self.config.food_exclusion_file("api-2026").write_text(
+            "camp:private-api-id\n",
+        )
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.builder.load_camps()
+            SiteBuilder(
+                self.config, sources=["api-2026"],
+            ).load_snapshot_for_source("api-2026")
         self.assertIn("1 Food exclusion(s) did not match", output.getvalue())
-        self.assertNotIn("private-id", output.getvalue())
+        self.assertNotIn("private-api-id", output.getvalue())
 
-    def test_canonical_url_generated_when_missing(self):
-        self._page(1, [{
-            "id": "779", "name": "X", "location": "", "description": "",
-            "website": "", "events": [],
-        }])
-        camp = self._load()[0]
-        self.assertEqual(camp.url, "https://directory.burningman.org/camps/779/")
+    def test_visible_freshness_uses_cache_time_but_version_uses_build_time(self):
+        meta = SiteBuilder._build_meta("2025-07-01T01:00:00Z")
+        self.assertEqual(meta["fetched_at"], "2025-07-01T01:00:00Z")
+        self.assertEqual(meta["fetched_date"], "2025-06-30")
+        self.assertRegex(meta["version"], r"^v\d{4}\.\d{2}\.\d{2}\.\d{4}$")
+        self.assertNotIn("2025.06.30", meta["version"])
 
-    def test_canonical_url_preserved_if_present(self):
-        self._page(1, [{
-            "id": "1", "name": "X", "location": "", "description": "",
-            "website": "", "url": "https://preset.example/", "events": [],
-        }])
-        self.assertEqual(self._load()[0].url, "https://preset.example/")
+    def test_missing_configured_snapshot_fails_build(self):
+        self.write_cache(2026)
+        self.write_bundle()
+        builder = SiteBuilder(self.config, sources=["api-2026", "api-2025"])
+        with mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}, clear=False):
+            with self.assertRaises(FileNotFoundError):
+                builder.build()
 
-    def test_denylist_filters_out_camp(self):
-        self._page(1, [
-            {"id": "1", "name": "Keep", "location": "", "description": "",
-             "website": "", "events": []},
-            {"id": "2", "name": "Drop", "location": "", "description": "",
-             "website": "", "events": []},
-        ])
-        self.config.denylist_file.write_text("2\n")
-        camps = self._load()
-        self.assertEqual([c.id for c in camps], ["1"])
+    def test_primary_must_be_current_brc_year(self):
+        builder = SiteBuilder(self.config, sources=["api-2025", "api-2026"])
+        with self.assertRaisesRegex(RuntimeError, "primary source must be api-2026"):
+            builder.build()
 
-    def test_dedupe_across_pages(self):
-        shared = {"id": "42", "name": "Dupe", "location": "",
-                  "description": "", "website": "", "events": []}
-        self._page(1, [shared])
-        self._page(2, [shared])
-        self.assertEqual(len(self._load()), 1)
+    def test_min_camps_applies_to_current_year_snapshot(self):
+        self.write_cache(2026, camps=1)
+        self.write_bundle()
+        with mock.patch.dict(os.environ, {"MIN_CAMPS": "2"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "api-2026.*only 1 camp"):
+                SiteBuilder(self.config, sources=["api-2026"]).build()
 
-    def test_sorted_case_insensitive(self):
-        self._page(1, [
-            {"id": "1", "name": "zebra", "location": "", "description": "",
-             "website": "", "events": []},
-            {"id": "2", "name": "APPLE", "location": "", "description": "",
-             "website": "", "events": []},
-            {"id": "3", "name": "banana", "location": "", "description": "",
-             "website": "", "events": []},
-        ])
-        self.assertEqual([c.name for c in self._load()],
-                         ["APPLE", "banana", "zebra"])
+    def test_full_plain_build_has_api_only_meta_and_cache_freshness(self):
+        self.write_cache(2026, fetched_at="2026-08-10T05:06:07Z")
+        self.write_cache(2025)
+        self.write_bundle()
+        with mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BM_EMBEDDINGS": "0"}, clear=False):
+            out = SiteBuilder(
+                self.config, sources=["api-2026", "api-2025"],
+            ).build()
+        text = out.read_text()
+        self.assertIn('name="bm-sources" content="api-2026,api-2025"', text)
+        self.assertIn('name="bm-brc-map-year" content="2026"', text)
+        self.assertIn('name="bm-fetched-at" content="2026-08-10T05:06:07Z"', text)
 
 
-class LocationReleasePolicyTests(unittest.TestCase, _TmpConfigMixin):
-    """Current API builds fail closed on missing/ambiguous D8 cutoffs."""
-
-    def test_directory_only_does_not_require_location_dates(self):
-        config = self._make_config(
-            camp_location_release_at="", art_location_release_at="",
-        )
-        SiteBuilder(config, sources=["directory"])._validate_location_release_policy()
-
-    def test_past_api_year_does_not_require_current_policy(self):
-        config = self._make_config(
-            camp_location_release_at="", art_location_release_at="",
-        )
-        SiteBuilder(config, sources=["api-2025"])._validate_location_release_policy()
-
-    def test_current_api_requires_both_timestamps(self):
-        config = self._make_config(camp_location_release_at="")
-        with self.assertRaisesRegex(RuntimeError, "CAMP_LOCATION_RELEASE_AT"):
-            SiteBuilder(config, sources=["api-2026"])._validate_location_release_policy()
-
-    def test_current_api_rejects_timezone_naive_timestamp(self):
-        config = self._make_config(
-            camp_location_release_at="2026-08-23T00:00:00",
-        )
-        with self.assertRaisesRegex(RuntimeError, "explicit timezone"):
-            SiteBuilder(config, sources=["api-2026"])._validate_location_release_policy()
-
-    def test_current_api_rejects_wrong_year_or_reversed_order(self):
-        wrong_year = self._make_config(
-            camp_location_release_at="2027-08-23T00:00:00-07:00",
-        )
-        with self.assertRaisesRegex(RuntimeError, "does not match BRC_MAP_YEAR"):
-            SiteBuilder(wrong_year, sources=["api-2026"])._validate_location_release_policy()
-
-        reversed_dates = self._make_config(
-            camp_location_release_at="2026-08-30T00:00:00-07:00",
-            art_location_release_at="2026-08-23T00:00:00-07:00",
-        )
-        with self.assertRaisesRegex(RuntimeError, "must be earlier"):
-            SiteBuilder(reversed_dates, sources=["api-2026"])._validate_location_release_policy()
-
-
-class CloudSyncConfigTests(unittest.TestCase, _TmpConfigMixin):
-    def test_unset_sync_emits_no_provider_origin(self):
-        builder = SiteBuilder(self._make_config())
-        self.assertEqual(builder._sync_meta(), "")
-
-    def test_dropbox_meta_is_build_gated(self):
-        builder = SiteBuilder(self._make_config(
-            sync_provider="dropbox", sync_client_id="public_app_key",
-        ))
-        meta = builder._sync_meta()
-        self.assertIn('name="bm-sync-provider" content="dropbox"', meta)
-        self.assertIn('name="bm-sync-client-id" content="public_app_key"', meta)
-        self.assertNotIn("bm-sync-token-url", meta)
-        self.assertNotIn("bm-sync-content-url", meta)
-
-    def test_partial_or_unknown_sync_config_fails_loud(self):
-        with self.assertRaisesRegex(RuntimeError, "SYNC_CLIENT_ID"):
-            SiteBuilder(self._make_config(sync_provider="dropbox"))._sync_meta()
-        with self.assertRaisesRegex(RuntimeError, "SYNC_PROVIDER"):
-            SiteBuilder(self._make_config(
-                sync_provider="other", sync_client_id="key",
-            ))._sync_meta()
-
-
-class MultiSourceCalendarWindowTests(unittest.TestCase, _TmpConfigMixin):
-    def test_later_source_cannot_overwrite_earlier_site_start(self):
-        builder = SiteBuilder(self._make_config())
-        early = Camp(
-            id="1", name="Early", location="", description="", website="",
-            url="", events=[Event(
-                id="e1", name="Setup", description="",
-                time="Begins Tue (8/25) at 6:00 PM, Ends 7:30 PM",
-            )],
-        )
-        burn_week = Camp(
-            id="2", name="Burn", location="", description="", website="",
-            url="", events=[Event(
-                id="e2", name="Recurring", description="",
-                time="From 11:00 AM to 3:00 PM on Mon, Tue",
-            )],
+@unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
+class EncryptionAndTierTests(BuilderFixture):
+    def camp(self) -> Camp:
+        return Camp(
+            id="c1", name="Camp", location="6:00 & A",
+            description="", website="", events=[],
         )
 
-        builder._enrich_event_times([early])
-        self.assertEqual(builder._effective_start, "2026-08-25")
-        builder._enrich_event_times([burn_week])
-        self.assertEqual(builder._effective_start, "2026-08-25")
+    def art(self) -> Art:
+        return Art(id="a1", name="Art", location="The Man", description="")
 
-    def test_recurring_start_date_uses_first_actual_window_occurrence(self):
-        builder = SiteBuilder(self._make_config())
-        camp = Camp(
-            id="1", name="Recurring", location="", description="", website="",
-            url="", events=[Event(
-                id="e1", name="Sunday and Monday", description="",
-                time="From 11:00 AM to 3:00 PM on Sun, Mon",
-            )],
+    def test_password_encryption_round_trip(self):
+        cfg = Config(
+            root=self.root, site_password="pw", pbkdf2_iter=1000,
+            burn_start="2026-08-30", burn_end="2026-09-07",
         )
-
-        builder._enrich_event_times([camp])
-
-        self.assertEqual(camp.events[0].parsed_time["start_date"], "8/30")
-
-    def test_second_week_overnight_keeps_explicit_occurrence_dates(self):
-        builder = SiteBuilder(self._make_config())
-        camp = Camp(
-            id="1", name="Some Camp!", location="", description="", website="",
-            url="", events=[Event(
-                id="e1", name="Noodley night! Post burn hot water cafe",
-                description="",
-                time="Begins Sat (9/5) at 11:00 PM, Ends Sun at 1:00 AM",
-            )],
+        enc = SiteBuilder(cfg).encrypt_payload(b'{"ok":true}')
+        blob = b"Salted__" + base64.b64decode(enc["salt"]) + base64.b64decode(enc["ct"])
+        proc = subprocess.run(
+            ["openssl", "enc", "-aes-256-cbc", "-d", "-pbkdf2", "-iter", "1000", "-pass", "pass:pw"],
+            input=blob, capture_output=True, check=True,
         )
+        self.assertEqual(gzip.decompress(proc.stdout), b'{"ok":true}')
 
-        builder._enrich_event_times([camp])
+    def test_three_tiers_have_expected_api_manifests(self):
+        builder = SiteBuilder(self.config, sources=["api-2026", "api-2025"])
+        loaded = [("api-2026", [self.camp()]), ("api-2025", [self.camp()])]
+        art = [("api-2026", [self.art()]), ("api-2025", [])]
+        tiers = [
+            ("god-mode", "god", ["api-2026", "api-2025"]),
+            ("demigod-mode", "demi", ["api-2026", "api-2025"]),
+            ("spirit-mode", "spirit", ["api-2026"]),
+        ]
+        scripts, meta, _modes, _keys = builder._envelope_data_scripts(loaded, tiers, art)
+        self.assertIn("api-2026:0,1,2", meta)
+        self.assertIn("api-2025:0,1", meta)
+        trusted = meta.split('bm-trusted-wrappers"', 1)[1]
+        self.assertIn("api-2026:0", trusted)
+        self.assertIn("api-2025:0", trusted)
+        self.assertNotIn("api-2026:0,1", trusted)
+        self.assertNotIn("retired", scripts)
 
-        event = camp.events[0]
-        self.assertEqual(event.display_time, "Sat 9/5 11:00 PM – Sun 9/6 1:00 AM")
-        self.assertEqual(event.parsed_time["start_date"], "9/5")
-        self.assertEqual(event.parsed_time["end_date"], "9/6")
+    def test_unregistered_tier_source_fails(self):
+        builder = SiteBuilder(self.config, sources=["api-2026"])
+        with self.assertRaisesRegex(RuntimeError, "api-2025"):
+            builder._envelope_data_scripts(
+                [("api-2026", [self.camp()])],
+                [("god-mode", "god", ["api-2026", "api-2025"])],
+            )
 
-    def test_stale_explicit_date_is_repaired_when_weekday_disagrees(self):
-        builder = SiteBuilder(self._make_config())
-        camp = Camp(
-            id="1", name="Old dates", location="", description="", website="",
-            url="", events=[Event(
-                id="e1", name="Old-year tuple", description="",
-                time="Begins Thu (8/29) at 9:00 PM, Ends Fri at 2:00 AM",
-            )],
+    def test_spirit_burn_key_contains_only_current_year(self):
+        self.write_cache(2026)
+        self.write_cache(2025)
+        self.write_bundle()
+        cfg = Config(
+            **{**self.config.__dict__, "site_tiers": (
+                "god-mode:god=api-2026+api-2025,"
+                "demigod-mode:demi=api-2026+api-2025,"
+                "spirit-mode:spirit=api-2026"
+            )},
         )
+        with contextlib.redirect_stdout(io.StringIO()), mock.patch.dict(
+            os.environ, {"MIN_CAMPS": "0", "BURN_OPEN": "1", "BM_EMBEDDINGS": "0"}, clear=False,
+        ):
+            SiteBuilder(cfg, sources=["api-2026", "api-2025"]).build()
+        burn_key = json.loads((cfg.site_dir / "burn-key.json").read_text())
+        self.assertEqual(list(burn_key), ["api-2026"])
 
-        builder._enrich_event_times([camp])
 
-        event = camp.events[0]
-        self.assertEqual(event.display_time, "Thu 9/3 9:00 PM – Fri 9/4 2:00 AM")
-        self.assertEqual(event.parsed_time["start_date"], "9/3")
-        self.assertEqual(event.parsed_time["end_date"], "9/4")
-
-
-class EndToEndBuildTests(unittest.TestCase, _TmpConfigMixin):
-    """Smoke test: a minimal fetch → site/index.html plaintext build."""
-
-    def test_produces_valid_html(self):
-        """Smoke test for the Preact-era build. The template now ships a
-        minimal HTML shell plus CSS; all user-facing DOM is rendered by
-        the bundle at runtime. We assert on the structural invariants
-        the Python side is responsible for."""
-        self.config = self._make_config()
-        self._page = lambda n, c: (self.config.pages_dir / f"page_{n:02d}.json").write_text(json.dumps(c))
-        self._page(1, [{
-            "id": "1", "name": "Demo Camp", "location": "4:00 & B",
-            "description": "free pancakes and yoga",
-            "website": "https://example.com", "events": [],
-        }])
-        # Drop a stub client bundle where _read_bundle() expects it.
-        # (The real bundle is produced by esbuild; tests don't run it.)
-        bundle_dir = self.config.root / "client" / "dist"
-        bundle_dir.mkdir(parents=True)
-        bundle_dir.joinpath("bundle.js").write_text(
-            '"use strict";(()=>{/* stub — real bundle built by esbuild in CI/make */})();'
-        )
-        bundle_dir.joinpath("semantic-backend.js").write_text(
-            'export const loadEmbedder=async()=>{};'
-        )
-        # site/ already exists (from _make_config) so the SW can land there.
-        # Smoke test has 1 camp, well below the production min-camps rail.
-        with contextlib.redirect_stdout(io.StringIO()), \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
-            SiteBuilder(self.config).build()
-        html = self.config.site_html.read_text()
-        privacy = (self.config.site_dir / "privacy.html").read_text()
-        # The Preact mount point.
-        self.assertIn('id="app"', html)
-        # Plaintext data payload — camp name is inside the JSON blob.
-        # Per-source script id (multi-source architecture).
-        self.assertIn('id="camps-data-directory"', html)
-        # Plaintext payload is now gzip+base64 (ADR D12) — the camp
-        # name doesn't appear as substring anymore. Confirm the new
-        # script type instead.
-        self.assertIn('type="application/x-gzip-base64"', html)
-        # Meta tags consumed by the client at startup.
-        self.assertIn('name="bm-version"', html)
-        self.assertIn('name="bm-fetched-date"', html)
-        self.assertIn('name="bm-contact-email"', html)
-        self.assertIn('name="bm-location-release-year" content="2026"', html)
-        self.assertIn(
-            'name="bm-camp-location-release-at" '
-            'content="2026-08-23T00:00:00-07:00"',
-            html,
-        )
-        self.assertIn(
-            'name="bm-art-location-release-at" '
-            'content="2026-08-30T00:00:00-07:00"',
-            html,
-        )
-        # Multi-source meta lists which sources are embedded; `directory`
-        # is the only one in this smoke test.
-        self.assertIn('name="bm-sources"', html)
-        self.assertIn('content="directory"', html)
-        # Stub bundle was embedded.
-        self.assertIn('"use strict";(()=>{', html)
-        # OAuth return works even when a privacy browser severs window.opener,
-        # and callback windows never boot the password-gated application.
-        self.assertIn("new BroadcastChannel('playa-dropbox-oauth')", html)
-        self.assertIn("window.__PLAYA_DROPBOX_OAUTH_CALLBACK__ = true", html)
-        self.assertIn("if (!window.__PLAYA_DROPBOX_OAUTH_CALLBACK__)", html)
-        # Noindex still enforced.
-        self.assertIn('name="robots"', html)
-        # Sync is opt-in: default builds emit no provider configuration.
-        self.assertNotIn('name="bm-sync-provider"', html)
-        self.assertNotIn('dropboxapi.com', html)
-        # Public privacy policy is a separate, payload-free page.
-        self.assertIn("Playa Camps Privacy Policy", privacy)
-        self.assertNotIn("Demo Camp", privacy)
-        self.assertNotIn("__CONTACT_EMAIL__", privacy)
-        self.assertIn("localStorage.getItem('bm-theme')", privacy)
-        for theme in ("paper", "daylight", "dusk", "night", "eclipse"):
-            self.assertIn(f'data-theme="{theme}"', privacy)
-        sw = (self.config.site_dir / "sw.js").read_text()
-        self.assertIn("'./privacy.html'", sw)
-        self.assertIn("CACHE_ART_IMAGE", sw)
-        self.assertIn("async function cacheArtImage", sw)
-        self.assertIn("req.destination !== 'image'", sw)
-        self.assertIn("const IMG_CACHE_MAX = 2000", sw)
-        self.assertIn("const ASK_CACHE = 'playa-ask-v1'", sw)
+class ServiceWorkerTests(BuilderFixture):
+    def test_activation_purges_pre_cutover_data_caches_but_not_model_cache(self):
+        sw_path = SiteBuilder(self.config)._write_service_worker("v2026.08.16.1200")
+        sw = sw_path.read_text()
+        self.assertIn("const ASK_CACHE = 'playa-ask-v3'", sw)
         self.assertIn("const MODEL_CACHE = 'transformers-cache'", sw)
+        # Prefix-based prune: every prior 'playa-' namespace (old shells + pre-v3
+        # image/Ask caches, incl. the pre-split single embeddings.json) is deleted,
+        # the current three are kept, and transformers-cache (no prefix) survives.
+        self.assertIn("k.startsWith('playa-')", sw)
+        self.assertIn("k !== CACHE && k !== IMG_CACHE && k !== ASK_CACHE", sw)
+        activate = sw.split("self.addEventListener('activate'", 1)[1].split("self.addEventListener('message'", 1)[0]
+        self.assertNotIn("caches.delete(MODEL_CACHE)", activate)
+        # Per-source indexes are Ask assets; the pre-split single file is gone.
+        self.assertIn("const ASK_ASSETS = ['./semantic-backend.js'];", sw)
+        self.assertIn(r"/\/embeddings-[\w.-]+\.json$/.test(url.pathname)", sw)
 
-    def test_build_fails_helpfully_when_bundle_missing(self):
-        """If the client bundle hasn't been built yet, the error should
-        tell the user how to fix it rather than producing broken HTML."""
-        self.config = self._make_config()
-        (self.config.pages_dir / "page_01.json").write_text("[]")
-        with self.assertRaises(RuntimeError) as ctx, \
-                mock.patch.dict(os.environ, {"MIN_CAMPS": "0"}):
-            SiteBuilder(self.config).build()
-        self.assertIn("client bundle missing", str(ctx.exception))
-        self.assertIn("make bundle", str(ctx.exception))
 
-    def test_build_refuses_degraded_fetch(self):
-        """A near-empty fetch shouldn't overwrite a healthy live deploy.
-        build() must raise with an actionable message so CI aborts before
-        the `upload-pages-artifact` step runs."""
-        self.config = self._make_config()
-        (self.config.pages_dir / "page_01.json").write_text(json.dumps([{
-            "id": "1", "name": "Only Camp", "location": "", "description": "",
-            "website": "", "events": [],
-        }]))
-        # Stub bundle so we don't trip the other guard first.
-        bundle_dir = self.config.root / "client" / "dist"
-        bundle_dir.mkdir(parents=True)
-        bundle_dir.joinpath("bundle.js").write_text('(()=>{})()')
-        bundle_dir.joinpath("semantic-backend.js").write_text(
-            'export const loadEmbedder=async()=>{};',
-        )
-        # MIN_CAMPS not overridden → defaults to 500 → 1 camp fails hard.
-        with self.assertRaises(RuntimeError) as ctx, \
-                contextlib.redirect_stdout(io.StringIO()):
-            SiteBuilder(self.config).build()
-        msg = str(ctx.exception)
-        self.assertIn("refusing to build", msg)
-        self.assertIn("MIN_CAMPS", msg)
+class EmbeddingPartitionTests(BuilderFixture):
+    """ADR 21 D9: `_write_embeddings` splits one vectors.json into per-source
+    index files with correctly re-sliced int8 rows."""
+
+    def test_splits_vectors_by_source_current_year_first(self):
+        emb_dir = self.config.root / "data" / "embeddings"
+        emb_dir.mkdir(parents=True, exist_ok=True)
+        keys = ["api-2026:camp:1", "api-2025:camp:9", "api-2026:art:2"]
+        rows = bytes([1, 2, 3, 4, 5, 6])   # dim=2: row0=[1,2] row1=[3,4] row2=[5,6]
+        (emb_dir / "vectors.json").write_text(json.dumps({
+            "model": "all-MiniLM-L6-v2", "dim": 2, "q": "int8",
+            "sig": "sig-x", "keys": keys,
+            "data": base64.b64encode(rows).decode("ascii"),
+        }))
+        builder = SiteBuilder(self.config, sources=["api-2026", "api-2025"])
+        # `subprocess.run` (node embed.mjs) is shelled but mocked to a no-op so it
+        # neither runs node nor overwrites our crafted vectors.json.
+        with mock.patch("playa.builder.subprocess.run") as run, \
+                contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.dict(os.environ, {"BM_EMBEDDINGS": "1"}, clear=False):
+            shipped = builder._write_embeddings([("api-2026", []), ("api-2025", [])], [])
+        run.assert_called_once()
+        self.assertEqual(shipped, ["api-2026", "api-2025"])   # meta manifest order
+
+        p26 = json.loads((self.config.site_dir / "embeddings-api-2026.json").read_text())
+        p25 = json.loads((self.config.site_dir / "embeddings-api-2025.json").read_text())
+        # Keys keep the full source:kind:id form, grouped by source.
+        self.assertEqual(p26["keys"], ["api-2026:camp:1", "api-2026:art:2"])
+        self.assertEqual(p25["keys"], ["api-2025:camp:9"])
+        # Rows are re-sliced into the correct file (row0+row2 → 2026; row1 → 2025).
+        self.assertEqual(base64.b64decode(p26["data"]), bytes([1, 2, 5, 6]))
+        self.assertEqual(base64.b64decode(p25["data"]), bytes([3, 4]))
+        # sig/dim/model carried through unchanged so the client sig-check passes.
+        self.assertEqual((p26["sig"], p26["dim"], p26["model"]), ("sig-x", 2, "all-MiniLM-L6-v2"))
+
+    def test_disabled_returns_empty_manifest(self):
+        builder = SiteBuilder(self.config, sources=["api-2026"])
+        with mock.patch.dict(os.environ, {"BM_EMBEDDINGS": "0"}, clear=False):
+            self.assertEqual(builder._write_embeddings([("api-2026", [])], []), [])
 
 
 if __name__ == "__main__":

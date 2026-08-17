@@ -1,9 +1,7 @@
 """Unit tests for playa.sources.api — schema mapping + cache loading.
 
-The HTTP path (`fetch_and_cache`) talks to api.burningman.org and is
-not exercised here; we test against a hand-crafted JSON file written
-to the cache location, which is exactly what `load_camps()` reads in
-production.
+The HTTP path is mocked separately; cache-loading tests use hand-crafted API
+snapshots at the production cache path.
 """
 import contextlib
 import io
@@ -11,6 +9,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from playa.config import Config
 from playa.sources.api import APISource
@@ -19,6 +18,10 @@ from playa.sources.api import APISource
 def _silent(fn, *args, **kwargs):
     with contextlib.redirect_stdout(io.StringIO()):
         return fn(*args, **kwargs)
+
+
+def _load_camps(source, config):
+    return source.load_snapshot(config).camps
 
 
 class APISourceLoadTests(unittest.TestCase):
@@ -32,12 +35,14 @@ class APISourceLoadTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _write(self, year, payload):
+        payload.setdefault("fetched_at", "2026-08-15T12:34:56Z")
+        payload.setdefault("art", [])
         self.config.api_payload_file(year).write_text(json.dumps(payload))
 
     def test_missing_cache_raises_with_helpful_message(self):
         src = APISource(year=2024)
         with self.assertRaises(FileNotFoundError) as cm:
-            src.load_camps(self.config)
+            src.load_snapshot(self.config)
         self.assertIn("api-fetch", str(cm.exception))
 
     def test_basic_camp_mapping_uid_to_id(self):
@@ -55,7 +60,7 @@ class APISourceLoadTests(unittest.TestCase):
             ],
             "events": [],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         self.assertEqual(len(camps), 1)
         c = camps[0]
         self.assertEqual(c.id, "a1XVI000001vN7N2AU")
@@ -63,9 +68,24 @@ class APISourceLoadTests(unittest.TestCase):
         self.assertEqual(c.location, "Esplanade & 6:30")
         self.assertEqual(c.description, "We count things.")
         self.assertEqual(c.website, "http://census.burningman.org")
-        # API-source camps have no canonical "directory page" URL — UI
-        # omits the link when this is empty.
-        self.assertEqual(c.url, "")
+        self.assertNotIn("url", c.to_dict())
+
+    def test_snapshot_returns_art_and_fetched_at(self):
+        self._write(2024, {
+            "fetched_at": "2024-08-20T01:02:03Z",
+            "camps": [], "events": [],
+            "art": [{"uid": "art-1", "name": "Glow", "location_string": "The Man"}],
+        })
+        snapshot = APISource(year=2024).load_snapshot(self.config)
+        self.assertEqual(snapshot.fetched_at, "2024-08-20T01:02:03Z")
+        self.assertEqual([piece.id for piece in snapshot.art], ["art-1"])
+
+    def test_cache_without_fetched_at_is_rejected(self):
+        self.config.api_payload_file(2024).write_text(
+            json.dumps({"camps": [], "events": [], "art": []}),
+        )
+        with self.assertRaisesRegex(RuntimeError, "fetched_at"):
+            APISource(year=2024).load_snapshot(self.config)
 
     def test_camp_without_uid_is_dropped(self):
         self._write(2024, {
@@ -75,7 +95,7 @@ class APISourceLoadTests(unittest.TestCase):
             ],
             "events": [],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         self.assertEqual([c.id for c in camps], ["valid"])
 
     def test_events_attach_to_their_host_camp(self):
@@ -103,7 +123,7 @@ class APISourceLoadTests(unittest.TestCase):
                 },
             ],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         a = next(c for c in camps if c.id == "campA")
         b = next(c for c in camps if c.id == "campB")
         self.assertEqual([e.id for e in a.events], ["evA1"])
@@ -119,7 +139,7 @@ class APISourceLoadTests(unittest.TestCase):
                  "hosted_by_camp": None, "occurrence_set": []},
             ],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         self.assertEqual(camps[0].events, [])
 
     def test_recurring_event_coalesces_to_one(self):
@@ -142,7 +162,7 @@ class APISourceLoadTests(unittest.TestCase):
                 ],
             }],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         events = camps[0].events
         self.assertEqual(len(events), 1)
         ev = events[0]
@@ -169,7 +189,7 @@ class APISourceLoadTests(unittest.TestCase):
                 ],
             }],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         events = camps[0].events
         self.assertEqual(len(events), 2)
         ids = sorted(e.id for e in events)
@@ -192,7 +212,7 @@ class APISourceLoadTests(unittest.TestCase):
                 ],
             }],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         ev = camps[0].events[0]
         # One occurrence, single-day, same start/end day → single (not recurring).
         self.assertEqual(ev.parsed_time["kind"], "single")
@@ -217,7 +237,7 @@ class APISourceLoadTests(unittest.TestCase):
                 ],
             }],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         ev = camps[0].events[0]
         self.assertEqual(ev.parsed_time["kind"], "single")
         self.assertEqual(ev.parsed_time["start_day"], "Tue")
@@ -235,7 +255,7 @@ class APISourceLoadTests(unittest.TestCase):
             ],
             "events": [],
         })
-        camps = _silent(APISource(year=2024).load_camps, self.config)
+        camps = _silent(_load_camps, APISource(year=2024), self.config)
         self.assertEqual([c.id for c in camps], ["campB"])
 
     def test_year_below_minimum_rejected_by_fetch(self):
@@ -251,12 +271,12 @@ class APISourceLoadTests(unittest.TestCase):
             APISource(year=2024).fetch_and_cache(cfg)
 
     def test_encrypted_cache_round_trip(self):
-        """Write encrypted cache via _openssl_encrypt → load_camps()
-        decrypts on read using the same password."""
+        """Encrypted API snapshots decrypt with the cache password."""
         from playa.sources.api import _openssl_encrypt
         cfg = Config(root=self.root, bm_cache_password="cache-secret")
         cfg.api_dir.mkdir(parents=True, exist_ok=True)
         plaintext = json.dumps({
+            "fetched_at": "2026-08-15T12:34:56Z",
             "year": 2024,
             "camps": [{"uid": "u1", "name": "Encrypted Camp", "year": 2024,
                        "location_string": "6:00 & A"}],
@@ -264,7 +284,7 @@ class APISourceLoadTests(unittest.TestCase):
         }).encode("utf-8")
         blob = _openssl_encrypt(plaintext, "cache-secret", cfg.pbkdf2_iter)
         cfg.api_payload_file(2024).write_bytes(blob)
-        camps = _silent(APISource(year=2024).load_camps, cfg)
+        camps = _silent(_load_camps, APISource(year=2024), cfg)
         self.assertEqual(len(camps), 1)
         self.assertEqual(camps[0].name, "Encrypted Camp")
 
@@ -273,6 +293,7 @@ class APISourceLoadTests(unittest.TestCase):
         cfg_write = Config(root=self.root, bm_cache_password="right")
         cfg_write.api_dir.mkdir(parents=True, exist_ok=True)
         plaintext = json.dumps({
+            "fetched_at": "2026-08-15T12:34:56Z",
             "year": 2024,
             "camps": [{"uid": "u1", "name": "X", "year": 2024,
                        "location_string": ""}],
@@ -282,7 +303,7 @@ class APISourceLoadTests(unittest.TestCase):
         cfg_write.api_payload_file(2024).write_bytes(blob)
         cfg_read = Config(root=self.root, bm_cache_password="wrong")
         with self.assertRaises(RuntimeError) as cm:
-            _silent(APISource(year=2024).load_camps, cfg_read)
+            _silent(_load_camps, APISource(year=2024), cfg_read)
         self.assertIn("wrong BM_CACHE_PASSWORD", str(cm.exception))
 
     def test_encrypted_cache_without_password_helpful_error(self):
@@ -293,11 +314,11 @@ class APISourceLoadTests(unittest.TestCase):
         cfg_write = Config(root=self.root, bm_cache_password="x")
         cfg_write.api_dir.mkdir(parents=True, exist_ok=True)
         cfg_write.api_payload_file(2024).write_bytes(
-            _openssl_encrypt(b'{"camps":[],"events":[]}', "x", cfg_write.pbkdf2_iter),
+            _openssl_encrypt(b'{"fetched_at":"2026-08-15T12:34:56Z","camps":[],"events":[],"art":[]}', "x", cfg_write.pbkdf2_iter),
         )
         cfg_read = Config(root=self.root)  # no password
         with self.assertRaises(RuntimeError) as cm:
-            APISource(year=2024).load_camps(cfg_read)
+            _load_camps(APISource(year=2024), cfg_read)
         msg = str(cm.exception)
         self.assertIn("BM_CACHE_PASSWORD", msg)
         self.assertIn("SITE_PASSWORD", msg)
@@ -309,10 +330,10 @@ class APISourceLoadTests(unittest.TestCase):
         cfg = Config(root=self.root, site_password="single-secret")
         cfg.api_dir.mkdir(parents=True, exist_ok=True)
         blob = _openssl_encrypt(
-            b'{"camps":[],"events":[]}', "single-secret", cfg.pbkdf2_iter,
+            b'{"fetched_at":"2026-08-15T12:34:56Z","camps":[],"events":[],"art":[]}', "single-secret", cfg.pbkdf2_iter,
         )
         cfg.api_payload_file(2024).write_bytes(blob)
-        camps = _silent(APISource(year=2024).load_camps, cfg)
+        camps = _silent(_load_camps, APISource(year=2024), cfg)
         self.assertEqual(camps, [])
 
 
@@ -335,45 +356,68 @@ class ConfigAPIYearsTests(unittest.TestCase):
             [2024, 2025],
         )
 
-    def test_drops_below_minimum_year(self):
-        self.assertEqual(
-            Config(root=self.root, bm_api_years="2010,2020,2024").parsed_api_years(),
-            [2020, 2024],
-        )
+    def test_rejects_below_minimum_year(self):
+        with self.assertRaisesRegex(ValueError, "below"):
+            Config(root=self.root, bm_api_years="2010,2020,2024").parsed_api_years()
 
-    def test_drops_non_numeric_entries(self):
-        self.assertEqual(
-            Config(root=self.root, bm_api_years="2024,latest,2025,").parsed_api_years(),
-            [2024, 2025],
-        )
+    def test_rejects_non_numeric_entries(self):
+        with self.assertRaisesRegex(ValueError, "expected YYYY"):
+            Config(root=self.root, bm_api_years="2024,latest,2025,").parsed_api_years()
 
 
 class CLISourceResolutionTests(unittest.TestCase):
-    """`_resolve_sources` dispatch: arg > BM_API_YEARS > default."""
+    """Source resolution is API-only and current-year-first."""
 
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
 
     def test_explicit_arg_wins_over_env(self):
         from playa.cli import _resolve_sources
-        cfg = Config(root=self.root, bm_api_years="2024,2025")
+        cfg = Config(root=self.root, bm_api_years="2024,2025,2026")
         self.assertEqual(
-            _resolve_sources("directory", cfg),
-            ["directory"],
+            _resolve_sources("api-2024,api-2026,api-2025", cfg),
+            ["api-2026", "api-2025", "api-2024"],
         )
 
     def test_env_used_when_arg_omitted(self):
         from playa.cli import _resolve_sources
-        cfg = Config(root=self.root, bm_api_years="2024,2025")
+        cfg = Config(root=self.root, bm_api_years="2024,2025,2026")
         self.assertEqual(
             _resolve_sources(None, cfg),
-            ["directory", "api-2024", "api-2025"],
+            ["api-2026", "api-2025", "api-2024"],
         )
 
-    def test_default_directory_only(self):
+    def test_missing_configuration_is_rejected(self):
         from playa.cli import _resolve_sources
-        cfg = Config(root=self.root)  # no env, no arg
-        self.assertEqual(_resolve_sources(None, cfg), ["directory"])
+        with self.assertRaisesRegex(ValueError, "no API sources configured"):
+            _resolve_sources(None, Config(root=self.root))
+
+    def test_retired_source_is_rejected(self):
+        from playa.cli import _resolve_sources
+        with self.assertRaisesRegex(ValueError, "only api-YYYY"):
+            _resolve_sources("retired", Config(root=self.root))
+
+    def test_current_year_is_required(self):
+        from playa.cli import _resolve_sources
+        with self.assertRaisesRegex(ValueError, "api-2026"):
+            _resolve_sources("api-2025", Config(root=self.root))
+
+
+class APIRetryTests(unittest.TestCase):
+    def test_retries_server_error_with_api_specific_settings(self):
+        from playa.sources.api import _request_json
+        cfg = Config(
+            root=Path(tempfile.mkdtemp()), bm_api_key="key",
+            bm_api_retries=2, bm_api_backoff=1,
+        )
+        failed = mock.Mock(returncode=0, stdout=b'{"detail":"later"}\n500', stderr=b"")
+        ok = mock.Mock(returncode=0, stdout=b'{"ok":true}\n200', stderr=b"")
+        with mock.patch("playa.sources.api.shutil.which", return_value="/usr/bin/curl"), \
+             mock.patch("playa.sources.api.subprocess.run", side_effect=[failed, ok]) as run, \
+             mock.patch("playa.sources.api.time.sleep") as sleep:
+            self.assertEqual(_request_json(cfg, "/api/camp", {"year": 2026}), {"ok": True})
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(1)
 
 
 if __name__ == "__main__":

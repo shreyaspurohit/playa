@@ -22,9 +22,10 @@ SOFTWARE.
 
 ---
 
-Note: the MIT license applies to the code in this repository (the Python
-scrape/tag/build scripts, the HTML/CSS/JS template in scripts/build_site.py,
-the GitHub Actions workflow, and related tooling). It does NOT apply to the
-scraped camp data under data/pages/ or the generated site/index.html — that
-content is owned by the respective Burning Man camps and/or Black Rock City,
-LLC per the directory.burningman.org Terms of Service.
+Note: the MIT license applies to the source code in this repository (the Python
+build package under backend/, the client under client/, the GitHub Actions
+workflows, and related tooling). It does NOT apply to the Burning Man Event Data
+obtained through the official API, or to the generated site built from it — that
+content is owned by the respective Burning Man camps and/or Black Rock City, LLC
+under the Burning Man APIs and Datasets Terms of Service
+(https://innovate.burningman.org/terms-of-service-for-burning-man-apis-and-datasets/).

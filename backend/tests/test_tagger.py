@@ -285,7 +285,7 @@ class HaystackTests(unittest.TestCase):
 
     def _camp(self, **kwargs):
         defaults = dict(id="1", name="", location="", description="",
-                        website="", url="https://example/", events=[])
+                        website="", events=[])
         defaults.update(kwargs)
         return Camp(**defaults)
 
@@ -326,7 +326,6 @@ class ArtTaggerTests(unittest.TestCase):
             id="1", name="Burning Bird",
             location="9:00 & C",
             description="A flame sculpture.",
-            url="",
             artist="Jane Doe",
             category="Sculpture",
             program="Honorarium",
@@ -345,7 +344,6 @@ class ArtTaggerTests(unittest.TestCase):
             id="1", name="Plain Title",
             location="",
             description="Interactive art sculpture with fire and sound",
-            url="",
         )
         tags = self.tagger.tag_art(a)
         self.assertGreater(
@@ -357,10 +355,10 @@ class ArtTaggerTests(unittest.TestCase):
         pieces = [
             self.Art(id="1", name="Fire Bird",
                      location="", description="A flaming sculpture",
-                     url=""),
+                     ),
             self.Art(id="2", name="Quiet Stone",
                      location="", description="just a rock",
-                     url=""),
+                     ),
         ]
         self.tagger.tag_all_art(pieces)
         self.assertGreater(len(pieces[0].tags), 0)
@@ -461,14 +459,14 @@ class FoodTypeTests(unittest.TestCase):
 
     def test_camp_food_types_use_name_desc_not_events(self):
         # A real food camp: the type is in its name.
-        ramen = Camp(id="1", name="42 Ramen", location="", description="claim your yummy prize", website="", url="")
+        ramen = Camp(id="1", name="42 Ramen", location="", description="claim your yummy prize", website="")
         self.assertIn("noodles", self.t.food_types_for_camp(ramen))
         # A non-food camp whose EVENT merely mentions "snacks" must NOT be
         # classified as a food camp — food_types_for_camp ignores events.
         acorn = Camp(
             id="2", name="Acorn Oasis", location="",
             description="lose your nuts in carnival games and feast your eyes on squirrels",
-            website="", url="",
+            website="",
             events=[Event(id="e", name="Snack Break", description="free snacks", time="")],
         )
         self.assertEqual([], self.t.food_types_for_camp(acorn))

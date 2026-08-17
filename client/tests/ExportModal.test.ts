@@ -12,7 +12,7 @@ function renderModal(onClose = () => {}) {
   render(h(ExportModal, {
     open: true,
     onClose,
-    source: 'directory',
+    source: 'api-2026',
     camps: [],
     art: [],
     campIds: ['123'],

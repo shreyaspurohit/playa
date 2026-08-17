@@ -37,7 +37,6 @@ interface Props {
 }
 
 function sourceLabel(s: Source): string {
-  if (s === 'directory') return 'Directory';
   if (s.startsWith('api-')) return `API ${s.slice(4)}`;
   return s;
 }
@@ -58,11 +57,7 @@ export function ImportBanner({
   // couple meet spots is still worth importing, even with zero favs.
   const hasRendezvous = Boolean(myCampId) || (meetSpots?.length ?? 0) > 0;
 
-  // Source mismatch — only triggers when the share explicitly tags
-  // itself with a different source. Legacy shares (no `source` field)
-  // are assumed to be `directory` and only mismatch if the receiver
-  // is currently elsewhere.
-  const effectiveShareSource: Source = shareSource ?? 'directory';
+  const effectiveShareSource: Source = shareSource;
   const sourceMismatch = effectiveShareSource !== currentSource;
   const canSwitch = sourceMismatch && availableSources.includes(effectiveShareSource);
 

@@ -1,9 +1,4 @@
-"""Typed dataclasses replacing the dict-shaped camp records.
-
-`to_dict()` keeps the JSON format stable across the page JSONs and the
-site payload. `from_dict()` accepts both new and legacy shapes (e.g.,
-page JSONs that predate the `website` or `events` fields).
-"""
+"""Typed records shared by the API adapter and site builder."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -61,7 +56,6 @@ class Camp:
     location: str
     description: str
     website: str
-    url: str
     events: list[Event] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     # Food-type buckets the camp advertises in its own name+description (ADR
@@ -76,7 +70,6 @@ class Camp:
             "location": self.location,
             "description": self.description,
             "website": self.website,
-            "url": self.url,
             "events": [e.to_dict() for e in self.events],
             "tags": list(self.tags),
         }
@@ -93,7 +86,6 @@ class Camp:
             location=d.get("location", ""),
             description=d.get("description", ""),
             website=d.get("website", ""),
-            url=d.get("url") or f"https://directory.burningman.org/camps/{cid}/",
             events=[Event.from_dict(e) for e in (d.get("events") or [])],
             tags=list(d.get("tags", [])),
             food_tags=list(d.get("food_tags", [])),
@@ -102,29 +94,17 @@ class Camp:
 
 @dataclass
 class Art:
-    """Art installation. Parallel to Camp but with art-specific fields.
-
-    Source-of-truth shapes:
-      * Directory `/artwork/<id>/`: id (numeric), name, location string,
-        description. No website, no events.
-      * API `/api/art?year=YYYY`: SFDC uid, name, artist, hometown,
-        category, program, description, location.location_string,
-        images[].thumbnail_url. No events.
-    Stable across both sources via the union model below — fields the
-    other source doesn't populate stay empty (e.g., directory art has
-    no `artist`).
-    """
+    """Art installation normalized from an annual API snapshot."""
     id: str
     name: str
     location: str
     description: str
-    url: str
     artist: str = ""
     hometown: str = ""
     category: str = ""
     program: str = ""
     image_url: str = ""    # thumbnail_url from API (first image only)
-    year: int = 0          # API only; directory art doesn't carry a year
+    year: int = 0
     tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -133,7 +113,6 @@ class Art:
             "name": self.name,
             "location": self.location,
             "description": self.description,
-            "url": self.url,
             "artist": self.artist,
             "hometown": self.hometown,
             "category": self.category,
@@ -151,7 +130,6 @@ class Art:
             name=d.get("name", ""),
             location=d.get("location", ""),
             description=d.get("description", ""),
-            url=d.get("url") or f"https://directory.burningman.org/artwork/{aid}/",
             artist=d.get("artist", "") or "",
             hometown=d.get("hometown", "") or "",
             category=d.get("category", "") or "",

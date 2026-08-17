@@ -12,7 +12,7 @@ let api: MeetSpotsApi | null = null;
 let mountpoint: HTMLElement;
 
 // Tests run with a fixed scoped key — `useMeetSpots` is per-source.
-const TEST_KEY = LS.meetSpots + '/directory';
+const TEST_KEY = LS.meetSpots + '/api-2026';
 
 function Harness(): null {
   api = useMeetSpots(TEST_KEY);

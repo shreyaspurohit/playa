@@ -528,7 +528,7 @@ class GisFetcher:
                 if exc.code != 404:
                     raise
                 # Annual sources arrive in stages. A missing new-year GIS
-                # directory must not block camp/event/art builds, and a forced
+                # upstream GIS outage must not block Event Data builds, and a forced
                 # refresh must not discard a previously validated same-year
                 # snapshot. Other HTTP/network failures still fail loudly.
                 if normalized_path.exists():

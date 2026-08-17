@@ -1,169 +1,108 @@
----
-title: ToS Compliance
-date: 2026-04-27
-updated: 2026-08-10
-status: current
----
+# API and GIS Terms Compliance
 
-# ToS Compliance
+**Status:** Accepted
+**Last reviewed:** 2026-08-16
 
 ## Overview
 
-Playa Camps re-uses public Burning Man data. Two terms-of-service
-documents apply, depending on the source:
+The app uses annual Event Data snapshots from the keyed Burning Man API and
+official annual GIS files. It is a free, personal, non-commercial tool for
+participants. The code is public; Event Data, derived vectors, deployed builds,
+and API keys are not committed.
 
-1. **`directory.burningman.org` ToS** — covers the HTML scrape we use
-   today. Personal-use only, camp-text is camp-copyrighted.
-2. **`innovate.burningman.org` API ToS** — covers the structured API
-   + S3 archives + GIS data. The application now embeds configured
-   `api-YYYY` snapshots, so its display, key-handling, transformation, and
-   embargo requirements are active—not a future migration concern.
-
-This doc is the central compliance record so a future maintainer
-doesn't have to re-derive what's a hard rule vs. a nice-to-have.
-
-The operational counterpart is the
-[revocation runbook](./revocation-plan.md) — what to do if a
-takedown lands.
+The controlling source is the current
+[Terms of Service for Burning Man APIs and Datasets](https://innovate.burningman.org/terms-of-service-for-burning-man-apis-and-datasets/).
+Those terms can change without notice, so review them before each annual data
+refresh and record the review date here.
 
 ## Decisions
 
-### Public-code, private-data stance
+### Event Data stays outside git
 
-The repo is public for portability and as a portfolio piece. The
-camp content (which is per-camp copyrighted, NOT Burning Man's to
-relicense) is **never committed to git**. `.gitignore` covers:
+- `data/api/YYYY.json` is local or restored from an encrypted GitHub Release.
+- `site/index.html`, `site/embeddings.json`, generated service workers, and
+  embedding working files are gitignored.
+- CI builds on an ephemeral runner and deploys a Pages artifact.
+- A password gate, crawler exclusion, and encryption narrow the audience but do
+  not replace the terms obligations.
 
-- `data/pages/*.json` — raw fetch
-- `data/pages-backups/` — fetch snapshots from `make fetch`
-- `data/meta.json`, `data/camps.csv`, `data/camps_tagged.csv` —
-  derived
-- `site/index.html`, `site/sw.js`, `site/version.txt` — built
-  artifacts (encrypted or not, still derived from camp content)
+### Non-commercial use is absolute
 
-Every CI run produces the artifact fresh and uploads it as a Pages
-artifact; no commit. Takedowns become genuine deletions: add the
-camp id to `data/denylist.txt`, the next build filters it out, the
-old artifact is overwritten.
+The app is free, carries no advertising or commercial branding, has no paid
+access, and is not used to promote unrelated events, products, or services.
+The visible “Built for Burners, not commercial” notice documents this stance.
 
-### Mitigations baked in
+### The mandatory notice is exact
 
-| Concern | Mitigation |
-|---|---|
-| §5 non-commercial use | No ads, no monetization, no accounts, no per-user analytics; the app sets no cookies or tracking scripts of its own. The About modal states this and discloses that Cloudflare/GitHub Pages process ordinary request metadata (e.g. IP) and expose aggregate traffic stats. |
-| §6 camp-copyright on descriptions | Password gate narrows audience to friends; `noindex, nofollow, noarchive` keeps crawlers out; takedown mailto in footer + About modal. |
-| §7(d) prohibited framing/linking | Each card carries a canonical "on directory ↗" link to the official entry, and the About modal reminds users to verify there. |
-| Innovate §4 disclaimer | App carries the verbatim *"This app is not affiliated, endorsed, or verified by Burning Man Project"* in the footer + About modal. |
-| Innovate §6.2 location embargo | Current-year API camp locations are client-masked until `CAMP_LOCATION_RELEASE_AT`; art locations independently remain masked until `ART_LOCATION_RELEASE_AT`. Directory and past years are unaffected. Spirit-mode remains masked; trusted god-mode may bypass for internal testing by explicit operator decision. |
-| Innovate §7.2 trademark | App name "Playa Camps" avoids "Burning Man", "Black Rock City", "Decompression", "Playa Events". |
-| Innovate §5.5 modification | Tags and calendar dates are app-side transformations. The About modal states that tags are generated from listing text and event times are formatted against the configured burn-week calendar. |
-| Innovate §2.3 permissions | GPS is opt-in and explained in the About modal. No camera, no notifications, no clipboard read. |
+The Footer and About view must prominently render:
 
-### Active Innovate compliance checklist
+> This app is not affiliated, endorsed, or verified by Burning Man Project.
 
-These are gate-items, not nice-to-haves. CLAUDE.md tracks the same
-list near the API migration section.
+Do not paraphrase it. The surrounding copy says that the app uses an official
+API snapshot, that it may be stale or incomplete, and that critical details
+should be checked against current official Burning Man communications.
 
-- [x] §4 disclaimer in footer + About modal for every source.
-- [x] §6.2 camp and art location masking wired to their separate,
-      timezone-aware annual timestamps in `client/src/utils/embargo.ts`.
-      The current-year API build fails if either value is missing, naive,
-      reversed, or belongs to another `BRC_MAP_YEAR`; future API years fail
-      closed in the client. `BURN_WINDOW_OPEN_FROM` is not a disclosure gate.
-      Client masking and the trusted internal bypass are documented accepted
-      risk, not hard confidentiality.
-- [x] §7.2 trademark — re-check if renaming.
-- [x] §5.3 republishing — using data in the app is fine; don't
-      mirror as a standalone dataset.
-- [x] §5.5 modification — keep transformation labels current as
-      the pipeline grows.
-- [x] §2.3 permissions — extend the GPS paragraph if we add camera
-      / push.
-- [x] §9 revocation — `revocation-plan.md` has the runbook.
-- [x] `MIN_CAMPS` rail — never override below 500 in CI; protects
-      against an empty-API fallback overwriting the last-good
-      deploy.
+### Keys remain secret and app-specific
 
-### Source-specific disclosure rules
+`BM_API_KEY` is a local environment value or GitHub Actions secret. It is never
+embedded in the client, logged, committed, transferred, or used for another
+application. Registration and contact information must remain accurate.
 
-- The exact Innovate §4 no-affiliation sentence, transformation labels, and
-  non-commercial/no-tracking statement render for every source.
-- Directory attribution, “verify on directory” guidance, canonical directory
-  links, and directory camp-owner takedown wording render only while
-  `directory` is selected.
-- The visible source must be resolved from sources actually unlocked by the
-  current password before these disclosures render; a stale persisted
-  `directory` choice must not flash directory copy to an API-only user.
+### Location confidentiality is enforced independently
 
-### Accepted operator decisions
+Current-year camp and art locations can exist in encrypted snapshots before
+public release. `CAMP_LOCATION_RELEASE_AT` and `ART_LOCATION_RELEASE_AT` are
+timezone-aware release instants. Normal and spirit wrappers remain masked until
+their respective instant. Only the named `god-mode` wrapper is trusted to bypass
+the client mask for internal testing. This exception must not be broadened.
 
-- Tags are app-generated keyword overlays and event times are normalized for
-  presentation. Source descriptions and event text are not rewritten. The
-  About modal identifies both transformations; the operator accepts remaining
-  interpretation risk under §5.5.
-- Raw current-year API locations remain in encrypted payloads so the deployed
-  app can reveal them after the cutoff. `god-mode` wrappers can be marked
-  trusted to bypass client masking for internal testing. Spirit-mode users do
-  not receive that bypass. This is intentional accepted risk; do not broaden it.
+The About view discloses both release times, explains that events inherit camp
+locations, and explains GPS permission and its on-device use.
+
+### Source data is not distorted
+
+Source descriptions and event text are not rewritten. The app adds search tags,
+food classifications, formatted event times, and map projections; the About
+view labels those transformations. Incorrect records should be corrected by a
+new API snapshot or removed locally, never silently rewritten to imply that the
+source said something else.
+
+### Termination means deletion
+
+If access is terminated or discontinued, stop API refresh and data-bearing
+deployments immediately, remove Event Data from the live site, delete encrypted
+Release snapshots and Actions artifacts/caches containing derived data, and
+destroy local copies. Do not preserve or redeploy a last-known-good dataset.
+Follow [revocation-plan.md](revocation-plan.md).
 
 ## Mechanism
 
-### Takedown flow
+The builder validates that every source is `api-YYYY`, that the current
+`BRC_MAP_YEAR` is configured and primary, and that every tier names only a
+registered source. Annual snapshots are decrypted once into a source snapshot
+containing camps, events, art, and `fetched_at`. The primary snapshot timestamp
+drives the visible freshness date; build time only versions the application
+shell.
 
-```mermaid
-sequenceDiagram
-  participant Camp as Camp owner
-  participant Owner as Site owner
-  participant Repo
-  participant CI
-  participant Site
+The UI has no record-level API links. It retains the privacy, GPS,
+transformation, non-commercial, location-release, and mandatory affiliation
+notices for every annual source.
 
-  Camp->>Owner: emails CONTACT_EMAIL with camp name + URL
-  Owner->>Repo: append camp id to data/denylist.txt
-  Owner->>Repo: git push
-  Note over CI: nightly cron OR manual dispatch
-  CI->>CI: SiteBuilder.load_camps filters denylisted ids
-  CI->>Site: deploy site/index.html
-  Note over Site: camp gone from new artifact;<br>no git history to unwind because<br>data was never committed.
-```
+## Failure modes and response
 
-### What we do NOT do
-
-- **No re-export of the dataset.** We don't publish a standalone
-  CSV or JSON dump of the camps. The data is read inside the app
-  only.
-- **No bulk-republish.** Sharing happens at user-fav granularity
-  (a list of starred ids), not "here's everyone's directory."
-- **No social graph.** The app has no notion of public usernames,
-  friend invites, or anything that creates a discoverability
-  surface.
-
-## Failure modes & trade-offs
-
-- **Residual §6 risk**: encrypted-but-readable camp text still
-  exists in the password-gated artifact. Mitigated by the password
-  gate, takedown workflow, and the no-public-indexing posture, but
-  not eliminated.
-- **Audience drift**: the password being shared with friends-of-
-  friends could blow the "personal use" stance over time. Owner's
-  job to rotate occasionally; runbook in `revocation-plan.md`.
-- **API safeguards can regress during UI/source changes.** Keep the checklist
-  closed, verify both directory and API-only unlocks, and treat any new source
-  or transformation as requiring another disclosure/embargo review.
+- Missing or revoked API key: do not work around it; stop refreshes.
+- Missing configured snapshot: fail the build rather than promote an older year.
+- Missing release timestamp: fail a current-year build rather than expose data.
+- Terms change: pause refresh/deploy until the app is reviewed and updated.
+- Data correction or removal request: remove the affected data without arguing
+  against the request, then refresh from an authorized source when appropriate.
 
 ## Code references
 
-- `.gitignore` — public-code/private-data stance enforced here
-- `data/denylist*.txt` — committed IDs for directory/API camps/art
-- `backend/src/playa/sources/directory.py` and `sources/api.py` — apply
-  source-family denylists
-- `client/src/components/InfoModal.tsx` — About-modal disclaimer
-  text + GPS permission language
-- `client/src/components/Footer.tsx` — affiliate disclaimer +
-  contact mailto
-- `site/robots.txt` — `Disallow: /`
-- `backend/src/playa/templates/site.html` — `noindex, nofollow,
-  noarchive` meta
-- `docs/revocation-plan.md` — the runbook
-- `CLAUDE.md` "Official BM APIs + datasets" —
-  living checklist mirrored here
+- `backend/src/playa/sources/api.py`
+- `backend/src/playa/builder.py`
+- `backend/src/playa/config.py`
+- `client/src/components/Footer.tsx`
+- `client/src/components/InfoModal.tsx`
+- `.github/workflows/refresh.yml`
+- `docs/revocation-plan.md`

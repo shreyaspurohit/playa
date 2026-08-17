@@ -24,7 +24,6 @@ function mountInfo(source: Source) {
   render(h(InfoModal, {
     open: true,
     fetchedDate: '2026-08-06',
-    contactEmail: 'test@example.com',
     source,
     locationPolicy: {
       year: 2026,
@@ -37,43 +36,28 @@ function mountInfo(source: Source) {
   }), mount);
 }
 
-describe('source-specific directory disclaimer', () => {
-  test('footer shows directory information for the directory source', () => {
+describe('API provenance disclaimer', () => {
+  test('footer shows API freshness, privacy, and the mandatory notice', () => {
     render(h(Footer, {
       fetchedDate: '2026-08-06',
-      contactEmail: 'test@example.com',
-      source: 'directory',
     }), mount);
 
-    assert.match(mount.textContent ?? '', /official Burning Man Playa Info directory/);
-    assert.match(mount.textContent ?? '', /Email a takedown request/);
+    const copy = mount.textContent ?? '';
+    assert.match(copy, /official API snapshot that may be stale or incomplete/);
+    assert.match(copy, /critical details against current official Burning Man communications/);
+    assert.match(copy, /This app is not affiliated, endorsed, or verified by Burning Man Project\./);
+    assert.match(copy, /Updated 2026-08-06/);
     assert.equal(
       mount.querySelector<HTMLAnchorElement>('a[href="./privacy.html"]')?.textContent,
       'Privacy Policy',
     );
+    assert.equal(mount.querySelectorAll('a').length, 1);
   });
 
-  test('footer omits directory information for an API source', () => {
-    render(h(Footer, {
-      fetchedDate: '2026-08-06',
-      contactEmail: 'test@example.com',
-      source: 'api-2026',
-    }), mount);
-
-    assert.doesNotMatch(mount.textContent ?? '', /directory\.burningman\.org/i);
-    assert.doesNotMatch(mount.textContent ?? '', /Email a takedown request/);
-    assert.match(mount.textContent ?? '', /not affiliated, endorsed, or verified/);
-    assert.ok(mount.querySelector('a[href="./privacy.html"]'));
-  });
-
-  test('About shows directory information only for the directory source', () => {
-    mountInfo('directory');
-    assert.match(mount.textContent ?? '', /Always verify on/);
-    assert.match(mount.textContent ?? '', /directory\.burningman\.org/);
-
+  test('About keeps universal API, transformation, privacy, and embargo disclosures', () => {
     mountInfo('api-2026');
-    assert.doesNotMatch(mount.textContent ?? '', /Always verify on/);
-    assert.doesNotMatch(mount.textContent ?? '', /directory\.burningman\.org/);
+    assert.match(mount.textContent ?? '', /official API snapshot/);
+    assert.match(mount.textContent ?? '', /stale or incomplete/);
     assert.match(mount.textContent ?? '', /not affiliated, endorsed, or verified/);
     assert.match(mount.textContent ?? '', /Tags are generated from listing text/);
     assert.match(mount.textContent ?? '', /event times are formatted/);
@@ -119,7 +103,6 @@ describe('source-specific directory disclaimer', () => {
     render(h(InfoModal, {
       open: true,
       fetchedDate: '2026-08-06',
-      contactEmail: 'test@example.com',
       source: 'api-2026',
       locationPolicy: {
         year: 2026,
@@ -145,7 +128,7 @@ describe('source-specific directory disclaimer', () => {
       configurable: true,
       value: () => true,
     });
-    mountInfo('directory');
+    mountInfo('api-2026');
 
     const clear = [...mount.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.includes('Clear all local data'));

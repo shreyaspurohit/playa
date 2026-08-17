@@ -209,13 +209,11 @@ is migrated on read. This is the safe restore direction: a wiped device cannot
 erase a good backup. A device offline longer than the 90-day tombstone window
 may resurrect an old item; that bounded trade-off is accepted for v1.
 
-The older pre-multi-source localStorage layout is upgraded before sync: bare
-directory keys are copied, never moved, into their `/directory` slots. First
-Dropbox connection reads those migrated slots and does not infer deletions.
-Regression coverage exercises the complete old-layout refresh → first connect
-→ clean-browser restore path for favorites, events, imported friends, home
-camp, meet spots, hidden occurrences, and global preferences. Keys outside the
-sync allowlist are not removed or rewritten by connecting Dropbox.
+Annual API keys are already source-scoped and are never renamed during sync.
+Regression coverage proves the complete `api-2026` state survives first connect
+and clean-browser restore: favorites, events, art, imported friends, home camp,
+meet spots, hidden occurrences, and global preferences. Unsupported namespaces
+are not migrated. Keys outside the sync allowlist are not removed or rewritten.
 
 ### D8 — Synced and device-local fields
 

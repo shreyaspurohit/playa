@@ -14,7 +14,7 @@ function mkCamp(over: Partial<Camp> = {}): Camp {
   return {
     id: '1', name: 'Demo Camp', location: '4:00 & B',
     description: 'free pancakes and yoga',
-    website: 'https://example.com', url: 'https://d/c/1/',
+    website: 'https://example.com',
     tags: ['food', 'yoga'], events: [],
     ...over,
   };
@@ -28,14 +28,14 @@ function gzipBase64(payload: unknown): string {
 }
 
 describe('readEmbeddedPayload', () => {
-  test('reads plaintext gzip+base64 when #camps-data is present', async () => {
+  test('reads plaintext gzip+base64 for the requested API snapshot', async () => {
     const s = document.createElement('script');
-    s.id = 'camps-data';
+    s.id = 'camps-data-api-2026';
     s.setAttribute('type', 'application/x-gzip-base64');
     s.textContent = gzipBase64([mkCamp()]);
     document.body.appendChild(s);
 
-    const p = await readEmbeddedPayload();
+    const p = await readEmbeddedPayload('api-2026');
     assert.equal(p.kind, 'plain');
     if (p.kind === 'plain') {
       assert.equal(p.camps.length, 1);
@@ -43,32 +43,28 @@ describe('readEmbeddedPayload', () => {
     }
   });
 
-  test('back-compat: legacy raw-JSON #camps-data still parses', async () => {
-    // Pre-D12 plaintext builds embedded JSON directly. A cached SW
-    // serving an older bundle against a newer page (or vice-versa)
-    // would trip the new code path; the type-attribute fallback
-    // keeps that working.
+  test('accepts raw JSON in a source-specific development fixture', async () => {
     const s = document.createElement('script');
-    s.id = 'camps-data';
+    s.id = 'camps-data-api-2026';
     s.type = 'application/json';
-    s.textContent = JSON.stringify([mkCamp({ name: 'Legacy' })]);
+    s.textContent = JSON.stringify([mkCamp({ name: 'API fixture' })]);
     document.body.appendChild(s);
 
-    const p = await readEmbeddedPayload();
+    const p = await readEmbeddedPayload('api-2026');
     assert.equal(p.kind, 'plain');
     if (p.kind === 'plain') {
-      assert.equal(p.camps[0].name, 'Legacy');
+      assert.equal(p.camps[0].name, 'API fixture');
     }
   });
 
-  test('reads encrypted envelope when #camps-data-encrypted is present', async () => {
+  test('reads a source-specific encrypted envelope', async () => {
     const s = document.createElement('script');
-    s.id = 'camps-data-encrypted';
+    s.id = 'camps-data-api-2026-encrypted';
     s.type = 'application/json';
     s.textContent = JSON.stringify({ salt: 'AAAA', iter: 1000, ct: 'BBBB' });
     document.body.appendChild(s);
 
-    const p = await readEmbeddedPayload();
+    const p = await readEmbeddedPayload('api-2026');
     assert.equal(p.kind, 'encrypted');
     if (p.kind === 'encrypted') {
       assert.equal(p.enc.iter, 1000);
@@ -77,7 +73,7 @@ describe('readEmbeddedPayload', () => {
   });
 
   test('throws when neither script is in the page', async () => {
-    await assert.rejects(readEmbeddedPayload(), /No camps data/);
+    await assert.rejects(readEmbeddedPayload('api-2026'), /No camps data/);
   });
 
   test('envelope mode: trusted manifest tags only the listed wrapper indices', async () => {

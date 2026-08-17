@@ -66,8 +66,8 @@ export interface AssistantController {
 /** The heavy/external dependencies, injectable so the hook is unit-testable
  *  without loading the code-split transformers.js chunk. */
 export interface AssistantDeps {
-  hasEmbeddings: () => boolean;
-  fetchEmbeddings: () => Promise<EmbeddingsPayload | null>;
+  hasEmbeddings: (source: string) => boolean;
+  fetchEmbeddings: (source: string) => Promise<EmbeddingsPayload | null>;
   loadBackend: typeof loadSemanticBackend;
 }
 const DEFAULT_DEPS: AssistantDeps = { hasEmbeddings, fetchEmbeddings, loadBackend: loadSemanticBackend };
@@ -107,7 +107,9 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
   const [items, setItems] = useState<AskItem[]>([]);
   const [facts, setFacts] = useState<string[]>([]);
 
-  const payloadRef = useRef<EmbeddingsPayload | null>(null);
+  // One vectors payload per source (ADR 21 D9) — a demigod/god user fetches only
+  // the year they view, cached here across close/reopen and source switches.
+  const payloadsRef = useRef<Map<string, EmbeddingsPayload>>(new Map());
   const embedRef = useRef<Embedder | null>(null);
   const dbRef = useRef<SearchDb | null>(null);
   const modRef = useRef<Awaited<ReturnType<typeof loadSemanticBackend>> | null>(null);
@@ -138,19 +140,30 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
   const corpusRef = useRef(corpus);
   corpusRef.current = corpus;
 
-  // Cheap availability check when the surface opens — a meta tag, no big fetch.
+  // Fetch (once) and cache the vectors for one source. Returns null on an
+  // offline/failed fetch — the caller surfaces that as a setup error.
+  const ensurePayload = useCallback(async (src: string): Promise<EmbeddingsPayload | null> => {
+    const cached = payloadsRef.current.get(src);
+    if (cached) return cached;
+    const p = await depsRef.current.fetchEmbeddings(src);
+    if (p) payloadsRef.current.set(src, p);
+    return p;
+  }, []);
+
+  // Cheap availability check — a meta tag, no big fetch. Per the ACTIVE source
+  // (D9): Ask is offered only when this build shipped an index for it.
   useEffect(() => {
-    if (active) setAvailable(depsRef.current.hasEmbeddings());
-  }, [active]);
+    if (active) setAvailable(depsRef.current.hasEmbeddings(corpus.source));
+  }, [active, corpus.source]);
 
   const load = useCallback(async (): Promise<boolean> => {
     const gen = genRef.current;
     try {
-      if (!payloadRef.current) payloadRef.current = await depsRef.current.fetchEmbeddings();
+      const src = corpusRef.current.source;
+      const payload = await ensurePayload(src);
       if (gen !== genRef.current) return false;
-      const payload = payloadRef.current;
       // availability was already meta-gated, so a null payload here means the
-      // fetch of embeddings.json failed (offline / cache miss), not a missing index.
+      // fetch of the source's index failed (offline / cache miss), not a missing index.
       if (!payload || !payload.keys.length) throw new Error('Could not load the search index.');
       const mod = modRef.current ?? (modRef.current = await depsRef.current.loadBackend());
       if (gen !== genRef.current) return false;
@@ -174,21 +187,30 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
       if (gen !== genRef.current) return false;
       throw e;
     }
-  }, []);
+  }, [ensurePayload]);
 
   // Rebuild the index only when the active records actually change (e.g. a
   // source switch) after load() already built it — so Ask never searches a
   // stale source. Surfaces a build failure rather than swallowing it.
   useEffect(() => {
-    if (!active || download.status !== 'ready' || !modRef.current || !payloadRef.current) return;
+    if (!active || download.status !== 'ready' || !modRef.current) return;
     if (indexedForRef.current === recordMap) return;   // already indexed for this source
     const gen = genRef.current;
+    const src = corpusRef.current.source;
     let cancelled = false;
-    void modRef.current.buildIndex(payloadRef.current, (key) => recordMap.has(key))
-      .then((db) => { if (!cancelled && gen === genRef.current) { dbRef.current = db; indexedForRef.current = recordMap; } })
-      .catch(() => { if (!cancelled) setDownload({ status: 'error', progress: 0, text: '', error: 'Search index failed to build.' }); });
+    void (async () => {
+      // Switching year fetches that source's index (cached after the first time);
+      // an offline miss surfaces as an error rather than searching a stale source.
+      const payload = await ensurePayload(src);
+      if (cancelled || gen !== genRef.current || !modRef.current) return;
+      if (!payload || !payload.keys.length) throw new Error('Could not load the search index.');
+      const db = await modRef.current.buildIndex(payload, (key) => recordMap.has(key));
+      if (cancelled || gen !== genRef.current) return;
+      dbRef.current = db;
+      indexedForRef.current = recordMap;
+    })().catch(() => { if (!cancelled) setDownload({ status: 'error', progress: 0, text: '', error: 'Search index failed to build.' }); });
     return () => { cancelled = true; };
-  }, [active, download.status, recordMap]);
+  }, [active, download.status, recordMap, ensurePayload]);
 
   // Foreground-only: free the model + index when Ask closes (the component stays
   // mounted while hidden). Bumping the generation cancels any in-flight load(),

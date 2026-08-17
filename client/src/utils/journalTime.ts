@@ -34,5 +34,7 @@ export function joinOccurredAt(date: string, time: string): string {
 
 /** The default burn edition for a new entry — the builder-emitted map year. */
 export function defaultBurnYear(): number {
-  return yearForSource('directory');
+  const source = document.querySelector('meta[name="bm-brc-map-year"]')
+    ?.getAttribute('content');
+  return yearForSource(source ? `api-${source}` : '');
 }

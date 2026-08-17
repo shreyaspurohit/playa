@@ -162,10 +162,8 @@ function cleanFriends(raw: unknown): Record<string, FriendFavs> {
 
 // === Build / parse / apply ============================================
 
-/** Read all relevant LS keys for the active source and return a
- *  Snapshot ready to JSON-encode. The source defaults to `directory`
- *  for callers that haven't been migrated yet. */
-export function buildSnapshot(source: string = 'directory'): Snapshot {
+/** Read all relevant LS keys for the explicit active API source. */
+export function buildSnapshot(source: string): Snapshot {
   const k = (base: string) => `${base}/${source}`;
   const nickname = readString(LS.nickname, '');
   const campFavs = parseStringArray(readString(k(LS.favs), ''));
@@ -250,13 +248,13 @@ function cleanJournal(raw: unknown): JournalDocument | null {
 
 /**
  * Write the snapshot to localStorage, replacing the user's own state
- * for the given source (defaults to `directory`). Caller is expected
+ * for the given source. Caller is expected
  * to `location.reload()` afterward — hooks read their initial state
  * from LS on mount, so a reload is the simplest way to surface the
  * change without per-hook bulk setters.
  */
 export function applySnapshot(
-  snap: Snapshot, source: string = 'directory',
+  snap: Snapshot, source: string,
 ): void {
   const k = (base: string) => `${base}/${source}`;
   writeString(LS.nickname, snap.nickname);

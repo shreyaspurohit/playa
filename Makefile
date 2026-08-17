@@ -1,6 +1,6 @@
 .PHONY: help bootstrap install-backend client-install test test-py test-js \
-        bundle bundle-watch fetch fetch-small build rebuild tag food-audit food-review meta merge \
-        preview review-mobile clean dev snapshot-pages fetch-api gis-fetch gis-prepare map-audit
+        bundle bundle-watch fetch build rebuild food-audit food-review \
+        preview review-mobile clean dev fetch-api gis-fetch gis-prepare map-audit
 
 CLIENT_DIR  := client
 BACKEND_DIR := backend
@@ -16,30 +16,27 @@ endif
 
 help:
 	@echo "============================================================"
-	@echo "  PIPELINE TARGETS — fetch + build + serve"
+	@echo "  PIPELINE TARGETS — cached API build + serve"
 	@echo "  (each target's 'env-group:' line names a group defined in"
 	@echo "   the ENV-GROUP REFERENCE section at the bottom)"
 	@echo "============================================================"
 	@echo ""
-	@echo "  fetch           — full nightly: snapshot old, pull directory,"
-	@echo "                    bundle, build site"
-	@echo "                    env-group: DIR_FETCH + BUILD"
-	@echo ""
-	@echo "  fetch-small     — like fetch but only 3 pages (quick dev)"
-	@echo "                    env-group: DIR_FETCH + BUILD (PAGES forced to 3)"
+	@echo "  fetch           — refresh optional GIS layers and build from cached API snapshots"
+	@echo "                    (never fetches Event Data)"
+	@echo "                    env-group: BUILD"
 	@echo ""
 	@echo "  fetch-api YEAR=YYYY"
 	@echo "                  — pull api.burningman.org camps + events for"
 	@echo "                    one year, encrypt + cache to data/api/YYYY.json"
 	@echo "                    env-group: API_FETCH"
 	@echo ""
-	@echo "  dev             — fetch once if cache empty, else rebuild"
-	@echo "                    env-group: DIR_FETCH (first run) + BUILD"
-	@echo ""
-	@echo "  rebuild         — regenerate site from cached data/pages + data/api"
+	@echo "  dev             — build from cached API snapshots"
 	@echo "                    env-group: BUILD"
 	@echo ""
-	@echo "  build           — emit site/index.html only (no meta/merge/tag)"
+	@echo "  rebuild         — regenerate site from cached data/api snapshots"
+	@echo "                    env-group: BUILD"
+	@echo ""
+	@echo "  build           — emit the API-only site"
 	@echo "                    env-group: BUILD"
 	@echo ""
 	@echo "  preview         — serve site/ at http://localhost:\$$PREVIEW_PORT"
@@ -50,14 +47,11 @@ help:
 	@echo "                    env: CHROME_HEADLESS_SHELL (auto-detected locally)"
 	@echo ""
 	@echo "============================================================"
-	@echo "  PIECEMEAL TARGETS — individual pipeline steps (no env vars)"
+	@echo "  SUPPORT TARGETS"
 	@echo "============================================================"
 	@echo ""
 	@echo "  bundle          — build the Preact client bundle"
 	@echo "  bundle-watch    — esbuild watch mode (fast dev iteration)"
-	@echo "  meta            — write data/meta.json"
-	@echo "  merge           — write data/camps.csv"
-	@echo "  tag             — retag + write data/camps_tagged.csv"
 	@echo "  food-audit      — aggregate food-classification coverage across sources"
 	@echo "  food-review     — local Ollama review of Hours-not-listed candidates"
 	@echo "  gis-fetch       — strictly fetch/validate official annual map layers"
@@ -79,12 +73,6 @@ help:
 	@echo "  (referenced by the 'env-group:' lines on each target above)"
 	@echo "============================================================"
 	@echo ""
-	@echo "  DIR_FETCH      directory.burningman.org pull"
-	@echo "                 used by: fetch, fetch-small, dev first-run"
-	@echo ""
-	@echo "    PAGES=N             listing pages to pull (default 30)"
-	@echo "    PARALLEL=N          parallel detail-fetch workers (default 5)"
-	@echo ""
 	@echo "  API_FETCH      api.burningman.org pull"
 	@echo "                 used by: fetch-api YEAR=YYYY"
 	@echo ""
@@ -96,7 +84,7 @@ help:
 	@echo "                          Bump for slow servers / large payloads."
 	@echo ""
 	@echo "  BUILD          site assembly"
-	@echo "                 used by: build, rebuild, dev, fetch, fetch-small"
+	@echo "                 used by: build, rebuild, dev, fetch"
 	@echo ""
 	@echo "    -- Required dates (no code defaults — set per burn year) --"
 	@echo "    BURN_WINDOW_OPEN_FROM   REQUIRED. ISO date for the schedule's"
@@ -114,17 +102,15 @@ help:
 	@echo "                              2026-08-30T00:00:00-07:00"
 	@echo ""
 	@echo "    -- Other build knobs --"
-	@echo "    CONTACT_EMAIL       footer mailto takedown link"
-	@echo "                          (default bm-camps@example.com)"
 	@echo "    SITE_PASSWORD       single-tier encryption (legacy / dev)."
 	@echo "                          Unset = plaintext build (still gzipped —"
 	@echo "                          same page size as encrypted)."
 	@echo "    BM_API_YEARS        comma-separated years to embed,"
-	@echo "                          e.g., BM_API_YEARS=2025,2026"
-	@echo "                          (defaults to directory only)"
+	@echo "                          e.g., BM_API_YEARS=2025,2026 (required)"
 	@echo "    BM_CACHE_PASSWORD   used to DECRYPT data/api/YYYY.json when"
 	@echo "                          building. Same key set by fetch-api."
-	@echo "    BRC_MAP_YEAR       year for the live directory + map (default 2026)"
+	@echo "    BRC_MAP_YEAR       current API/map year (default 2026); must be configured"
+	@echo "                          in BM_API_YEARS"
 	@echo "    BM_GIS_BASE_URL    official annual GIS base URL (normally unchanged)"
 	@echo "    BM_GIS_TIMEOUT     GIS request timeout in seconds (default 30)"
 	@echo "    SYNC_PROVIDER      optional 'dropbox' App-folder backup; unset = off"
@@ -135,16 +121,16 @@ help:
 	@echo "                          Each named tier (password + source list)"
 	@echo "                          unlocks its sources via envelope"
 	@echo "                          encryption. Three planned tiers:"
-	@echo "                            god-mode      directory + every api-YYYY"
-	@echo "                            demigod-mode  every api-YYYY (no directory)"
-	@echo "                            spirit-mode   only the latest api-YYYY"
+	@echo "                            god-mode      every configured api-YYYY (trusted)"
+	@echo "                            demigod-mode  every configured api-YYYY"
+	@echo "                            spirit-mode   only api-BRC_MAP_YEAR"
 	@echo "                          The build identifies spirit by NAME"
 	@echo "                          ('spirit-mode' is reserved); other names"
 	@echo "                          are arbitrary. Tier order doesn't"
 	@echo "                          matter — lookup is by name."
 	@echo "                          Unset → falls back to SITE_PASSWORD."
 	@echo "                          Example (BM_API_YEARS=2025,2026):"
-	@echo "                            SITE_TIERS=\"god-mode:\$$GOD_PW=directory+api-2025+api-2026,\\"
+	@echo "                            SITE_TIERS=\"god-mode:\$$GOD_PW=api-2025+api-2026,\\"
 	@echo "                                        demigod-mode:\$$DEMIGOD_PW=api-2025+api-2026,\\"
 	@echo "                                        spirit-mode:\$$SPIRIT_PW=api-2026\""
 	@echo "    GOD_PW              Convention-only: tier passwords composed"
@@ -191,30 +177,13 @@ bundle: client-install
 bundle-watch: client-install
 	cd $(CLIENT_DIR) && npm run watch
 
-# Move any existing data/pages/*.json into a timestamped backup under
-# data/pages-backups/ before a refetch. Cheap safety net: if the
-# directory HTML shape changes and the parser regresses, the old good
-# fetch is still on disk (`mv data/pages-backups/<ts>/* data/pages/`
-# restores it). Gitignored in full. No-op when data/pages is empty.
-snapshot-pages:
-	@if ls data/pages/*.json >/dev/null 2>&1; then \
-		ts=$$(date +%Y%m%d-%H%M%S); \
-		dest=data/pages-backups/$$ts; \
-		mkdir -p $$dest; \
-		mv data/pages/*.json $$dest/; \
-		echo "==> Snapshot: $$dest ($$(ls $$dest | wc -l | tr -d ' ') pages)"; \
-	fi
-
-fetch: install-backend bundle snapshot-pages
+fetch: install-backend bundle
 	python3 -m playa all
 
-fetch-small: install-backend bundle snapshot-pages
-	PAGES=3 python3 -m playa all
-
-# One-off API source fetch. Pulls /api/camp + /api/event for the
+# One-off API source fetch. Pulls camps, events, and art for the
 # given year, encrypts (if BM_CACHE_PASSWORD or SITE_PASSWORD is
 # set), writes data/api/YEAR.json. Subsequent builds with
-# `BM_API_YEARS=YEAR` (or `--sources directory,api-YEAR`) read
+# `BM_API_YEARS=YEAR` read
 # from that file — no further API calls.
 #
 # Usage: BM_API_KEY=xxx make fetch-api YEAR=2025
@@ -250,39 +219,19 @@ map-audit: install-backend
 	python3 -m playa map-audit --year $(YEAR) --street-lines "$(STREET_LINES)" \
 		--center "$(CENTER)" --esplanade-radius-feet $(ESPLANADE_RADIUS)
 
-# One-command dev loop: first run fetches the full directory once;
-# subsequent runs reuse the cached data/pages and just rebuild the site.
-# Use `make fetch` to force a fresh pull (auto-snapshots the old one).
 dev: install-backend bundle
-	@if ls data/pages/*.json >/dev/null 2>&1; then \
-		n=$$(ls data/pages/*.json | wc -l | tr -d ' '); \
-		echo "==> Using cached data/pages ($$n pages) — rebuilding only"; \
-		python3 -m playa gis-fetch --best-effort && \
-		python3 -m playa meta && \
-		python3 -m playa merge && \
-		python3 -m playa tag && \
-		python3 -m playa build; \
-	else \
-		echo "==> No cached data — fetching full directory (one-time)"; \
-		python3 -m playa all; \
-	fi
+	python3 -m playa all
 
 # The Ask feature (ADR 21) ships MiniLM vectors; generate them for real site
 # builds. NOT set for the test suite, which calls the builder directly and must
 # not shell out to node / fetch the model. Content-hash cached → incremental.
-rebuild build dev fetch fetch-small: export BM_EMBEDDINGS := 1
+rebuild build dev fetch: export BM_EMBEDDINGS := 1
 
 rebuild: install-backend bundle gis-prepare
-	python3 -m playa meta
-	python3 -m playa merge
-	python3 -m playa tag
 	python3 -m playa build
 
 build: install-backend bundle gis-prepare
 	python3 -m playa build
-
-tag: install-backend
-	python3 -m playa tag
 
 food-audit: install-backend
 	python3 -m playa food-audit
@@ -292,12 +241,6 @@ food-audit: install-backend
 # refuses non-loopback Ollama URLs and never edits classification files.
 food-review: install-backend
 	python3 scripts/food_hours_ollama_audit.py $(FOOD_REVIEW_ARGS)
-
-meta: install-backend
-	python3 -m playa meta
-
-merge: install-backend
-	python3 -m playa merge
 
 # Serve site/ over HTTP so PWA features work locally. `file://` is a
 # `null` origin — browsers block the manifest fetch, refuse to register
@@ -314,8 +257,7 @@ review-mobile: install-backend client-install
 	bash scripts/mobile_visual_review.sh
 
 clean:
-	rm -rf data/pages/*.json data/logs/*.log
-	rm -f data/camps.csv data/camps_tagged.csv data/meta.json
-	rm -f site/index.html site/sw.js
+	rm -rf data/embeddings
+	rm -f site/index.html site/privacy.html site/sw.js site/version.txt site/burn-key.json site/embeddings.json site/semantic-backend.js site/webllm-backend.js
 	rm -rf $(CLIENT_DIR)/dist
 	rm -rf $(BACKEND_DIR)/src/playa.egg-info $(BACKEND_DIR)/build

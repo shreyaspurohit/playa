@@ -12,7 +12,7 @@ status: current
 The Schedule tab lays starred events out on a per-day grid for the
 whole burn week. The hard parts are:
 
-1. **Parsing the directory's free-text time strings** into a
+1. **Parsing API free-text time strings** into a
    structured form (kind / days / start / end).
 2. **Bucketing recurring events** correctly across the day columns.
 3. **Year-aware occurrence dates** — valid `(M/D)` tuples distinguish repeated
@@ -130,10 +130,10 @@ event shows in 5 columns. Unparsed events land in a dashed-border
 
 ## Failure modes & trade-offs
 
-- **Format drift** in the directory will tank the parse rate. The
+- **Format drift** in API strings will tank the parse rate. The
   build log prints the percentage; if it falls below ~99% we
   inspect samples and add a regex.
-- **Day labels span two Sundays** (Sun and Sun2 in the directory).
+- **Day labels can span two Sundays** (Sun and Sun2 in source data).
   The parser strips trailing `2`/`3` digits and dedupes — second
   occurrence is collapsed into the first. The calendar columns
   derive from the actual date window so this is fine.

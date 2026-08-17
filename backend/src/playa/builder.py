@@ -1,21 +1,19 @@
 """Build the self-contained site/index.html.
 
-Reads the HTML template from `playa/templates/site.html`, loads camps
-from each configured Source (see playa.sources), applies tags + denylist,
+Reads the HTML template from `playa/templates/site.html`, loads annual API
+snapshots, applies tags,
 optionally encrypts each source's payload via openssl + PBKDF2 +
 AES-256-CBC, substitutes placeholders, and writes the result.
 
 Placeholders in the template:
     __DATA_SCRIPT__     — concatenated <script> tags, one per source,
                           each id-suffixed with the source name
-                          (e.g., camps-data-directory or
-                          camps-data-api-2024-encrypted)
+                          (e.g., camps-data-api-2024-encrypted)
     __SOURCES_META__    — <meta name="bm-sources" content="…"> listing
                           embedded sources (default-first)
     __BODY_CLASS__      — "gated" when any source is encrypted
     __GATE_HIDDEN__     — "" when encrypted (shown), "gate-hidden" otherwise
-    __CONTACT_EMAIL__   — footer + modal takedown mailto
-    __VERSION__         — vYYYY.MM.DD
+    __VERSION__         — build/deploy version vYYYY.MM.DD.HHMM
     __FETCHED_DATE__    — YYYY-MM-DD
     __FETCHED_AT__      — YYYY-MM-DDTHH:MM:SSZ (tooltip)
     __LOCATION_RELEASE_YEAR__ — current live API/map year
@@ -39,7 +37,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .gis import validate_normalized_gis
 from .models import Art, Camp
-from .sources import Source, make_source
+from .sources import Source, SourceSnapshot, make_source
 from .tagger import Tagger
 from .timeparser import (
     canonical_week_map,
@@ -59,9 +57,8 @@ PRIVACY_TEMPLATE_PATH = Path(__file__).parent / "templates" / "privacy.html"
 # __file__ so it's test-injectable (tests pass a tmp_path root).
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
-# Safety rail: refuse to build a site with fewer camps than this. In
-# 2025 the directory had ~1458. A build with 10 camps is a bug (fetch
-# failure, directory reshuffle, ToS revocation) — fail loudly so CI
+# Safety rail: refuse to build a site with fewer camps than this. A build with
+# 10 camps is likely a broken or incomplete current-year API snapshot; fail so CI
 # aborts and the last-good deployment stays live. Override with the
 # env var MIN_CAMPS for intentionally-small fixtures or debug fetches.
 DEFAULT_MIN_CAMPS = 500
@@ -99,18 +96,15 @@ class SiteBuilder:
         # so it can't be known until events are loaded.
         self._effective_start: str = config.burn_start
         self._week_map: dict[str, str] = {}
-        # Sources to embed. First entry is the default selection on
-        # cold-start (matches the existing behavior — directory only).
-        self.source_specs: list[str] = sources or ["directory"]
+        self.source_specs: list[str] = list(sources or [])
 
     def _validate_location_release_policy(self) -> None:
         """Fail closed for a current-year API build with bad D8 dates.
 
-        Past-year API records are already public, and directory data is
-        governed by its own source policy, so only the API source matching
-        ``directory_map_year`` requires the annual release timestamps.
+        Past-year API records are already public, so only the API source matching
+        ``brc_map_year`` requires the annual release timestamps.
         """
-        current_api = f"api-{self.config.directory_map_year}"
+        current_api = f"api-{self.config.brc_map_year}"
         if current_api not in self.source_specs:
             return
 
@@ -137,10 +131,10 @@ class SiteBuilder:
                     f"{name}={value!r} must include an explicit timezone "
                     "offset (for example -07:00 for PDT).",
                 )
-            if stamp.year != self.config.directory_map_year:
+            if stamp.year != self.config.brc_map_year:
                 raise RuntimeError(
                     f"{name} year {stamp.year} does not match BRC_MAP_YEAR="
-                    f"{self.config.directory_map_year}.",
+                    f"{self.config.brc_map_year}.",
                 )
             parsed[name] = stamp
 
@@ -180,28 +174,11 @@ class SiteBuilder:
 
     # --- data loading -----------------------------------------------------
 
-    def load_denylist(self) -> set[str]:
-        """Read data/denylist.txt; comments (# …) and blanks ignored.
-
-        Kept for backward-compat — the directory source uses its own
-        copy of this loader; the API source has its own denylist
-        (data/denylist-api.txt). New code should call the source's
-        loader directly.
-        """
-        if not self.config.denylist_file.exists():
-            return set()
-        ids: set[str] = set()
-        for line in self.config.denylist_file.read_text().splitlines():
-            line = line.split("#", 1)[0].strip()
-            if line:
-                ids.add(line)
-        return ids
-
     def load_food_exclusions(self, source_spec: str) -> set[tuple[str, str]]:
-        """Read source/year-scoped Food-only `kind:id` exclusions.
+        """Read API-year Food-only `kind:id` exclusions.
 
         Valid kinds are `camp` and `event`. Fail on malformed lines so an
-        operator typo cannot silently leave a known false positive deployed.
+        operator typo cannot silently leave a reviewed false positive deployed.
         """
         path = self.config.food_exclusion_file(source_spec)
         if not path.exists():
@@ -222,39 +199,8 @@ class SiteBuilder:
             exclusions.add((kind, item_id))
         return exclusions
 
-    def load_meta(self) -> dict:
-        """Fetch metadata — falls back to page-file mtime when meta.json
-        is missing, and to a sensible default when nothing is there yet."""
-        if self.config.meta_file.exists():
-            try:
-                return json.loads(self.config.meta_file.read_text())
-            except Exception:
-                pass
-        pages = sorted(self.config.pages_dir.glob("page_*.json"))
-        if not pages:
-            return {"fetched_date": "unknown", "version": "v0.0.0"}
-        newest = max(p.stat().st_mtime for p in pages)
-        dt_utc = datetime.fromtimestamp(newest, tz=timezone.utc)
-        dt_pt = dt_utc.astimezone(PACIFIC)
-        return {
-            "fetched_at":   dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "fetched_date": dt_pt.strftime("%Y-%m-%d"),   # Pacific for display
-            "version":      "v" + dt_pt.strftime("%Y.%m.%d.%H%M"),
-        }
-
-    def load_camps(self) -> list[Camp]:
-        """Backward-compat: directory source only. New code should call
-        `load_camps_for_source(spec)` per source.
-        """
-        return self.load_camps_for_source("directory")
-
-    def load_camps_for_source(self, spec: str) -> list[Camp]:
-        """Load + tag + enrich one source's camps.
-
-        Each source is responsible for dedupe + denylist (those rules
-        differ between directory's numeric ids and the API's SFDC
-        uids). The builder then runs Tagger + event-time enrichment
-        uniformly across whatever the source returned.
+    def load_snapshot_for_source(self, spec: str) -> SourceSnapshot:
+        """Load one API cache once, then tag and enrich its entities.
 
         Note: the current-year API location embargo is enforced
         **client-side**, not here. Build artifacts retain full location
@@ -263,7 +209,8 @@ class SiteBuilder:
         See `client/src/utils/embargo.ts` and ADR D8.
         """
         source: Source = make_source(spec)
-        camps = source.load_camps(self.config)
+        snapshot = source.load_snapshot(self.config)
+        camps = snapshot.camps
         food_exclusions = self.load_food_exclusions(spec)
         applied_food_exclusions: set[tuple[str, str]] = set()
         suppressed_camps = 0
@@ -294,21 +241,10 @@ class SiteBuilder:
             )
         camps.sort(key=lambda c: c.name.lower())
         self._enrich_event_times(camps)
-        return camps
-
-    def load_art_for_source(self, spec: str) -> list[Art]:
-        """Load + tag one source's art. No event enrichment (art doesn't
-        have events). Source's `load_art()` handles dedupe + denylist;
-        builder applies Tagger + alphabetic sort uniformly.
-
-        Embargo policy is shared with camps but uses art's later cutoff —
-        see ADR D8. Build artifacts retain full location data."""
-        source: Source = make_source(spec)
-        art = source.load_art(self.config)
-        for piece in art:
+        for piece in snapshot.art:
             piece.tags = self.tagger.tag_art(piece)
-        art.sort(key=lambda a: a.name.lower())
-        return art
+        snapshot.art.sort(key=lambda a: a.name.lower())
+        return snapshot
 
     def _enrich_event_times(self, camps: list[Camp]) -> None:
         """Populate event.display_time + parsed_time in place. Derives
@@ -333,8 +269,7 @@ class SiteBuilder:
 
         # Derive this source's calendar window + canonical day→date map.
         # Preserve the earliest start seen across every embedded source;
-        # otherwise the last-loaded API source can overwrite an earlier
-        # directory volunteer-week date in the global meta tag.
+        # otherwise the last-loaded API year can overwrite an earlier date.
         source_effective_start = effective_burn_start(
             parsed_only, self.config.burn_start, self.config.burn_end,
         )
@@ -397,7 +332,7 @@ class SiteBuilder:
         # gzip first. Default compression level (6) — slightly smaller
         # than 1 (fastest) and ~5x faster than 9 for negligible size
         # difference at this scale. Build cost matters less than page
-        # size for a one-shot nightly build.
+        # size for a one-shot deployment build.
         compressed = gzip.compress(plaintext, compresslevel=6)
         proc = subprocess.run(
             [
@@ -750,22 +685,25 @@ class SiteBuilder:
         self,
         loaded: list[tuple[str, list["Camp"]]],
         loaded_art: list[tuple[str, list["Art"]]],
-    ) -> bool:
+    ) -> list[str]:
         """Generate self-hosted MiniLM vectors for camps + events + art and write
-        them to `site/embeddings.json` (ADR 21 semantic search). Opt-in via
-        `BM_EMBEDDINGS` so tests and quick rebuilds skip the node + model step.
+        one file PER SOURCE — `site/embeddings-<source>.json` (ADR 21 D9). Opt-in
+        via `BM_EMBEDDINGS` so tests and quick rebuilds skip the node + model step.
 
-        The vectors are a SEPARATE file (not inlined into index.html) fetched by
-        the client only when the user opts into the model download, so the page
-        stays small for everyone else. Returns True when shipped.
+        The vectors are SEPARATE files (not inlined into index.html), each fetched
+        by the client only when the user opts into the model download and only for
+        the year being viewed — so the page stays small for everyone else and a
+        multi-year user downloads only the index they search. Returns the shipped
+        sources (current-year first) for the `bm-embeddings` meta manifest.
 
         Flow: write `data/embeddings/records.json` (id + text) → shell the
-        incremental Node embedder (`client/scripts/embed.mjs`, content-hash
-        cached) → copy `vectors.json` → `site/embeddings.json`. Any failure warns
-        and returns False so a build never breaks over the optional AI feature.
+        incremental Node embedder (`client/scripts/embed.mjs`, content-hash cached,
+        one `vectors.json` keyed `source:kind:id`) → partition by source → write
+        `site/embeddings-<source>.json` each. Any failure warns and returns an empty
+        list so a build never breaks over the optional AI feature.
         """
         if os.environ.get("BM_EMBEDDINGS", "").lower() not in ("1", "true", "yes"):
-            return False
+            return []
 
         def camp_text(c: "Camp") -> str:
             return ". ".join(p for p in [c.name, " ".join(c.tags), c.description] if p)
@@ -818,22 +756,60 @@ class SiteBuilder:
             )
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"  WARNING: embedding step failed ({exc}); shipping without vectors")
-            return ""
+            return []
 
         vectors_path = emb_dir / "vectors.json"
         if not vectors_path.exists():
             print("  WARNING: embedder produced no vectors.json; shipping without vectors")
-            return False
-        raw = vectors_path.read_bytes()
-        out = self.config.site_dir / "embeddings.json"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(raw)
-        try:
-            count = len(json.loads(raw).get("keys", []))
-            print(f"  embeddings: {count} vectors → site/embeddings.json ({len(raw) // 1024} KB, served gzipped)")
-        except Exception:
-            pass
-        return True
+            return []
+
+        # `vectors.json` = {model, dim, q:'int8', sig, keys:[source:kind:id...],
+        # data:base64(concat of dim-byte int8 rows, in `keys` order)}. Partition
+        # it by source prefix into one `embeddings-<source>.json` per source, so a
+        # multi-year user downloads only the year they view (ADR 21 D9). Keys keep
+        # the full `source:kind:id` form; the client filters to the active source.
+        payload = json.loads(vectors_path.read_bytes())
+        keys: list[str] = payload.get("keys", [])
+        dim = int(payload["dim"])
+        blob = base64.b64decode(payload["data"])
+        grouped: dict[str, tuple[list[str], bytearray]] = {}
+        for i, key in enumerate(keys):
+            src = key.split(":", 1)[0]
+            slot = grouped.setdefault(src, ([], bytearray()))
+            slot[0].append(key)
+            slot[1].extend(blob[i * dim:(i + 1) * dim])
+
+        self.config.site_dir.mkdir(parents=True, exist_ok=True)
+        # Clear any stale index — the pre-split single `embeddings.json` and any
+        # per-source file for a year not in this build — so a local rebuild never
+        # leaves an orphaned index in site/ (CI builds are already clean checkouts).
+        for stale in self.config.site_dir.glob("embeddings*.json"):
+            stale.unlink()
+        shipped: list[str] = []
+        # Order current-year first, matching the loaded source order, so the meta
+        # manifest's first entry is the client's default source.
+        for spec, _ in loaded:
+            group = grouped.get(spec)
+            if not group:
+                continue
+            src_keys, src_bytes = group
+            per = {
+                "model": payload.get("model"),
+                "dim": dim,
+                "q": payload.get("q"),
+                "sig": payload.get("sig"),
+                "keys": src_keys,
+                "data": base64.b64encode(bytes(src_bytes)).decode("ascii"),
+            }
+            out = self.config.site_dir / f"embeddings-{spec}.json"
+            body = json.dumps(per)
+            out.write_text(body, encoding="utf-8")
+            shipped.append(spec)
+            print(
+                f"  embeddings: {len(src_keys)} vectors → site/{out.name} "
+                f"({len(body) // 1024} KB, served gzipped)",
+            )
+        return shipped
 
     def _gis_data_scripts(self, sources: list[str]) -> tuple[str, list[str]]:
         """Embed one public, normalized GIS payload per active map year.
@@ -841,13 +817,11 @@ class SiteBuilder:
         GIS is shared across passwords and sources for the same year, so it is
         gzip/base64 encoded but not duplicated into source encryption
         envelopes. Missing local GIS is a development fallback: the hand-built
-        base map still works and the build logs a loud warning. The nightly
+        base map still works and the build logs a loud warning. The deployment
         pipeline fetches/validates GIS before calling the builder.
         """
         years: set[int] = set()
         for source in sources:
-            if source == "directory":
-                years.add(self.config.directory_map_year)
             if source.startswith("api-"):
                 try:
                     years.add(int(source[4:]))
@@ -867,7 +841,7 @@ class SiteBuilder:
             try:
                 raw = path.read_bytes()
                 # Parsing here catches a truncated/manual cache before it
-                # reaches the browser; the fetcher owns deeper schema
+                # reaches the browser; the GIS loader owns deeper schema
                 # validation. GIS is an optional subsystem, so an unusable
                 # cache removes only that year's overlay—not the whole site.
                 parsed = json.loads(raw)
@@ -896,13 +870,15 @@ class SiteBuilder:
           1. Versioned shell cache (`playa-<VERSION>`) — index.html,
              SW, manifest, icon. Pruned on activate so old versions
              evaporate when a new build deploys.
-          2. Cross-origin runtime image cache (`playa-img-v1`) —
+          2. Cross-origin runtime image cache (`playa-img-v2`) —
              stale-while-revalidate for art thumbnails fetched from
              BM's CDN. Survives version bumps so users keep their
              starred-art images offline across deploys.
-          3. Durable Ask cache (`playa-ask-v1`) — the lazy semantic chunk and
-             vectors. Populated only after opt-in and preserved across nightly
-             version bumps so a previously-set-up Ask stays offline-capable.
+          3. Durable Ask cache (`playa-ask-v3`) — the lazy semantic chunk and
+             the per-source `embeddings-<source>.json` indexes (D9). Populated
+             only after opt-in and preserved across deploy version bumps so a
+             previously-set-up Ask stays offline-capable. Activation prunes older
+             `playa-ask-*` namespaces (incl. the pre-split single embeddings.json).
           4. Transformers.js's `transformers-cache` — model + ONNX runtime
              assets. The worker does not populate it, but shell-cache eviction
              must leave this library-owned cache alone.
@@ -912,7 +888,7 @@ class SiteBuilder:
         The fetch handler:
           - Same-origin: cache-first against the shell (existing).
           - Cross-origin GET image: stale-while-revalidate against
-            the image cache. First view on the directory streams +
+            the image cache. First view streams +
             stores; subsequent loads (and full offline) serve from
             the cache. Failures on first view return a 404-ish empty
             response so ArtCard's `onError` hides the broken slot.
@@ -925,12 +901,14 @@ class SiteBuilder:
             "const CACHE = 'playa-' + VERSION;\n"
             "// Cross-origin image cache (art thumbnails). Decoupled\n"
             "// from VERSION so cached images survive deploys.\n"
-            "const IMG_CACHE = 'playa-img-v1';\n"
-            "// Ask's lazy same-origin assets survive nightly shell versions.\n"
+            "const IMG_CACHE = 'playa-img-v2';\n"
+            "// Ask's lazy same-origin assets survive shell version changes.\n"
+            "// v3 drops the pre-split single embeddings.json; per-source\n"
+            "// embeddings-<source>.json are runtime-cached on first fetch (D9).\n"
             "// transformers.js separately owns MODEL_CACHE for model/ORT files.\n"
-            "const ASK_CACHE = 'playa-ask-v1';\n"
+            "const ASK_CACHE = 'playa-ask-v3';\n"
             "const MODEL_CACHE = 'transformers-cache';\n"
-            "const ASK_ASSETS = ['./semantic-backend.js', './embeddings.json'];\n"
+            "const ASK_ASSETS = ['./semantic-backend.js'];\n"
             "// Cap image-cache entries — eviction is best-effort\n"
             "// LRU via insertion order (Cache.keys() returns FIFO).\n"
             "// Sized to hold the whole art set (a few hundred pieces) with\n"
@@ -958,24 +936,16 @@ class SiteBuilder:
             "    }));\n"
             "  })());\n"
             "});\n"
-            "async function preserveAskAssets() {\n"
-            "  const cache = await caches.open(ASK_CACHE);\n"
-            "  await Promise.all(ASK_ASSETS.map(async (url) => {\n"
-            "    if (await cache.match(url)) return;\n"
-            "    const prior = await caches.match(url);\n"
-            "    if (prior) await cache.put(url, prior.clone());\n"
-            "  }));\n"
-            "}\n"
             "self.addEventListener('activate', (e) => {\n"
             "  e.waitUntil((async () => {\n"
-            "    // Upgrade from the old behavior, where lazy Ask files landed\n"
-            "    // in the versioned shell cache: copy them before pruning it.\n"
-            "    await preserveAskAssets();\n"
             "    const keys = await caches.keys();\n"
-            "    // Delete ONLY old Playa shell caches. Broad deletion would also\n"
-            "    // erase transformers.js's model cache after every nightly build.\n"
+            "    // Purge every prior app cache — old shells and pre-v3 image/Ask\n"
+            "    // namespaces (incl. the single-file embeddings cache) — while\n"
+            "    // preserving the current three and the source-independent\n"
+            "    // transformers.js model cache (no 'playa-' prefix).\n"
             "    await Promise.all(keys\n"
-            "      .filter(k => k.startsWith('playa-v') && k !== CACHE)\n"
+            "      .filter(k => k.startsWith('playa-')\n"
+            "        && k !== CACHE && k !== IMG_CACHE && k !== ASK_CACHE)\n"
             "      .map(k => caches.delete(k)));\n"
             "    await self.clients.claim();\n"
             "  })());\n"
@@ -1089,8 +1059,9 @@ class SiteBuilder:
             "  // to origin instead of serving the just-cached copy.\n"
             "  if (url.pathname.endsWith('/version.txt')) return;\n"
             "  // Ask files are opt-in and network-first while online, with a\n"
-            "  // durable fallback that survives nightly shell-cache eviction.\n"
-            "  const isAskAsset = ASK_ASSETS.some((p) => url.pathname.endsWith(p.slice(1)));\n"
+            "  // durable fallback that survives shell-cache eviction.\n"
+            "  const isAskAsset = ASK_ASSETS.some((p) => url.pathname.endsWith(p.slice(1)))\n"
+            "    || /\\/embeddings-[\\w.-]+\\.json$/.test(url.pathname);\n"
             "  if (isAskAsset) {\n"
             "    e.respondWith((async () => {\n"
             "      const cache = await caches.open(ASK_CACHE);\n"
@@ -1190,44 +1161,57 @@ class SiteBuilder:
         notes.reverse()
         return notes
 
+    @staticmethod
+    def _build_meta(fetched_at: str) -> dict[str, str]:
+        """Keep data freshness and deploy identity on separate clocks."""
+        try:
+            fetched = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"primary API cache has invalid fetched_at {fetched_at!r}",
+            ) from exc
+        if fetched.tzinfo is None or fetched.utcoffset() is None:
+            raise RuntimeError(
+                f"primary API cache fetched_at must be timezone-aware: {fetched_at!r}",
+            )
+        built = datetime.now(timezone.utc).astimezone(PACIFIC)
+        return {
+            "fetched_at": fetched.astimezone(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+            ),
+            "fetched_date": fetched.astimezone(PACIFIC).strftime("%Y-%m-%d"),
+            "version": "v" + built.strftime("%Y.%m.%d.%H%M"),
+        }
+
     def build(self) -> Path:
         # `__init__` already validated BURN_START / BURN_END are set.
         # Validate the independent, year-specific D8 location cutoffs
         # before loading any potentially expensive source data.
         self._validate_location_release_policy()
         sync_meta = self._sync_meta()
-        # Load each configured source. The MIN_CAMPS rail applies to
-        # the FIRST (default) source — that's the "is the primary
-        # data path broken?" signal CI uses to refuse a degraded
-        # deploy. Secondary sources can be sparse without aborting.
+        current_spec = f"api-{self.config.brc_map_year}"
+        if not self.source_specs:
+            raise RuntimeError(
+                "no API sources configured; pass --sources or set BM_API_YEARS",
+            )
+        if self.source_specs[0] != current_spec:
+            raise RuntimeError(
+                f"primary source must be {current_spec}; got {self.source_specs[0]!r}",
+            )
+        # Load every configured snapshot strictly. A missing historical cache
+        # must not silently change the embedded source set or tier semantics.
         loaded: list[tuple[str, list[Camp]]] = []
         loaded_art: list[tuple[str, list[Art]]] = []
+        loaded_snapshots: list[tuple[str, SourceSnapshot]] = []
         for spec in self.source_specs:
-            try:
-                camps = self.load_camps_for_source(spec)
-            except FileNotFoundError as e:
-                # API source asked for, no payload cached. Skip with a
-                # warning rather than aborting — the user runs
-                # `playa api-fetch --year YYYY` to populate it.
-                print(f"  source {spec!r}: {e}; skipping")
-                continue
+            snapshot = self.load_snapshot_for_source(spec)
+            camps = snapshot.camps
             print(f"  source {spec!r}: {len(camps)} camps loaded")
             loaded.append((spec, camps))
-            # Art is best-effort per source. Sources without art (or
-            # cache files predating art support) yield empty lists,
-            # which still emit empty art ciphers downstream so the
-            # client always finds a script tag (decrypts to "[]").
-            try:
-                art = self.load_art_for_source(spec)
-            except FileNotFoundError:
-                art = []
+            art = snapshot.art
             print(f"  source {spec!r}: {len(art)} art loaded")
             loaded_art.append((spec, art))
-
-        if not loaded:
-            raise RuntimeError(
-                "no sources loaded successfully — refusing to build."
-            )
+            loaded_snapshots.append((spec, snapshot))
 
         primary_spec, primary_camps = loaded[0]
         # Sanity check on the primary source: a near-empty fetch
@@ -1243,7 +1227,7 @@ class SiteBuilder:
                 f"bypass, but do NOT set it in CI unless you want a "
                 f"degraded build to overwrite the live site."
             )
-        meta = self.load_meta()
+        meta = self._build_meta(loaded_snapshots[0][1].fetched_at)
 
         # Three build modes:
         #   1. SITE_TIERS set     → envelope encryption (D10)
@@ -1335,15 +1319,15 @@ class SiteBuilder:
         sources_meta = (
             f'<meta name="bm-sources" content="'
             f'{",".join(spec for spec, _ in loaded)}">\n'
-            f'<meta name="bm-directory-map-year" '
-            f'content="{self.config.directory_map_year}">'
+            f'<meta name="bm-brc-map-year" '
+            f'content="{self.config.brc_map_year}">'
         )
         gis_script, gis_years = self._gis_data_scripts(
             [spec for spec, _ in loaded],
         )
         if gis_script:
             data_script = data_script + "\n" + gis_script
-        has_embeddings = self._write_embeddings(loaded, loaded_art)
+        embedding_sources = self._write_embeddings(loaded, loaded_art)
         bundle_js = self._read_bundle()
 
         # Guard: our placeholder isn't a substring that could legally appear
@@ -1368,7 +1352,7 @@ class SiteBuilder:
             f'</script>'
         )
 
-        # load_camps() already populated _effective_start. The client
+        # Snapshot loading already populated _effective_start. The client
         # derives calendar columns from burn_start + burn_end directly,
         # so no separate week-map tag is needed.
         html = (
@@ -1379,7 +1363,6 @@ class SiteBuilder:
             .replace("__SYNC_META__",          sync_meta)
             .replace("__BUNDLE__",             bundle_js)
             .replace("__RELEASE_NOTES__",      notes_script)
-            .replace("__CONTACT_EMAIL__",      self.config.contact_email)
             .replace("__VERSION__",            meta.get("version", "v0.0.0"))
             .replace("__FETCHED_DATE__",       meta.get("fetched_date", "unknown"))
             .replace("__FETCHED_AT__",         meta.get("fetched_at", "unknown"))
@@ -1387,7 +1370,7 @@ class SiteBuilder:
             .replace("__BURN_END__",           self.config.burn_end)
             .replace(
                 "__LOCATION_RELEASE_YEAR__",
-                str(self.config.directory_map_year),
+                str(self.config.brc_map_year),
             )
             .replace(
                 "__CAMP_LOCATION_RELEASE_AT__",
@@ -1397,7 +1380,7 @@ class SiteBuilder:
                 "__ART_LOCATION_RELEASE_AT__",
                 self.config.art_location_release_at,
             )
-            .replace("__HAS_EMBEDDINGS__", "1" if has_embeddings else "")
+            .replace("__HAS_EMBEDDINGS__", ",".join(embedding_sources))
         )
 
         self.config.site_html.parent.mkdir(parents=True, exist_ok=True)
@@ -1428,7 +1411,6 @@ class SiteBuilder:
         print(f"wrote {self.config.site_html}")
         print(f"wrote {sw_path}")
         print(f"  modes: {', '.join(modes)}")
-        print(f"  contact: {self.config.contact_email}")
         print(f"  version: {meta.get('version', '?')} ({meta.get('fetched_date', '?')})")
         print(f"  GIS years: {', '.join(gis_years) if gis_years else 'none'}")
         art_by_source: dict[str, list[Art]] = {s: lst for s, lst in loaded_art}

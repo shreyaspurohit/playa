@@ -1,8 +1,5 @@
 // About & disclaimer modal + a "How to use" quick-reference tab.
-// Directory-specific attribution, verification, and takedown guidance
-// is shown only while the directory source is active. The required
-// no-affiliation notice and general app information remain visible for
-// every source.
+// API provenance, privacy, transformation, and location-release disclosures.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { LS, SS, type Source } from '../types';
 import { removeKey } from '../utils/storage';
@@ -16,7 +13,6 @@ import { SyncSettings } from './SyncSettings';
 interface Props {
   open: boolean;
   fetchedDate: string;
-  contactEmail: string;
   source: Source;
   locationPolicy: LocationReleasePolicy;
   sync?: SyncController;
@@ -46,7 +42,7 @@ const UNAVAILABLE_SYNC: SyncController = {
 };
 
 export function InfoModal({
-  open, fetchedDate, contactEmail, source, locationPolicy,
+  open, fetchedDate, source, locationPolicy,
   sync = UNAVAILABLE_SYNC, onImport, onExport, onClose,
 }: Props) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -137,7 +133,6 @@ export function InfoModal({
     removeKey(LS.theme);
     removeKey(LS.infoSeen);
     removeKey(LS.source);
-    removeKey(LS.legacyKeysMigrated);
     removeKey(LS.viewMode);
     removeKey(LS.eventCampReconciled);
     removeKey(LS.releaseNotesSeen);
@@ -165,12 +160,6 @@ export function InfoModal({
     try { await clearJournal(); } catch { /* ignore */ }
     location.reload();
   }
-
-  const takedownHref =
-    `mailto:${contactEmail}` +
-    '?subject=%5BBM%20Camps%5D%20Takedown%20request' +
-    '&body=Camp%20name%3A%20%0ACamp%20URL%20on%20directory.burningman.org%3A%20%0A%0A' +
-    'Please%20remove%20my%20camp%20from%20this%20site.%20Thanks.';
 
   return (
     <div
@@ -228,8 +217,6 @@ export function InfoModal({
           ) : (
             <AboutTab
               fetchedDate={fetchedDate}
-              takedownHref={takedownHref}
-              showDirectoryDisclaimer={source === 'directory'}
               showCurrentApiSchedule={source === `api-${locationPolicy.year}`}
               locationPolicy={locationPolicy}
               sync={sync}
@@ -463,14 +450,12 @@ function formatReleaseTime(value: string): string {
 }
 
 function AboutTab({
-  fetchedDate, takedownHref, showDirectoryDisclaimer,
+  fetchedDate,
   showCurrentApiSchedule, locationPolicy,
   sync, onForceRefresh, onExport, onImport, onClearAll,
   refreshState, refreshLabel,
 }: {
   fetchedDate: string;
-  takedownHref: string;
-  showDirectoryDisclaimer: boolean;
   showCurrentApiSchedule: boolean;
   locationPolicy: LocationReleasePolicy;
   sync: SyncController;
@@ -487,71 +472,27 @@ function AboutTab({
         <span class="warn">⚠ Unofficial &amp; best-effort</span>
         <span class="badge">Built for Burners, not commercial</span>
       </p>
-      {showDirectoryDisclaimer && (
-        <>
-          <p>
-            This is an unofficial personal project to help friends browse and
-            filter the{' '}
-            <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
-              official Burning Man Playa Info directory
-            </a>. All camp names, descriptions, events, and locations are the
-            property of their respective camps and the directory operators.
-          </p>
-          <p>
-            <strong>Provided as is.</strong> Camp details here can be stale,
-            incomplete, mis-parsed, or mis-tagged.{' '}
-            <strong>
-              Always verify on{' '}
-              <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
-                directory.burningman.org
-              </a>
-            </strong>{' '}
-            before acting on anything you see here. Use this tool to{' '}
-            <em>narrow down</em> a shortlist of possible camps — not as the
-            source of truth. The optional <strong>Ask</strong> feature finds
-            camps, events, and art from a plain-English question, entirely on
-            your device; its picks come from this same data — verify them the
-            same way. The 🍄 is a nod to mycelial networks: decentralized and
-            all-connected, which is how Ask works — no cloud, one search across
-            every camp, event, and art.
-          </p>
-          <p>
-            Data is fetched nightly from the public directory and shown here
-            for personal browsing only. For the canonical, up-to-date
-            listing, please use{' '}
-            <a href="https://directory.burningman.org/camps/" target="_blank" rel="noopener">
-              directory.burningman.org
-            </a>. This site has{' '}
-            <strong>
-              no ads, no accounts, and no commercial purpose, and sets no
-              cookies or tracking scripts of its own
-            </strong>. Cloudflare and GitHub Pages, which serve it, process
-            ordinary request metadata such as IP addresses and expose aggregate
-            traffic statistics.
-          </p>
-          <p>
-            <strong>Camp owner? Want your camp removed?</strong>{' '}
-            <a href={takedownHref}>Email a takedown request</a> — please
-            include the camp name and directory URL, and the entry will be
-            removed on the next build.
-          </p>
-        </>
-      )}
+      <p>
+        <strong>Provided as is.</strong> This app uses an official API snapshot,
+        which may be stale or incomplete. Check critical details against current
+        official Burning Man communications. The optional <strong>Ask</strong>{' '}
+        feature searches this same snapshot entirely on your device. The 🍄 is a
+        nod to mycelial networks: decentralized and all-connected, which is how
+        Ask works — no cloud, one search across every camp, event, and art.
+      </p>
       <p>
         <strong>Search, Food, and scheduling:</strong> The Food tab groups
         matching meals and snacks by current availability; Schedule organizes
         starred events by day. Tags are generated from listing text, and event
         times are formatted against the configured burn-week calendar.
       </p>
-      {!showDirectoryDisclaimer && (
-        <p>
-          This is a personal, non-commercial tool with no ads, no accounts, and
-          no commercial purpose, and it sets no cookies or tracking scripts of
-          its own. Cloudflare and GitHub Pages, which serve it, process ordinary
-          request metadata such as IP addresses and expose aggregate traffic
-          statistics.
-        </p>
-      )}
+      <p>
+        This is a personal, non-commercial tool with no ads, no accounts, and
+        no commercial purpose, and it sets no cookies or tracking scripts of
+        its own. Cloudflare and GitHub Pages, which serve it, process ordinary
+        request metadata such as IP addresses and expose aggregate traffic
+        statistics.
+      </p>
       {showCurrentApiSchedule && (
         <p>
           <strong>{locationPolicy.year} API location timing:</strong>{' '}
@@ -566,6 +507,9 @@ function AboutTab({
           >Official annual API schedule</a>.
         </p>
       )}
+      <p>
+        This app is not affiliated, endorsed, or verified by Burning Man Project.
+      </p>
       <p>
         <strong>Found a bug or a mis-parse?</strong>{' '}
         <a href="https://github.com/shreyaspurohit/playa/issues" target="_blank" rel="noopener">

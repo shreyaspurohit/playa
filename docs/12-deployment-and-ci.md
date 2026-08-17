@@ -1,155 +1,86 @@
----
-title: Deployment & CI
-date: 2026-04-27
-status: current
----
+# Deployment and CI
 
-# Deployment & CI
+**Status:** Accepted
+**Last updated:** 2026-08-16
 
 ## Overview
 
-GitHub Actions runs the full pipeline nightly + on manual dispatch,
-publishes the built artifact to GitHub Pages, and serves it from
-`playa.purohit.dev`. Three jobs (`test → build → deploy`) gate each
-other so a broken parser can never overwrite the live site.
+GitHub Actions validates pull requests. A merge or direct push to `main`, or an
+operator dispatch, tests and builds the API-only PWA, uploads `site/` as a Pages
+artifact, and deploys it to GitHub Pages. Cloudflare proxies the custom domain.
+Event Data never enters git. There is no scheduled workflow.
 
-## Decisions
+## Workflow
 
-- **Pages over a real host.** Free, custom-domain-ready, automatic
-  Let's Encrypt cert. Trade-off: anonymous reads of the file. Mitigated
-  by encrypting the data payload + the `noindex` meta + `robots.txt`.
-- **Cloudflare proxy in front of Pages.** `playa.purohit.dev` is proxied
-  through Cloudflare (orange-cloud), with a per-hostname Configuration Rule
-  setting SSL to Full (strict) so the rest of the zone is untouched. GitHub
-  Pages stays the origin; Cloudflare fronts it purely for server-side,
-  cookieless **aggregate traffic analytics** (visitor counts) — no in-page
-  script or cookie is added, keeping the no-tracking stance intact (see the
-  privacy disclosures in `docs/13` / About modal / `privacy.html`). Operational
-  notes: enable Pages "Enforce HTTPS" (so the cert exists) *before* proxying;
-  a rare cert renewal may need a brief un-proxy; Pages HTML isn't edge-cached
-  by default, so nightly rebuilds and `version.txt` polling still propagate.
-- **Three jobs, hard `needs:` chain.** `test` blocks `build`; `build`
-  blocks `deploy`. A failed Python test stops the world.
-- **`actions/upload-pages-artifact` over commit-and-push.** Data
-  never touches git history. The runner's local filesystem is the
-  intermediate state; the artifact replaces it on every deploy.
-- **`fetch-depth: 200` on checkout.** Default is `1`, which would
-  hide all `rn:` commits from `_collect_release_notes`. 200 is plenty
-  of history for any realistic gap between visits.
-- **Directory data has no state across runs; API snapshots do.** Every nightly
-  fetches directory pages fresh on an ephemeral runner. API year snapshots are
-  intentionally persisted as encrypted GitHub Release assets so immutable years
-  do not consume API calls on every build. Nothing fetched is committed to git.
+The test job installs pinned Python/Node versions, restores npm dependencies,
+and runs Python tests, typecheck, and client tests.
 
-## Mechanism
+The build job:
 
-### Workflow shape
+1. Restores an exact-revision annual GIS cache.
+2. Restores only the `ask-embeddings-v2` content-hash cache.
+3. Downloads every configured encrypted `data-api-YYYY` Release asset.
+4. Fails if a cache is missing unless that year was explicitly selected for a
+   manual refresh.
+5. Permits API fetch/replacement only for years explicitly selected by a manual
+   `refresh_api_years` dispatch.
+6. Resolves the password-free spirit window at build time.
+7. Runs `python3 -m playa all`, which refreshes GIS best-effort and builds only
+   from local annual snapshots.
+8. Uploads `site/` with hidden files included.
 
-```mermaid
-flowchart LR
-  subgraph Trigger
-    Cron[cron: 08:00 UTC]
-    Manual[workflow_dispatch]
-  end
-  Trigger --> Test
-  Test[test job<br>npm + python tests] --> Build
-  Build[build job<br>fetch + tag + bundle + encrypt] --> Deploy
-  Deploy[deploy job<br>actions/deploy-pages]
-  Deploy --> Pages[GitHub Pages origin]
-  Pages --> CF["Cloudflare edge<br>proxied playa.purohit.dev<br>SSL Full strict + aggregate analytics"]
-  CF --> Users[Visitors]
-```
+The deploy job uses only `pages: write` and `id-token: write` to publish the
+artifact. The build job has `contents: write` solely for encrypted Release
+assets during explicit refreshes. Deploy/refresh runs share a non-cancelling
+concurrency group so a push cannot interrupt a manual Release replacement.
 
-### Test job
+## Required configuration
 
-- Checkout (depth: default 1, no need for history).
-- Setup Python 3.14.4 + Node 26.7.0 directly from `.tool-versions`, matching
-  the asdf project toolchain and package constraints used locally.
-- `pip install -e ./backend` + `npm ci` in `client`.
-- Python: `unittest discover` over `backend/tests/`.
-- TS: `tsc --noEmit` (typecheck) + `node --test` (unit tests).
+- Secret `BM_API_KEY`: used only during manual annual refresh.
+- Secret `BM_CACHE_PASSWORD` (or `SITE_PASSWORD` fallback): encrypts/releases
+  and decrypts annual snapshots.
+- Secret `SITE_PASSWORD` or `SITE_TIERS`: browser data gate.
+- Variable `BM_API_YEARS`: required annual snapshot list.
+- Variable `BRC_MAP_YEAR`: current year and required member of that list.
+- Variables `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`: schedule calendar.
+- Variables `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT`: disclosure
+  gates.
+- Optional Dropbox and site-unlock variables documented in `CLAUDE.md`.
 
-### Build job
+`SITE_TIERS` must contain only configured API sources. The conventional roles
+are all-years trusted god, all-years normal demigod, and current-year-only
+spirit. Invalid references fail the build.
 
-- Checkout with `fetch-depth: 200`.
-- Same setup.
-- Bundle the client (`npm run build`).
-- `python -m playa all` — fetches everything, encrypts, builds. Its GIS refresh
-  is failure-isolated per year: a timeout or validation/name drift
-  produces a visible Actions warning, then the last valid same-year overlay
-  (or base map) is used without losing the camp/event/art refresh.
-- Before building, resolves the official GIS repository's `master` commit and
-  restores `data/gis` with an exact `actions/cache` key that also includes the
-  configured directory/API years. An unchanged revision makes no GeoJSON
-  requests. An upstream or year-set change misses and refreshes once; no prefix
-  restore is used, so stale data cannot masquerade as the new revision.
-- Downloads each configured `api-YYYY` encrypted Release cache; a cache miss or
-  explicitly requested `refresh_api_years` fetches from the API and uploads a
-  replacement asset.
-- Resolves `BURN_OPEN` from the manual override or the site-unlock window
-  (`SITE_UNLOCK_START`/`SITE_UNLOCK_END`) before building the spirit-mode
-  sidecar. The unlock window is separate from the burn-week calendar (D13).
-- Verifies `openssl version`, `node --version`, etc. as a sanity
-  preamble.
-- Uploads `site/` as the `github-pages` artifact via
-  `actions/upload-pages-artifact@v5` with `include-hidden-files:
-  true` (so `.nojekyll` makes it through).
+## Deployment verification
 
-### Deploy job
+- `bm-sources` contains only annual API names, current first.
+- Visible `Updated` matches the primary cache timestamp.
+- Spirit unlock exposes only current year; demigod/god expose all configured
+  years; only god bypasses current-year location masks.
+- The generated worker uses the current shell/vector cache namespaces and
+  removes the retired namespaces on activation.
+- The generated site contains no unsupported source IDs, old metadata names,
+  record-level upstream links, or retired payload IDs.
 
-- Different runner, different permissions: `pages: write`,
-  `id-token: write`.
-- `actions/deploy-pages@v5` consumes the artifact, publishes.
-- Custom domain comes from `site/CNAME` (committed file).
+## Failure modes and operations
 
-### Secrets
-
-- `SITE_TIERS` — production multi-tier source/password manifest.
-- `SITE_PASSWORD` — legacy single-tier mode and cache-password fallback.
-- `BM_API_KEY` — used only for API cache creation/refresh.
-- `BM_CACHE_PASSWORD` — encrypts/decrypts API Release caches.
-- `CONTACT_EMAIL` — replaces the placeholder in the footer's
-  takedown mailto.
-
-Repository variables: `BM_API_YEARS`, `BRC_MAP_YEAR`, `SITE_UNLOCK_START`,
-`SITE_UNLOCK_END`, `BURN_WINDOW_OPEN_FROM`, `BURN_WINDOW_OPEN_TO`,
-`CAMP_LOCATION_RELEASE_AT`, `ART_LOCATION_RELEASE_AT`. `SITE_UNLOCK_*` is the
-password-free access window; `BURN_WINDOW_OPEN_*` is the burn-week calendar
-(D13); the two location values are timezone-aware annual API publication
-cutoffs, not burn-window aliases. Configure the applicable
-secrets and variables under **Settings → Secrets and variables → Actions**
-before the first production build.
-
-### Local mirror of CI
-
-`make test`, `make rebuild`, `make build` all work locally and
-produce the same artifact CI does. The only CI-specific bits are:
-
-- artifact upload (we don't simulate locally),
-- the `fetch-depth: 200` trick (locally `git log` already has full
-  history).
-
-## Failure modes & trade-offs
-
-- **Nightly cadence** means upstream content older than ~24 h shows
-  in the live site. Force-refresh from the About modal pulls fresh
-  bytes for the SHELL but doesn't re-fetch the directory; only the
-  cron + manual workflow run can do that.
-- **Pages caching window** can briefly serve a stale `version.txt`
-  to the polling client. We override with `cache: 'reload'` on the
-  client's polling fetch and `cache: 'no-store'` so Pages' max-age
-  doesn't matter.
-- **Single deploy environment**. There's no staging mirror — a
-  problematic build goes straight to friends. The `MIN_CAMPS` rail
-  is the main safeguard against the most common kind of "broken
-  build." For risky changes, force a manual `workflow_dispatch`
-  while watching the run.
+- A missing Release blocks deployment and must be repaired by an explicit
+  refresh, never an implicit fetch.
+- With no schedule, `SITE_UNLOCK_START/END` take effect on the next push or
+  manual dispatch. Operators must dispatch on the opening and closing dates if
+  no code deployment will occur. Location-release timestamps and live schedule
+  state are client-side and do not need a rebuild.
+- GitHub Pages may briefly serve an older shell; version polling and force
+  refresh handle propagation.
+- Cloudflare needs no routine deployment step. After a data-source cutover or
+  revocation, delete old Actions artifacts and semantic caches, deploy the
+  replacement, then purge the custom hostname so stale edge objects cannot be
+  served. See `revocation-plan.md`.
 
 ## Code references
 
-- `.github/workflows/refresh.yml` — workflow definition
-- `Makefile` — local mirror of the CI steps
-- `site/CNAME` — `playa.purohit.dev`
-- `site/robots.txt` — `Disallow: /` for everything
-- `site/.nojekyll` — disables Pages-side Jekyll
-- `docs/revocation-plan.md` — operational runbook for takedowns
+- `.github/workflows/refresh.yml`
+- `.github/workflows/ci.yml`
+- `backend/src/playa/builder.py`
+- `site/CNAME`
+- `site/.nojekyll`

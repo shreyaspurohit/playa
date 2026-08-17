@@ -1,14 +1,12 @@
-# Pull-request / push validation. Runs the unit suites, type-check, and the
-# client bundle build so dependency bumps (Renovate) and code changes are
-# tested BEFORE they reach main. Deliberately does NOT fetch data, use any
-# secret, or deploy — that is the scheduled refresh.yml pipeline's job. Keep
-# these steps in sync with refresh.yml's `test` job.
+# Pull-request validation. Runs the unit suites, type-check, and the client
+# bundle build so dependency bumps (Renovate) and code changes are tested
+# BEFORE they reach main. A push to main is validated again by refresh.yml
+# immediately before its build/deploy, avoiding two workflows for the same
+# main-branch commit. Keep these steps in sync with refresh.yml's `test` job.
 name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
