@@ -277,6 +277,36 @@ class TagMatchingTests(unittest.TestCase):
         self.assertNotIn("self_funded", self.match("funded by an honorarium"))
 
 
+    def test_2026_audit_tags_match_explicit_phrases(self):
+        cases = {
+            "bdsm": "consensual BDSM workshop", "bondage": "rope bondage basics",
+            "shibari": "shibari and kinbaku demonstration", "impact_play": "impact play with floggers",
+            "fetish": "leather fetish gear", "power_exchange": "power exchange and dominance & submission",
+            "dungeon": "a consent-forward dungeon", "polyamory": "polyamory and non-monogamous relating",
+            "orgy": "orgy etiquette orientation", "sex_positive": "sex-positive space", "fire_play": "fire play safety class",
+            "ritual": "sunset ritual", "happy_hour": "happy hour", "mocktails": "non-alcoholic cocktails",
+            "snow_cones": "shave ice", "somatics": "somatic nervous-system regulation",
+            "recovery_meeting": "a twelve-step recovery meeting", "cycling": "bike tour around the city",
+            "art_tour": "art crawl", "hip_hop": "hip-hop dance", "reggaeton": "reggaetón set",
+            "qigong": "qi gong at dawn", "kundalini": "kundalini yoga", "recycling": "recycling drop-off",
+            "accessibility": "wheelchair accessible entrance", "charging_station": "phone charging stations", "wifi": "free Wi-Fi",
+        }
+        for tag, phrase in cases.items():
+            with self.subTest(tag=tag):
+                self.assertIn(tag, self.match(phrase))
+
+    def test_2026_audit_tags_avoid_ambiguous_short_forms(self):
+        cases = {
+            "bondage": "rope bridge construction", "fetish": "leather workshop",
+            "cycling": "bring your bike and lock it outside", "accessibility": "an accessible idea for everyone",
+            "charging_station": "we charge admission at the gate", "wifi": "a wife-led workshop",
+            "orgy": "an organic garden tour", "impact_play": "impact on the playa",
+        }
+        for tag, phrase in cases.items():
+            with self.subTest(tag=tag):
+                self.assertNotIn(tag, self.match(phrase))
+
+
 class HaystackTests(unittest.TestCase):
     """Verify event text feeds into the tag text."""
 
@@ -470,7 +500,6 @@ class FoodTypeTests(unittest.TestCase):
             events=[Event(id="e", name="Snack Break", description="free snacks", time="")],
         )
         self.assertEqual([], self.t.food_types_for_camp(acorn))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,8 +39,8 @@ TAGS: dict[str, list[str]] = {
         r"\bbartend(?:er|ing)\b", r"\bspeakeas(?:y|ies)\b", r"\bpub\b",
         r"\btavern\b", r"\bsaloon\b", r"\bdive\s*bar\b",
     ],
-    "coffee": [r"\bcoffee\b", r"\bespresso\b", r"\blatte\b", r"\bcappuccino\b", r"\bbarista\b"],
-    "tea": [r"\btea\b", r"\bchai\b", r"\bteahouse\b"],
+    "coffee": [r"\bcoffee\b", r"\bespresso\b", r"\blatte\b", r"\bcappuccino\b", r"\bbarista\b", r"\bcold[-\s]?brew\b"],
+    "tea": [r"\btea\b", r"\bchai\b", r"\bteahouse\b", r"\bmatcha\b"],
     "cocktails": [r"\bcocktails?\b", r"\bmartinis?\b", r"\bmargaritas?\b", r"\bmojitos?\b"],
     "booze": [
         r"\bwhisk(?:e)?y\b", r"\btequila\b", r"\bmezcal\b", r"\bgin\b", r"\bvodka\b",
@@ -185,7 +185,7 @@ TAGS: dict[str, list[str]] = {
     ],
     "meditation": [r"\bmeditat(?:e|es|ed|ing|ion|ions)\b", r"\bmindful(?:ness)?\b"],
     "massage": [r"\bmassage(?:s)?\b", r"\bbodywork\b"],
-    "spa": [r"\bspa\b", r"\bsauna\b", r"\bhot\s*tub\b", r"\bjacuzzi\b", r"\bsteam\s*room\b"],
+    "spa": [r"\bspa\b", r"\bsauna\b", r"\bhot\s*tub\b", r"\bjacuzzi\b", r"\bsteam\s*room\b", r"\bsteam\s+baths?\b"],
     "healing": [r"\bheal(?:ing|er|ers)\b", r"\bshamanic\b", r"\breiki\b", r"\benerg(?:y|etic)\s*work\b"],
     "breathwork": [r"\bbreath\s*work\b", r"\bbreathwork\b", r"\bpranayama\b"],
     "sound_bath": [r"\bsound\s*bath\b", r"\bsound\s*healing\b", r"\bgong\s*bath\b"],
@@ -356,7 +356,7 @@ TAGS: dict[str, list[str]] = {
     "sustainability": [
         r"\bsustainab(?:le|ility)\b", r"\bleave\s+no\s+trace\b",
         r"\bmoop\b", r"\beco[-\s](?:friendly|conscious)\b",
-        r"\bsolar[-\s]powered\b", r"\bcompost(?:ing)?\b",
+        r"\bsolar[-\s]power(?:ed)?\b", r"\bcompost(?:ing)?\b",
         r"\bupcycl(?:e|ed|ing)\b",
     ],
     # BM-curated showpieces. Backed by the API's `program` field
@@ -402,7 +402,38 @@ TAGS: dict[str, list[str]] = {
     # --- Sexuality specifics (finer-grained) ---
     "play_party": [r"\bplay\s*part(?:y|ies)\b"],
     "tantra_workshops": [r"\btantra\s*workshops?\b"],
-    "consent": [r"\bconsent(?:\s*culture|\s*workshops?)?\b"],
+    "consent": [r"\bconsent(?:\s*culture|\s*workshops?)?\b", r"\bconsensual\b", r"\bsafer\s+sex\b"],
+
+    # --- 2026 taxonomy audit: adult / intimacy specifics ---
+    "bdsm": [r"\bbdsm\b"],
+    "bondage": [r"\bbondage\b", r"\brope[-\s](?:play|bondage)\b", r"\bJapanese\s+rope\s+bondage\b"],
+    "shibari": [r"\bshibari\b", r"\bkinbaku\b", r"\bJapanese\s+rope\s+bondage\b"],
+    "impact_play": [r"\bimpact\s+play\b", r"\bfloggers?\b", r"\bflogging\b", r"\bspank(?:ing)?\b(?!\s+new\b)"],
+    "fetish": [r"\bfetish(?:es)?\b", r"\bleather\s+fetish\b", r"\bfetish\s+gear\b"],
+    "power_exchange": [r"\bpower\s+exchange\b", r"\bdominance\s+(?:and|&)\s+submission\b", r"\bdominatrix\b"],
+    "dungeon": [r"\bdungeons?\b"],
+    "polyamory": [r"\bpolyamor(?:y|ous)\b", r"\bnon[-\s]?monogam(?:y|ous)\b"],
+    "orgy": [r"\borg(?:y|ies)\b"],
+    "sex_positive": [r"\bsex[-\s]?positive\b"],
+    "fire_play": [r"\bfire\s+play\b"],
+
+    # --- 2026 taxonomy audit: recurring formats / services ---
+    "ritual": [r"\brituals?\b"],
+    "happy_hour": [r"\bhappy\s+hours?\b"],
+    "mocktails": [r"\bmocktails?\b", r"\bnon[-\s]?alcoholic\s+(?:bar|drinks?|cocktails?)\b"],
+    "snow_cones": [r"\bsnow\s*cones?\b", r"\bshave[dn]?\s+ice\b"],
+    "somatics": [r"\bsomatic(?:s|ally)?\b", r"\bnervous\s+system\s+(?:regulation|healing|reset|work)\b"],
+    "recovery_meeting": [r"\b(?:12|twelve)[-\s]?step\b", r"\b(?:alcoholics|narcotics)\s+anonymous\b", r"\b(?:recovery|sobriety)\s+(?:meeting|meetings|group|groups)\b"],
+    "cycling": [r"\b(?:bike|bicycle|cycling)\s+(?:ride|rides|tour|tours|race|races|workshop|workshops)\b"],
+    "art_tour": [r"\bart\s+(?:tour|tours|crawl|crawls|ride|rides)\b"],
+    "hip_hop": [r"\bhip[-\s]?hop\b"],
+    "reggaeton": [r"\breggaet[oó]n\b"],
+    "qigong": [r"\b(?:qi\s*gong|chi\s*kung)\b"],
+    "kundalini": [r"\bkundalini\b"],
+    "recycling": [r"\brecycl(?:e|es|ed|ing)\b"],
+    "accessibility": [r"\baccessibility\b", r"\bwheelchair[-\s]accessible\b", r"\bmobility[-\s](?:impaired|challenged)\b"],
+    "charging_station": [r"\bcharging\s+stations?\b"],
+    "wifi": [r"\bwi[-\s]?fi\b"],
 
     # --- Games (extra) ---
     "arcade": [r"\barcade\b", r"\bpinball\b", r"\bvideo\s*games?\b"],
@@ -429,7 +460,7 @@ TAGS: dict[str, list[str]] = {
 
     # --- More generic ---
     "hugs": [r"\bhugs?\b", r"\bhugging\b", r"\bembrace\b"],
-    "fire": [r"\bbonfires?\b", r"\bfirepit\b", r"\bfire\s*pit\b", r"\bflame[-\s]?throwers?\b"],
+    "fire": [r"\bbonfires?\b", r"\bcampfires?\b", r"\bfirepit\b", r"\bfire\s*pit\b", r"\bflame[-\s]?throwers?\b"],
     "news_media": [r"\bnewspaper\b", r"\bnews\s*(?:paper|letter)\b", r"\beditions?\b"],
     "radical_inclusion": [r"\bradical\s*inclusion\b", r"\bradical\s*self[-\s]?expression\b"],
     "meat": [r"\bmeats?\b", r"\bcharcuterie\b", r"\bsausage(?:s)?\b"],
