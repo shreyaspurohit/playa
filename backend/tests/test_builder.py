@@ -189,6 +189,21 @@ class SnapshotAndMetadataTests(BuilderFixture):
     def test_full_plain_build_has_api_only_meta_and_cache_freshness(self):
         self.write_cache(2026, fetched_at="2026-08-10T05:06:07Z")
         self.write_cache(2025)
+        # A source can contain events before the configured calendar window.
+        # Those records must not move the site's first schedule column.
+        cache_2025 = self.config.api_payload_file(2025)
+        payload_2025 = json.loads(cache_2025.read_text())
+        payload_2025["events"] = [{
+            "uid": "early-event",
+            "title": "Early event",
+            "description": "Before the configured burn window",
+            "hosted_by_camp": "camp-2025-0",
+            "occurrence_set": [{
+                "start_time": "2025-08-24T09:00:00-07:00",
+                "end_time": "2025-08-24T10:00:00-07:00",
+            }],
+        }]
+        cache_2025.write_text(json.dumps(payload_2025))
         self.write_bundle()
         with mock.patch.dict(os.environ, {"MIN_CAMPS": "0", "BM_EMBEDDINGS": "0"}, clear=False):
             out = SiteBuilder(
@@ -198,6 +213,8 @@ class SnapshotAndMetadataTests(BuilderFixture):
         self.assertIn('name="bm-sources" content="api-2026,api-2025"', text)
         self.assertIn('name="bm-brc-map-year" content="2026"', text)
         self.assertIn('name="bm-fetched-at" content="2026-08-10T05:06:07Z"', text)
+        self.assertIn('name="bm-burn-start" content="2026-08-30"', text)
+        self.assertNotIn('name="bm-burn-start" content="2026-08-24"', text)
 
 
 @unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")

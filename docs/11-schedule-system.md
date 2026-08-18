@@ -1,7 +1,7 @@
 ---
 title: Schedule System
 date: 2026-04-27
-updated: 2026-08-13
+updated: 2026-08-17
 status: current
 ---
 
@@ -25,6 +25,9 @@ whole burn week. The hard parts are:
   runs at build time and stamps every event with a structured
   `parsed_time` plus a pre-rendered `display_time` string. The
   client never sees the raw upstream format.
+- **Configured window is authoritative.** `BURN_WINDOW_OPEN_FROM` and
+  `BURN_WINDOW_OPEN_TO` define the calendar's first and last columns. Event
+  records outside that interval do not expand the schedule.
 - **Occurrence-aware single dates.** A valid explicit `(M/D)` is retained when
   it falls inside the configured event window and its weekday agrees with the
   current burn year. This distinguishes the second Saturday from the first.
@@ -98,7 +101,7 @@ ambiguously (could be a single label like "Mon-day Tue-sday").
 ```mermaid
 flowchart TD
   StarredEvents[event favs + friend favs]
-  Window["effective_burn_start<br>+ Config.burn_end"]
+  Window["Config.burn_start<br>+ Config.burn_end"]
   Cells["Map<dayKey → events[]>"]
   StarredEvents -->|filter has parsed_time| Cells
   Window --> Cells
@@ -107,8 +110,9 @@ flowchart TD
   Cells --> Filters["Hide-past + Now + Near-me filters<br>(see hooks/useGeolocation)"]
 ```
 
-Recurring events render once **per day they recur**. A "Mon–Fri"
-event shows in 5 columns. Unparsed events land in a dashed-border
+Recurring events render once **per day they recur, on or after their stamped
+`start_date`**. A Tue/Wed/Fri event that starts on the second Tuesday does not
+fan backward into the prior week's matching columns. Unparsed events land in a dashed-border
 "Unscheduled" section with their raw time so nothing is lost.
 
 ### Filters

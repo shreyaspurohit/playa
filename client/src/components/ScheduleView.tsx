@@ -1,6 +1,6 @@
 // Chronological calendar of favorited events. One column per date in
-// the effective burn window (earliest fetched event → configured burn
-// end) — typically 14-15 days, so the 7-col CSS grid wraps into two
+// the configured burn window — typically 9 days, so the 7-col CSS grid
+// wraps into two
 // rows of 7. Recurring events appear in every matching-weekday cell;
 // single-occurrence events land in the cell whose date matches their
 // canonical start_date. Events with no parse time drop to the bottom
@@ -87,9 +87,7 @@ interface Props {
   camps: Camp[];
   favEventIds: Set<string>;
   friendFavEventIds: (id: string) => string[];   // returns friend names
-  /** Effective burn-week window from meta tags. The start is derived
-   *  from the earliest fetched event (so volunteer-week shows up); the
-   *  end is Config.burn_end. See backend/src/playa/timeparser.py. */
+  /** Authoritative burn-week window from build metadata. */
   burnStart?: string;                             // 'YYYY-MM-DD'
   burnEnd?: string;                               // 'YYYY-MM-DD'
   /** Per-day hide state for recurring events. `isDayHidden(id, iso)`
@@ -213,18 +211,24 @@ function collectSchedule(
       if (p.kind === 'single') {
         // Prefer exact date match; fall back to first occurrence of the
         // weekday in the window if the fetched date doesn't align with
-        // our effective window.
+        // our configured window.
         const cell = (p.start_date && cellByDate.get(p.start_date))
           || (p.start_day && cellsByWeekday.get(p.start_day as DayKey)?.[0])
           || null;
         if (cell) push(cell.iso, event.id, entry);
         else unscheduled.push(entry);
       } else {
-        // Recurring: every matching-weekday cell in the window.
+        // Recurring: every matching-weekday cell on or after the event's
+        // canonical start date. Without this gate, a Tue/Wed/Fri event that
+        // starts 9/1 also appears in matching columns from the prior week.
+        const recurringStart = p.start_date
+          ? cellByDate.get(p.start_date) ?? null
+          : null;
         let placed = false;
         for (const d of p.days) {
           const matches = cellsByWeekday.get(d as DayKey) ?? [];
           for (const cell of matches) {
+            if (recurringStart && cell.iso < recurringStart.iso) continue;
             push(cell.iso, event.id, entry);
             placed = true;
           }

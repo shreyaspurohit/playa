@@ -33,6 +33,11 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ready = a.download.status === 'ready';
+  const restoring = a.download.status === 'restoring';
+  // A returning user already opted in. Keep the final search layout mounted
+  // while the cached model/index is restored so controls do not pop into the
+  // modal a moment after it opens.
+  const showSearchUi = ready || restoring;
   const near = nearMe && geo.state.status === 'ready'
     ? { lat: geo.state.lat, lng: geo.state.lng }
     : null;
@@ -104,9 +109,11 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
               ref={inputRef}
               class="ask-input"
               type="search"
-              placeholder={ready ? 'Ask about camps, events, food, art…' : 'Set up Ask to start…'}
+              placeholder={showSearchUi
+                ? 'Ask about camps, events, food, art…'
+                : 'Set up Ask to start…'}
               value={q}
-              disabled={!ready}
+              disabled={!showSearchUi}
               onInput={(e) => setQ((e.target as HTMLInputElement).value)}
             />
             <button class="primary-btn" type="submit" disabled={!ready || a.loading}>
@@ -114,19 +121,21 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
             </button>
           </form>
 
-          {ready && (
+          {showSearchUi && (
             <>
               <div class="ask-filters">
                 <button
                   type="button"
                   class={'ask-filter' + (nowOnly ? ' on' : '')}
                   aria-pressed={nowOnly}
+                  disabled={!ready}
                   onClick={() => setNowOnly((v) => !v)}
                 >🕐 On now</button>
                 <button
                   type="button"
                   class={'ask-filter' + (nearMe ? ' on' : '')}
                   aria-pressed={nearMe}
+                  disabled={!ready}
                   onClick={toggleNear}
                 >📍 Near me</button>
                 {nearMe && geo.state.status === 'requesting' && <span class="ask-filter-note">locating…</span>}
@@ -136,7 +145,10 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
               </div>
               <div class="ask-suggestions">
                 {SUGGESTIONS.map((s) => (
-                  <button key={s} type="button" class="ask-chip" onClick={() => runSuggestion(s)}>{s}</button>
+                  <button
+                    key={s} type="button" class="ask-chip" disabled={!ready}
+                    onClick={() => runSuggestion(s)}
+                  >{s}</button>
                 ))}
               </div>
             </>
@@ -146,7 +158,7 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
             <p class="ask-note">Ask isn’t available in this build.</p>
           )}
 
-          {a.available && !ready && (
+          {a.available && !ready && !restoring && (
             <div class="ask-download">
               {(a.download.status === 'idle') && (
                 <>
@@ -178,9 +190,9 @@ export function AskView({ open, onClose, corpus, onGotoCamp, onGotoArt }: Props)
             </div>
           )}
 
-          {ready && a.facts.length > 0 && <p class="ask-answer">{a.facts.join(' ')}</p>}
+          {showSearchUi && a.facts.length > 0 && <p class="ask-answer">{a.facts.join(' ')}</p>}
 
-          {ready && a.items.length > 0 && (
+          {showSearchUi && a.items.length > 0 && (
             <ul class="ask-results">
               {a.items.map((i) => (
                 <li key={i.kind + i.id}>

@@ -258,6 +258,29 @@ constraint: someone who already downloaded Ask keeps working through the deploy.
 The deploy itself carries a new build version, so the shell updates and the
 activation prune runs on every existing client's next load.
 
+## Possible optimizations
+
+### Keep the loaded session warm briefly
+
+Today, closing Ask immediately disposes the in-memory ONNX session and Orama
+index. The downloaded model/runtime files remain in browser storage, so reopening
+does not download them again, but it does recreate the session and index from the
+cache. This favors low idle memory use on constrained mobile browsers.
+
+If user feedback says reopening Ask feels slow, keep a ready session warm for a
+short grace period (proposed: **five minutes**) after the modal closes. Reopening
+during that window would cancel the timer and reuse the session instantly; expiry
+would dispose it exactly as today. Do not eagerly initialize Ask on every app
+launch—the optimization is only for someone who already opened it in the current
+page session.
+
+Implementation must preserve the existing lifecycle rails: cancel an unfinished
+load immediately when Ask closes, unload or rebuild when the active API year
+changes, dispose on component teardown, and prevent an expired timer from
+disposing a newly reopened session. The trade-off is a few minutes of additional
+RAM use in exchange for faster repeat opens. Revisit only if observed feedback or
+timing measurements justify that cost.
+
 ## Failure modes & trade-offs
 
 - **Imperfect ranking**, not hallucination — the worst case is a less-relevant

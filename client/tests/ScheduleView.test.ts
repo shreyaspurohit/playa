@@ -75,6 +75,42 @@ describe('<ScheduleView> source geometry', () => {
   });
 });
 
+describe('<ScheduleView> recurring start date', () => {
+  test('does not fan a recurring event backward before its first occurrence', () => {
+    const recurring = {
+      id: 'blinky', name: 'Blinky dance and light experience',
+      description: '', time: '', display_time: '',
+      parsed_time: {
+        kind: 'recurring' as const,
+        days: ['Tue', 'Wed', 'Fri'],
+        start_day: 'Tue', start_date: '9/1',
+        start_time: '20:00', end_day: 'Fri', end_date: '9/4', end_time: '23:45',
+      },
+    };
+    render(h(ScheduleView, {
+      camps: [{
+        id: 'camp', name: 'Cats', location: '', description: '', website: '',
+        tags: [], events: [recurring],
+      }],
+      favEventIds: new Set(['blinky']), friendFavEventIds: () => [],
+      burnStart: '2026-08-24', burnEnd: '2026-09-07',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+    }), mount);
+
+    const populatedDays = Array.from(mount.querySelectorAll<HTMLElement>('.sched-day'))
+      .filter((day) => day.textContent?.includes('Blinky dance and light experience'))
+      .map((day) => {
+        const header = day.querySelector<HTMLElement>('.sched-day-head')
+          ?.cloneNode(true) as HTMLElement | undefined;
+        header?.querySelector('.sched-day-count')?.remove();
+        return header?.textContent?.trim() ?? '';
+      });
+    assert.deepEqual(populatedDays, ['Tue 9/1', 'Wed 9/2', 'Fri 9/4']);
+  });
+});
+
 describe('<ScheduleView> past-event filter', () => {
   test('hides ended events, keeps in-progress and untimed events, and advances with the clock', async () => {
     const event = (

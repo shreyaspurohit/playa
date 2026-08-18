@@ -44,7 +44,7 @@ export interface AskFilters {
   near?: { lat: number; lng: number } | null;  // sort by distance from here
 }
 
-export type DownloadStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type DownloadStatus = 'idle' | 'restoring' | 'loading' | 'ready' | 'error';
 export interface DownloadState {
   status: DownloadStatus;
   progress: number;   // 0..1
@@ -101,7 +101,13 @@ function setupError(e: unknown): string {
 export function useAssistant(corpus: AskCorpus, active: boolean, deps: AssistantDeps = DEFAULT_DEPS): AssistantController {
   const depsRef = useRef(deps);
   depsRef.current = deps;
-  const [available, setAvailable] = useState(false);
+  // This is a cheap meta-tag lookup. Resolve it during render so opening Ask
+  // never flashes an incorrect "unavailable" or first-time setup state while
+  // waiting for an effect.
+  const available = deps.hasEmbeddings(corpus.source);
+  const [modelReadyHint, setModelReadyHint] = useState(
+    () => localStorage.getItem(READY_FLAG) === '1',
+  );
   const [download, setDownload] = useState<DownloadState>(IDLE);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<AskItem[]>([]);
@@ -149,12 +155,6 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
     if (p) payloadsRef.current.set(src, p);
     return p;
   }, []);
-
-  // Cheap availability check — a meta tag, no big fetch. Per the ACTIVE source
-  // (D9): Ask is offered only when this build shipped an index for it.
-  useEffect(() => {
-    if (active) setAvailable(depsRef.current.hasEmbeddings(corpus.source));
-  }, [active, corpus.source]);
 
   const load = useCallback(async (): Promise<boolean> => {
     const gen = genRef.current;
@@ -232,12 +232,19 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
   // when the surface opens — no need to click Download again.
   useEffect(() => {
     if (!active || download.status !== 'idle' || !available) return;
-    if (localStorage.getItem(READY_FLAG) !== '1') return;
+    if (!modelReadyHint) return;
     setDownload((d) => ({ ...d, status: 'loading' }));
     void load()
       .then((loaded) => { if (loaded) setDownload({ status: 'ready', progress: 1, text: '', error: null }); })
-      .catch(() => setDownload(IDLE));   // fall back to showing the prompt
-  }, [active, available, download.status, load]);
+      .catch(() => {
+        // The hint can outlive browser cache eviction. Clear it so a failed
+        // restore falls back to the real setup prompt instead of retrying in a
+        // loop while pretending the model is still available locally.
+        localStorage.removeItem(READY_FLAG);
+        setModelReadyHint(false);
+        setDownload(IDLE);
+      });
+  }, [active, available, modelReadyHint, download.status, load]);
 
   const startDownload = useCallback(() => {
     setDownload({ status: 'loading', progress: 0, text: 'Starting…', error: null });
@@ -245,6 +252,7 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
       .then((loaded) => {
         if (!loaded) return;
         localStorage.setItem(READY_FLAG, '1');
+        setModelReadyHint(true);
         setDownload({ status: 'ready', progress: 1, text: '', error: null });
       })
       .catch((e) => setDownload({ status: 'error', progress: 0, text: '', error: setupError(e) }));
@@ -328,5 +336,16 @@ export function useAssistant(corpus: AskCorpus, active: boolean, deps: Assistant
 
   const reset = useCallback(() => { setItems([]); setFacts([]); }, []);
 
-  return { available, download, loading, items, facts, ask, startDownload, reset };
+  // Reopening still has to recreate the in-memory ONNX session and Orama
+  // index, even though their files are cached. Expose that as a distinct state
+  // from a real first-time download so the UI does not flash the setup prompt
+  // or claim it is downloading the model again.
+  const visibleDownload: DownloadState = (
+    active
+    && available
+    && modelReadyHint
+    && (download.status === 'idle' || download.status === 'loading')
+  ) ? { ...download, status: 'restoring', progress: 0, text: '' } : download;
+
+  return { available, download: visibleDownload, loading, items, facts, ask, startDownload, reset };
 }

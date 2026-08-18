@@ -25,16 +25,11 @@ class Config:
 
     # Burn-week calendar window (ISO YYYY-MM-DD).
     #
-    # `burn_start` is the schedule's configured fallback start and `burn_end`
-    # is the calendar's last column. Password-free spirit access uses separate
-    # SITE_UNLOCK_START/END repo variables evaluated by the deploy workflow;
-    # those values are intentionally not part of Config.
-    #
-    # In practice the builder may further override `burn_start` to
-    # the EARLIEST fetched event date (volunteers + early crews run
-    # events before gates) via `timeparser.effective_burn_start`.
-    # The configured value is the safety-net default when no dated
-    # events have been fetched.
+    # `burn_start` and `burn_end` are the schedule's authoritative first and
+    # last calendar columns. Source event dates do not expand this window.
+    # Password-free spirit access uses separate SITE_UNLOCK_START/END repo
+    # variables evaluated by the deploy workflow; those values are
+    # intentionally not part of Config.
     #
     # Both REQUIRED at build time — set via env
     # (`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`) which CI

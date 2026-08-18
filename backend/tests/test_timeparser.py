@@ -17,7 +17,6 @@ from playa.timeparser import (
     annotate_events,
     canonical_week_map,
     derive_week_map,
-    effective_burn_start,
     format_display,
     parse_event_time,
 )
@@ -183,69 +182,6 @@ class CanonicalWeekMapTests(unittest.TestCase):
         # earlier one wins (matches how _normalize_day collapses Sun2→Sun).
         m = canonical_week_map("2026-08-30", "2026-09-07")
         self.assertEqual(m["Mon"], "8/31")  # not 9/7
-
-
-class EffectiveBurnStartTests(unittest.TestCase):
-    """The calendar's left edge comes from the corpus, not the config —
-    volunteers + early crews run events before gates, and those show up
-    in source data with dates like (8/26)."""
-
-    CFG_START = "2026-08-30"
-    CFG_END = "2026-09-07"
-
-    def test_returns_configured_when_no_events(self):
-        self.assertEqual(
-            effective_burn_start([], self.CFG_START, self.CFG_END),
-            self.CFG_START,
-        )
-
-    def test_returns_configured_when_events_have_no_dates(self):
-        # Recurring events have no start_date; don't contribute.
-        parses = [parse_event_time("From 11:00 AM to 3:00 PM on Mon, Tue")]
-        self.assertEqual(
-            effective_burn_start(parses, self.CFG_START, self.CFG_END),
-            self.CFG_START,
-        )
-
-    def test_picks_earliest_event_date_in_configured_year(self):
-        # Earliest fetched date is 8/25; 2026-08-25 is a Tuesday —
-        # pre-gates by 5 days. The window should start there.
-        parses = [
-            parse_event_time("Begins Tue (8/25) at 6:00 PM, Ends 7:30 PM"),
-            parse_event_time("Begins Wed (8/26) at 10:00 AM, Ends 11:00 AM"),
-            parse_event_time("Begins Thu (8/27) at 2:00 PM, Ends 3:00 PM"),
-        ]
-        self.assertEqual(
-            effective_burn_start(parses, self.CFG_START, self.CFG_END),
-            "2026-08-25",
-        )
-
-    def test_earlier_events_push_window_earlier_than_configured(self):
-        # Config says 8/30; fetched event on 8/24 (volunteer-week).
-        # Effective window must start on 8/24, not 8/30.
-        parses = [parse_event_time("Begins Mon (8/24) at 9:00 AM, Ends 11:00 AM")]
-        self.assertEqual(
-            effective_burn_start(parses, self.CFG_START, self.CFG_END),
-            "2026-08-24",
-        )
-
-    def test_events_entirely_after_burn_end_fall_back(self):
-        # Corpus dates are 10/15 — clearly out of phase with 2026's
-        # Aug–Sep window. Ignore and use configured start.
-        parses = [parse_event_time("Begins Thu (10/15) at 9:00 AM, Ends 11:00 AM")]
-        self.assertEqual(
-            effective_burn_start(parses, self.CFG_START, self.CFG_END),
-            self.CFG_START,
-        )
-
-    def test_malformed_date_ignored(self):
-        # Inject a broken parse manually — parse_event_time wouldn't
-        # produce this, but be defensive.
-        parses = [{"kind": "single", "start_date": "banana", "start_day": "Mon"}]
-        self.assertEqual(
-            effective_burn_start(parses, self.CFG_START, self.CFG_END),
-            self.CFG_START,
-        )
 
 
 class CompactDaysTests(unittest.TestCase):

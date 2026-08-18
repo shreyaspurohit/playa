@@ -42,7 +42,6 @@ from .tagger import Tagger
 from .timeparser import (
     canonical_week_map,
     earliest_day_in_map,
-    effective_burn_start,
     format_display,
     parse_event_time,
     resolve_end_date,
@@ -75,10 +74,9 @@ class SiteBuilder:
         # them via repo variables in CI (BURN_WINDOW_OPEN_FROM /
         # BURN_WINDOW_OPEN_TO) or `.env` locally. Fail loud here
         # rather than later with an unhelpful "Invalid isoformat: ''"
-        # deep in the event parser. These dates drive the calendar
-        # fallback and public-access window only; D8 location release
-        # timestamps are validated separately when the current API
-        # source is included.
+        # deep in the event parser. These dates are the authoritative
+        # schedule window. Password-free access and D8 location release
+        # use separate settings.
         if not config.burn_start or not config.burn_end:
             raise RuntimeError(
                 "BURN_WINDOW_OPEN_FROM and BURN_WINDOW_OPEN_TO must "
@@ -91,11 +89,6 @@ class SiteBuilder:
             )
         self.config = config
         self.tagger = tagger or Tagger()
-        # Populated by _enrich_event_times. The calendar window is derived
-        # from fetched events (earliest event date) + configured burn_end,
-        # so it can't be known until events are loaded.
-        self._effective_start: str = config.burn_start
-        self._week_map: dict[str, str] = {}
         self.source_specs: list[str] = list(sources or [])
 
     def _validate_location_release_policy(self) -> None:
@@ -247,36 +240,18 @@ class SiteBuilder:
         return snapshot
 
     def _enrich_event_times(self, camps: list[Camp]) -> None:
-        """Populate event.display_time + parsed_time in place. Derives
-        the calendar window from the fetched events themselves:
+        """Populate event.display_time + parsed_time in place.
 
-          * effective start = earliest single-occurrence event date,
-            interpreted in `config.burn_start`'s year (volunteers +
-            early crews often run events before gates officially open)
-          * end             = `config.burn_end` (the fixed gate-close
-            date from the ticketing page)
-
-        Caches both the effective-start ISO string and the resulting
-        canonical week map on `self` so `build()` can emit them as
-        meta tags without re-parsing events.
+        The configured burn window is authoritative. Source records may carry
+        dates outside it, but those dates must never expand the site's calendar.
         """
         # Pass 1: parse every event's raw time.
         parses: list[tuple] = []
         for camp in camps:
             for ev in camp.events:
                 parses.append((ev, parse_event_time(ev.time)))
-        parsed_only = [p for _, p in parses if p]
-
-        # Derive this source's calendar window + canonical day→date map.
-        # Preserve the earliest start seen across every embedded source;
-        # otherwise the last-loaded API year can overwrite an earlier date.
-        source_effective_start = effective_burn_start(
-            parsed_only, self.config.burn_start, self.config.burn_end,
-        )
-        self._effective_start = min(self._effective_start, source_effective_start)
-        week_map = canonical_week_map(source_effective_start, self.config.burn_end)
-        self._week_map = canonical_week_map(
-            self._effective_start, self.config.burn_end,
+        week_map = canonical_week_map(
+            self.config.burn_start, self.config.burn_end,
         )
 
         # Pass 2: stamp canonical dates + format display strings.
@@ -294,7 +269,7 @@ class SiteBuilder:
                     p["start_date"] = week_map.get(earliest or "") or p.get("start_date")
                 else:
                     p["start_date"] = resolve_single_start_date(
-                        p, week_map, source_effective_start, self.config.burn_end,
+                        p, week_map, self.config.burn_start, self.config.burn_end,
                     )
             s = format_display(p, week_map)
             if s:
@@ -308,9 +283,8 @@ class SiteBuilder:
         if parses:
             print(f"  event times parsed: {recognized}/{len(parses)} "
                   f"({100 * recognized // len(parses)}%); "
-                  f"source window: {source_effective_start} → "
+                  f"calendar window: {self.config.burn_start} → "
                   f"{self.config.burn_end}; "
-                  f"site start: {self._effective_start}; "
                   f"week map: {dict(sorted(week_map.items()))}")
 
     # --- encryption -------------------------------------------------------
@@ -1352,9 +1326,8 @@ class SiteBuilder:
             f'</script>'
         )
 
-        # Snapshot loading already populated _effective_start. The client
-        # derives calendar columns from burn_start + burn_end directly,
-        # so no separate week-map tag is needed.
+        # The client derives calendar columns directly from the configured
+        # burn_start + burn_end; no separate week-map tag is needed.
         html = (
             self._read_template()
             .replace("__DATA_SCRIPT__",        data_script)
@@ -1366,7 +1339,7 @@ class SiteBuilder:
             .replace("__VERSION__",            meta.get("version", "v0.0.0"))
             .replace("__FETCHED_DATE__",       meta.get("fetched_date", "unknown"))
             .replace("__FETCHED_AT__",         meta.get("fetched_at", "unknown"))
-            .replace("__BURN_START__",         self._effective_start)
+            .replace("__BURN_START__",         self.config.burn_start)
             .replace("__BURN_END__",           self.config.burn_end)
             .replace(
                 "__LOCATION_RELEASE_YEAR__",

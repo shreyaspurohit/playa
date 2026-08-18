@@ -175,11 +175,8 @@ def canonical_week_map(burn_start: str, burn_end: str) -> dict[str, str]:
     are lost to first-occurrence-wins, matching how the parser
     collapses `Sun2`/`Mon2` back to `Sun`/`Mon` via `_normalize_day`.
 
-    The `burn_start` passed here is typically the *effective* start —
-    the earliest event date rather than the official gate-open day.
-    Volunteers and early-arrival crews run events before gates, and
-    they appear in the snapshot with pre-gates dates; we want those
-    visible on the calendar. See `effective_burn_start()`.
+    The configured burn window is authoritative: source event dates do not
+    move its edges.
     """
     start = date.fromisoformat(burn_start)
     end = date.fromisoformat(burn_end)
@@ -213,60 +210,6 @@ def earliest_day_in_map(days, week_map: dict[str, str]) -> Optional[str]:
             continue
         candidates.append(((month, date_num), day))
     return min(candidates)[1] if candidates else None
-
-
-def effective_burn_start(
-    parsed_events,
-    configured_start: str,
-    configured_end: str,
-) -> str:
-    """Earliest event date from the fetched corpus, interpreted in the
-    configured start's year. Falls back to `configured_start` when:
-      - no single-occurrence event carries a date
-      - the earliest date parses to something after `configured_end`
-        (year-assumption is wrong — fetched data from another calendar)
-
-    Rationale: the official burn gates open at `configured_start`
-    (e.g., Sun 8/30 for 2026), but camps routinely host pre-gates
-    events for early-arrival crews. Those appear in the snapshot
-    with dates like (8/26). Letting them drive the calendar's left
-    edge means the schedule shows what the corpus actually contains
-    instead of hiding early work behind an arbitrary cutoff.
-
-    Returns an ISO 'YYYY-MM-DD' string.
-    """
-    cfg_start = date.fromisoformat(configured_start)
-    cfg_end = date.fromisoformat(configured_end)
-
-    earliest_md: Optional[tuple[int, int]] = None
-    for p in parsed_events:
-        if not p or p.get("kind") != "single":
-            continue
-        raw = p.get("start_date")
-        if not raw:
-            continue
-        try:
-            parts = raw.split("/")
-            md = (int(parts[0]), int(parts[1]))
-        except (ValueError, IndexError):
-            continue
-        if earliest_md is None or md < earliest_md:
-            earliest_md = md
-
-    if earliest_md is None:
-        return configured_start
-
-    try:
-        candidate = date(cfg_start.year, earliest_md[0], earliest_md[1])
-    except ValueError:
-        return configured_start
-
-    # Sanity: if the earliest fetched date lands past burn_end in the
-    # configured year, the fetched corpus is out of phase with this
-    # year's calendar — trust the config instead.
-    if candidate > cfg_end:
-        return configured_start
-    return candidate.isoformat()
 
 
 def _compact_days(days) -> str:

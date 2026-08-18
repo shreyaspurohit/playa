@@ -8,6 +8,7 @@ import { h, render } from 'preact';
 import { installDom, teardownDom } from './_dom';
 import { useAssistant, type AssistantController, type AssistantDeps, type AskCorpus } from '../src/hooks/useAssistant';
 import type { Embedder } from '../src/assistant/semanticLoader';
+import { AskView } from '../src/components/AskView';
 import type { Camp } from '../src/types';
 
 const READY_FLAG = 'bm-ai-model-ready';
@@ -66,6 +67,44 @@ afterEach(() => {
 const mockEmbedder = (): Embedder => ({ embed: async () => new Float32Array(3), dispose: async () => { disposed = true; } });
 
 describe('useAssistant download lifecycle (ADR 21)', () => {
+  test('returning AskView opens with the complete search layout', () => {
+    localStorage.setItem(READY_FLAG, '1');
+    const meta = document.createElement('meta');
+    meta.setAttribute('name', 'bm-embeddings');
+    meta.setAttribute('content', CORPUS.source);
+    document.head.appendChild(meta);
+
+    render(h(AskView, {
+      open: true,
+      onClose: () => {},
+      corpus: CORPUS,
+      onGotoCamp: () => {},
+      onGotoArt: () => {},
+    }), mp);
+
+    assert.doesNotMatch(mp.textContent ?? '', /Downloading model|Set up Ask Not AI/);
+    assert.equal(mp.querySelector('.ask-download'), null);
+    assert.equal(
+      mp.querySelector<HTMLInputElement>('.ask-input')?.placeholder,
+      'Ask about camps, events, food, art…',
+    );
+    assert.ok(mp.querySelector('.ask-filters'));
+    assert.equal(mp.querySelectorAll('.ask-chip').length, 4);
+  });
+
+  test('a returning user gets a restore state instead of download progress', async () => {
+    localStorage.setItem(READY_FLAG, '1');
+
+    draw(true);
+
+    assert.equal(controller!.download.status, 'restoring');
+    await flush();
+    assert.equal(controller!.download.status, 'restoring');
+    embedder.resolve(mockEmbedder());
+    await flush();
+    assert.equal(controller!.download.status, 'ready');
+  });
+
   test('a completed download transitions to ready and sets the cache flag', async () => {
     draw(true);
     await flush();

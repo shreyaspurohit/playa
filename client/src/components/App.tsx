@@ -71,8 +71,8 @@ interface Meta {
   fetchedDate: string;
   fetchedAt: string;
   version: string;
-  /** Schedule window (ISO YYYY-MM-DD). Independent from D8 location
-   *  disclosure; fetched early events may move burnStart earlier. */
+  /** Authoritative schedule window (ISO YYYY-MM-DD). Independent from
+   *  password-free access and D8 location disclosure. */
   burnStart: string;
   burnEnd: string;
   /** Explicit current-year public release policy for API location fields. */
