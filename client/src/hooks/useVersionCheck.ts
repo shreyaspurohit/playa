@@ -5,8 +5,7 @@
 // go to origin (no risk of serving the just-cached copy).
 //
 // Lifecycle:
-//   - First check fires shortly after mount (so a stale tab opened
-//     after a deploy gets the banner immediately).
+//   - First check fires immediately on mount, including a cold PWA launch.
 //   - Re-checks every POLL_INTERVAL_MS while the tab is visible.
 //   - Pauses when the tab is hidden (no point burning network on a
 //     backgrounded tab) and re-checks when it becomes visible.
@@ -15,10 +14,6 @@
 import { useEffect, useState } from 'preact/hooks';
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-/** Tiny initial delay so the first check doesn't compete with mount /
- *  tab restore work. Long enough to not be jarring, short enough that
- *  a clearly-stale tab still surfaces the banner quickly. */
-const INITIAL_DELAY_MS = 30 * 1000;
 
 function loadedVersion(): string {
   if (typeof document === 'undefined') return '';
@@ -118,8 +113,12 @@ export function useVersionCheck(): { updateAvailable: boolean; latest: string } 
       document.removeEventListener('visibilitychange', onVisible);
     }
 
-    schedule(INITIAL_DELAY_MS);
     document.addEventListener('visibilitychange', onVisible);
+    // A standalone PWA can be restored as a fresh visible document without a
+    // visibility transition. Check at launch instead of waiting for the old
+    // 30-second timer; version.txt is tiny and bypasses the service worker.
+    void check();
+    schedule(POLL_INTERVAL_MS);
     return cleanup;
   }, []);
 

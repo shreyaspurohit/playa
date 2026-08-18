@@ -6,23 +6,22 @@
 //      page, so an update is one tap from the menu (regardless of
 //      whether the version-check banner has fired).
 //
-//   2. "Install app" button — defers to the `<pwa-install>` Web
-//      Component (@khmyznikov/pwa-install). The library handles the
-//      Chrome `beforeinstallprompt` capture, Apple's no-API
-//      restriction (renders Add-to-Home-Screen instructions with the
-//      current iOS share-sheet visuals), and the Firefox/Opera
-//      fallback. We import it lazily on first click so the ~28KB
-//      brotli payload only lands when someone actually wants to
-//      install — keeps the initial bundle close to what it was.
+//   2. "Install app" button — invokes Chrome's captured native prompt
+//      synchronously on the first click. `<pwa-install>` remains the
+//      Apple/no-native-prompt instruction and browser fallback UI.
 //
 // Hidden when there's nothing useful to show (already installed +
 // SW not yet registered).
 
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { forceRefresh } from '../utils/refresh';
+// This must be registered during page startup. Loading it only from the
+// Install click crosses an async boundary and loses Chrome's transient user
+// activation, which makes the first native prompt unreliable.
+import '@khmyznikov/pwa-install';
 
-/** Element type for the lazy-loaded `<pwa-install>` Web Component.
+/** Element type for the lazily-mounted `<pwa-install>` Web Component.
  *  Captures the only members we read. `isDialogHidden` is a reactive
  *  Lit property the lib flips when the user dismisses or completes
  *  install — we poll it as a close signal because the lib doesn't
@@ -31,6 +30,28 @@ interface PwaInstallElement extends HTMLElement {
   showDialog: (forced?: boolean) => void;
   hideDialog: () => void;
   isDialogHidden: boolean;
+  externalPromptEvent?: DeferredInstallPrompt;
+  hasUpdated?: boolean;
+  updateComplete?: Promise<unknown>;
+}
+
+/** Chrome dispatches `beforeinstallprompt` during page startup. The
+ * component is mounted only when the user asks to install, while the package
+ * itself is registered at startup so it cannot miss that one-shot event.
+ * Capture it in the main bundle too, then pass it to the component when it is
+ * created. */
+interface DeferredInstallPrompt extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform?: string }>;
+  platforms?: string[];
+}
+
+let pendingInstallPrompt: DeferredInstallPrompt | null = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (event: Event) => {
+    event.preventDefault();
+    pendingInstallPrompt = event as DeferredInstallPrompt;
+  });
 }
 
 /** Body-scroll lock state. We track it as a counter / saved style
@@ -78,14 +99,11 @@ function ensureCloseOverlay(onClose: () => void): HTMLButtonElement {
   return btn;
 }
 
-/** Lazy-load the pwa-install Web Component on first use, mount a
- *  single instance into <body>, and trigger its dialog. Subsequent
- *  calls reuse the same element. */
-async function showPwaInstallDialog(): Promise<void> {
-  if (!customElements.get('pwa-install')) {
-    await import('@khmyznikov/pwa-install');
-    await customElements.whenDefined('pwa-install');
-  }
+/** Mount the single component in manual mode. This runs during App startup,
+ * before the user can click Install, because the component's async init calls
+ * hideDialog() once. Mounting on the click let that late hide cancel the first
+ * showDialog(), which is why the second click worked. */
+function ensurePwaInstallElement(): PwaInstallElement {
   let el = document.querySelector<PwaInstallElement>('pwa-install');
   if (!el) {
     el = document.createElement('pwa-install') as PwaInstallElement;
@@ -101,10 +119,40 @@ async function showPwaInstallDialog(): Promise<void> {
     // in the wrong view (e.g., "already installed" / success state)
     // when the user previously dismissed or installed-then-uninstalled.
     // Without it, each menu tap re-evaluates state cleanly.
+    // Set the captured event before connecting the element. This lets its
+    // asynchronous initialization consume the event on its first render.
+    if (pendingInstallPrompt) el.externalPromptEvent = pendingInstallPrompt;
     document.body.appendChild(el);
   }
-  // Captured for closures below; non-null after the line above.
-  const dialogEl = el;
+  if (pendingInstallPrompt) el.externalPromptEvent = pendingInstallPrompt;
+  return el;
+}
+
+let installElementReady: Promise<PwaInstallElement> | null = null;
+function preparePwaInstallElement(): Promise<PwaInstallElement> {
+  if (installElementReady) return installElementReady;
+  const el = ensurePwaInstallElement();
+  installElementReady = new Promise((resolve) => {
+    const waitForLit = () => {
+      // The library delays calling LitElement.connectedCallback() until its
+      // manifest/platform initialization finishes, so updateComplete is not
+      // present immediately after appendChild(). Wait until it exists, then
+      // wait for the first render and the init-time hideDialog().
+      if (el.hasUpdated && el.updateComplete) {
+        void el.updateComplete.then(() => resolve(el), () => resolve(el));
+      } else {
+        window.requestAnimationFrame(waitForLit);
+      }
+    };
+    waitForLit();
+  });
+  return installElementReady;
+}
+
+/** Trigger the already-initialized component. The readiness wait is also a
+ * fallback for an unusually fast click before the startup effect completes. */
+async function showPwaInstallDialog(): Promise<void> {
+  const dialogEl = await preparePwaInstallElement();
 
   // Lock background scroll for the duration of the dialog. Without
   // this, Android Chrome treats vertical drags inside the dialog as
@@ -149,11 +197,32 @@ async function showPwaInstallDialog(): Promise<void> {
   }, 200);
 }
 
+/** Chrome requires prompt() to run directly inside the click's transient
+ * user activation. Do not add an await before this call. */
+function requestPwaInstall(): void {
+  const nativePrompt = pendingInstallPrompt;
+  if (nativePrompt) {
+    // A BeforeInstallPromptEvent is one-shot. Clear our reference before
+    // invoking it so a later click cannot attempt to reuse a consumed event.
+    pendingInstallPrompt = null;
+    void nativePrompt.prompt().catch(() => {
+      // If Chrome invalidated the event, fall back to platform instructions.
+      void showPwaInstallDialog();
+    });
+    return;
+  }
+  void showPwaInstallDialog();
+}
+
 export function InstallPrompt() {
   const { isStandalone, offlineReady } = useInstallPrompt();
   const [refreshState, setRefreshState] = useState<
     'idle' | 'checking' | 'offline' | 'stale'
   >('idle');
+
+  useEffect(() => {
+    void preparePwaInstallElement();
+  }, []);
 
   async function handleRefresh() {
     setRefreshState('checking');
@@ -238,7 +307,7 @@ export function InstallPrompt() {
         <button
           class="install-btn"
           type="button"
-          onClick={() => { void showPwaInstallDialog(); }}
+          onClick={requestPwaInstall}
           title="Install this site as an app on your device"
         >
           Install app
