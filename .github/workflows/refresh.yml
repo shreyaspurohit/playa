@@ -21,6 +21,9 @@ on:
   # 08:17 UTC is after midnight in America/Los_Angeles in both PST and PDT.
   schedule:
     - cron: '17 8 * * *'
+    # TEMP 2026-08-21: exercise the scheduled unlock boundary at 14:35 PDT.
+    # Remove after the run; GitHub cron has no one-time/date-specific syntax.
+    - cron: '35 21 * * *'
   workflow_dispatch:
     inputs:
       burn_open:
