@@ -1,19 +1,28 @@
 # Deployment and CI
 
 **Status:** Accepted
-**Last updated:** 2026-08-16
+**Last updated:** 2026-08-21
 
 ## Overview
 
 GitHub Actions validates pull requests. A merge or direct push to `main`, or an
 operator dispatch, tests and builds the API-only PWA, uploads `site/` as a Pages
 artifact, and deploys it to GitHub Pages. Cloudflare proxies the custom domain.
-Event Data never enters git. There is no scheduled workflow.
+Event Data never enters git. A lightweight daily schedule checks the repository
+site-unlock dates and permits a full deployment only at an access boundary.
 
 ## Workflow
 
+The `unlock-boundary` job runs first. Pushes and manual dispatches pass through.
+For a scheduled trigger, it reads repository variables `SITE_UNLOCK_START` and
+`SITE_UNLOCK_END`, resolves the current `America/Los_Angeles` calendar date,
+and skips all expensive work unless today equals one of those dates. GitHub
+cron cannot interpolate repository variables, so the workflow wakes daily at
+08:17 UTC; this is shortly after midnight in Playa time in both PST and PDT.
+
 The test job installs pinned Python/Node versions, restores npm dependencies,
-and runs Python tests, typecheck, and client tests.
+and runs Python tests, typecheck, and client tests. It runs only when the
+boundary job approves the trigger.
 
 The build job:
 
@@ -24,7 +33,8 @@ The build job:
    manual refresh.
 5. Permits API fetch/replacement only for years explicitly selected by a manual
    `refresh_api_years` dispatch.
-6. Resolves the password-free spirit window at build time.
+6. Resolves the password-free spirit window at build time using the same
+   checked helper as the scheduled boundary job.
 7. Runs `python3 -m playa all`, which refreshes GIS best-effort and builds only
    from local annual snapshots.
 8. Uploads `site/` with hidden files included.
@@ -45,7 +55,12 @@ concurrency group so a push cannot interrupt a manual Release replacement.
 - Variables `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`: schedule calendar.
 - Variables `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT`: disclosure
   gates.
-- Optional Dropbox and site-unlock variables documented in `CLAUDE.md`.
+- Optional Dropbox variables documented in `CLAUDE.md`.
+- Optional variables `SITE_UNLOCK_START` / `SITE_UNLOCK_END`: both must be
+  canonical `YYYY-MM-DD` dates when either is set. They form a half-open Playa
+  date interval: START is the first password-free day and END is the first
+  re-locked day. Only repository variables affect CI; local `.env` values are
+  intentionally irrelevant to the scheduled deployment.
 
 `SITE_TIERS` must contain only configured API sources. The conventional roles
 are all-years trusted god, all-years normal demigod, and current-year-only
@@ -66,10 +81,16 @@ spirit. Invalid references fail the build.
 
 - A missing Release blocks deployment and must be repaired by an explicit
   refresh, never an implicit fetch.
-- With no schedule, `SITE_UNLOCK_START/END` take effect on the next push or
-  manual dispatch. Operators must dispatch on the opening and closing dates if
-  no code deployment will occur. Location-release timestamps and live schedule
-  state are client-side and do not need a rebuild.
+- GitHub schedules are best-effort and can start later than 08:17 UTC under
+  load. The boundary check uses the actual Playa date at execution, so a delay
+  within that date is safe; an outage lasting through the entire date requires
+  a manual dispatch. Any push on a boundary date also resolves the same desired
+  state. Location-release timestamps and live schedule state are client-side
+  and do not need a rebuild.
+- GitHub automatically disables scheduled workflows in public repositories
+  after 60 days without repository activity. Before a long-dormant burn-season
+  boundary, verify this workflow is enabled in Actions; pushes and manual
+  dispatches remain valid fallbacks.
 - GitHub Pages may briefly serve an older shell; version polling and force
   refresh handle propagation.
 - Cloudflare needs no routine deployment step. After a data-source cutover or
@@ -80,6 +101,7 @@ spirit. Invalid references fail the build.
 ## Code references
 
 - `.github/workflows/refresh.yml`
+- `scripts/site_unlock_window.py`
 - `.github/workflows/ci.yml`
 - `backend/src/playa/builder.py`
 - `site/CNAME`

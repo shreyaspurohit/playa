@@ -1,7 +1,8 @@
 name: Deploy API snapshot site
 
 # Repo is public; cached Event Data is NOT committed (see .gitignore).
-# A push to main (including a merged PR) or an explicit manual dispatch
+# A push to main (including a merged PR), an explicit manual dispatch, or a
+# scheduled site-unlock boundary
 # downloads encrypted annual API snapshots, builds the site, and deploys via
 # actions/upload-pages-artifact — Event Data never lands in git.
 #
@@ -14,6 +15,12 @@ name: Deploy API snapshot site
 on:
   push:
     branches: [main]
+  # GitHub cron expressions cannot reference repository variables. Run a cheap
+  # boundary check once per Playa day; the test/build/deploy jobs remain skipped
+  # unless the repo's SITE_UNLOCK_START or SITE_UNLOCK_END equals that date.
+  # 08:17 UTC is after midnight in America/Los_Angeles in both PST and PDT.
+  schedule:
+    - cron: '17 8 * * *'
   workflow_dispatch:
     inputs:
       burn_open:
@@ -37,7 +44,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  unlock-boundary:
+    name: Check site-unlock boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should_deploy: ${{ steps.decision.outputs.should_deploy }}
+      burn_open_override: ${{ steps.decision.outputs.burn_open_override }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide whether this trigger should deploy
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SITE_UNLOCK_START: ${{ vars.SITE_UNLOCK_START }}
+          SITE_UNLOCK_END: ${{ vars.SITE_UNLOCK_END }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "burn_open_override=" >> "$GITHUB_OUTPUT"
+            echo "${EVENT_NAME}: normal test/build/deploy path"
+            exit 0
+          fi
+
+          today_playa="$(TZ=America/Los_Angeles date +%Y-%m-%d)"
+          override="$(python3 scripts/site_unlock_window.py boundary \
+            --today "$today_playa" \
+            --start "${SITE_UNLOCK_START:-}" \
+            --end "${SITE_UNLOCK_END:-}")"
+          if [ -n "$override" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "burn_open_override=${override}" >> "$GITHUB_OUTPUT"
+            echo "site-unlock: ${today_playa} is a configured boundary (${override}); deployment enabled"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "burn_open_override=" >> "$GITHUB_OUTPUT"
+            echo "site-unlock: ${today_playa} is not a configured boundary; expensive jobs skipped"
+          fi
+
   test:
+    needs: unlock-boundary
+    if: needs.unlock-boundary.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -72,7 +121,7 @@ jobs:
         working-directory: client
 
   build:
-    needs: test
+    needs: [unlock-boundary, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # `contents: write` is required so the API-cache step can create
@@ -304,8 +353,8 @@ jobs:
       # Order of precedence:
       #   1. workflow_dispatch input (`force-open` / `force-closed`)
       #      always wins — operator override.
-      #   2. After SITE_UNLOCK_END: BURN_OPEN=0 (re-locked).
-      #   3. Inside [SITE_UNLOCK_START, SITE_UNLOCK_END]: BURN_OPEN=1.
+      #   2. On/after SITE_UNLOCK_END: BURN_OPEN=0 (re-locked).
+      #   3. Inside [SITE_UNLOCK_START, SITE_UNLOCK_END): BURN_OPEN=1.
       #   4. Before SITE_UNLOCK_START: BURN_OPEN=0 (still gated).
       #   5. Window vars unset: BURN_OPEN=0 (closed). Site builds normally.
       #
@@ -313,20 +362,21 @@ jobs:
       # CAMP_LOCATION_RELEASE_AT / ART_LOCATION_RELEASE_AT even while the
       # site is unlocked — only the password gate is bypassed.
       #
-      # Comparison is done in UTC at day granularity. With no scheduled build,
-      # the window changes the deployed artifact only on the next push or
-      # manual dispatch. Run this workflow at both boundaries when exact
-      # automatic opening/relocking is desired.
+      # Comparison is done at day granularity in America/Los_Angeles. A cheap
+      # daily scheduled job enables this build only on the two repo-variable
+      # boundaries. The END date is the first closed day (half-open interval),
+      # so its scheduled build removes the public spirit key.
       # ===============================================================
       - name: Resolve BURN_OPEN from the site-unlock window
         env:
           DISPATCH_INPUT: ${{ inputs.burn_open }}
+          SCHEDULE_OVERRIDE: ${{ needs.unlock-boundary.outputs.burn_open_override }}
           SITE_UNLOCK_START: ${{ vars.SITE_UNLOCK_START }}
           SITE_UNLOCK_END: ${{ vars.SITE_UNLOCK_END }}
         run: |
           set -euo pipefail
           effective=0
-          today_utc="$(date -u +%Y-%m-%d)"
+          today_playa="$(TZ=America/Los_Angeles date +%Y-%m-%d)"
 
           if [[ "$DISPATCH_INPUT" == "force-open" ]]; then
             effective=1
@@ -334,25 +384,19 @@ jobs:
           elif [[ "$DISPATCH_INPUT" == "force-closed" ]]; then
             effective=0
             echo "site-unlock: dispatch input force-closed → BURN_OPEN=0"
-          elif [[ -n "${SITE_UNLOCK_START:-}" && -n "${SITE_UNLOCK_END:-}" ]]; then
-            if [[ "$SITE_UNLOCK_START" > "$SITE_UNLOCK_END" ]]; then
-              echo "::error ::SITE_UNLOCK_START (${SITE_UNLOCK_START}) is after SITE_UNLOCK_END (${SITE_UNLOCK_END}) — an unlock window that never opens. Fix the repo variables."
-              exit 1
-            fi
-            if [[ "$today_utc" > "$SITE_UNLOCK_END" ]]; then
-              effective=0
-              echo "site-unlock: today=${today_utc} past END=${SITE_UNLOCK_END} → BURN_OPEN=0 (password mode resumed)"
-            elif [[ ! "$today_utc" < "$SITE_UNLOCK_START" ]]; then
-              # Bash [[ ]] has no `>=` — express "on or after START" as
-              # "NOT before START". ISO dates sort lexically.
-              effective=1
-              echo "site-unlock: today=${today_utc} inside [${SITE_UNLOCK_START}, ${SITE_UNLOCK_END}] → BURN_OPEN=1"
-            else
-              effective=0
-              echo "site-unlock: today=${today_utc} before START=${SITE_UNLOCK_START} → BURN_OPEN=0 (still gated)"
-            fi
+          elif [[ "$SCHEDULE_OVERRIDE" == "force-open" ]]; then
+            effective=1
+            echo "site-unlock: scheduled START boundary → BURN_OPEN=1"
+          elif [[ "$SCHEDULE_OVERRIDE" == "force-closed" ]]; then
+            effective=0
+            echo "site-unlock: scheduled END boundary → BURN_OPEN=0"
           else
-            echo "site-unlock: SITE_UNLOCK_START/END unset, no dispatch input → BURN_OPEN=0 (closed)"
+            state="$(python3 scripts/site_unlock_window.py state \
+              --today "$today_playa" \
+              --start "${SITE_UNLOCK_START:-}" \
+              --end "${SITE_UNLOCK_END:-}")"
+            if [ "$state" = "open" ]; then effective=1; fi
+            echo "site-unlock: Playa date=${today_playa}, state=${state} for [${SITE_UNLOCK_START:-unset}, ${SITE_UNLOCK_END:-unset}) → BURN_OPEN=${effective}"
           fi
           echo "BURN_OPEN=${effective}" >> "$GITHUB_ENV"
 

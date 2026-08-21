@@ -249,10 +249,15 @@ artifact. The runner versions come from `.tool-versions` (Python 3.14.4, Node
 26.7.0). `openssl`, `bash`, and `gh` are available on `ubuntu-latest`; Python
 runtime code is stdlib-only.
 
-There is no scheduled deployment. `SITE_UNLOCK_START/END` are checked only when
-a push or manual dispatch builds the site, so run a manual deployment on the
-opening and closing dates if no code change will land then. Client-side location
-release timestamps and schedule time logic do not require a rebuild.
+A lightweight daily Actions trigger checks the repository
+`SITE_UNLOCK_START/END` variables in Playa time and runs the full deployment
+only on those two boundary dates. The window is half-open: START is the first
+password-free date and END is the first re-locked date. Local `.env` values do
+not affect CI. Pushes and manual dispatches still resolve the same window;
+manual `burn_open` overrides take precedence. Client-side location-release
+timestamps and schedule time logic do not require a rebuild. GitHub may disable
+scheduled workflows after 60 days without public-repository activity, so verify
+the deploy workflow remains enabled before a long-dormant boundary.
 
 The GIS Actions cache is exact-revision and year-set keyed. The semantic cache
 namespace is `ask-embeddings-v2` and stores only content-hash vectors. Never

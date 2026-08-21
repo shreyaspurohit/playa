@@ -42,6 +42,49 @@ whole burn week. The hard parts are:
   every event at that camp. Schedule is *what you'll be at*, not
   *what's happening at places you like*. Camp star = "I want to
   visit" / event star = "I'll be at this exact thing."
+- **One day at a time, defaulting to today.** As the schedule fills, showing
+  every day at once makes the page unusably tall. The two form factors solve
+  that differently because a side-by-side grid can't reclaim height by
+  collapsing one column — the row stays as tall as the fullest open day.
+  - **Desktop (>800px): day tabs + a single-day agenda.** A horizontal strip
+    of day pills (weekday, date, post-filter event count) selects one day;
+    its events render below as a compact agenda — time on the left, then name ·
+    camp with the description beneath, and stars/actions on the right. This is a
+    full `role="tablist"` / `tab` / `tabpanel` pattern with the APG keyboard
+    model: roving tabindex, Arrow/Home/End move the selection
+    (activation-follows-focus), and each tab's `aria-controls` targets the one
+    agenda panel. The strip is a single non-wrapping row that scrolls
+    horizontally when narrow — never a wrapped grid, because a nine-day burn
+    window can strand a lone pill on a second row at widths where all-but-one
+    fit. The selected tab is scrolled into view when the selection changes.
+  - **Every event is a bordered card.** Both form factors render each event as
+    a bordered card (the Food tab's card idiom) with a thin accent left edge as
+    a calendar-style cue — theme tokens throughout, so it holds in every theme.
+    On mobile the day accordion is a lightweight collapsible header, not a card,
+    so we don't box a day-card around the event cards.
+  - **Mobile (≤800px): a stacked accordion.** Days stack vertically, each a
+    native `<details>` with a rotating chevron; full event rows keep their
+    descriptions. Stacking collapses cleanly, so per-day open/close is the
+    right primitive here.
+  - **Centered, capped column.** The schedule content (filters, notice, tabs,
+    agenda) is a single centered column (`.schedule-wrap` max-width + auto
+    margins) rather than hugging the left, since the single-day agenda is one
+    column and wide screens would otherwise leave a large empty right margin.
+  - **Shared selection philosophy.** Both the desktop selected tab and the
+    mobile open set are *derived* each render — today when it falls inside the
+    burn window, otherwise the first day — so they follow late burn metadata
+    and BRC-midnight rollover instead of a value seeded once, until the user
+    makes an explicit choice. Under an active Hide-past/Near-me filter the
+    default prefers today when it still has matches, else the first day that
+    does, so filtered results are never hidden behind an empty selection. The
+    per-day count is the at-a-glance signal of where events live.
+  - **Echo-safe toggling.** A `<details>` fires `toggle` for our own
+    programmatic `open` changes (a filter/midnight shift, the twin desktop/
+    mobile trees re-syncing) as well as for user clicks, and can dispatch
+    synchronously mid-commit under a stale handler closure. The accordion's
+    toggle handler compares against a ref of the state it last rendered, not a
+    recomputed default, so a programmatic echo is ignored and only a genuine
+    user flip is recorded.
 
 ## Mechanism
 
@@ -105,8 +148,8 @@ flowchart TD
   Cells["Map<dayKey → events[]>"]
   StarredEvents -->|filter has parsed_time| Cells
   Window --> Cells
-  Cells --> ColumnsDesktop[CSS grid 7 cols Mon–Sun]
-  Cells --> AccordMobile["≤800px collapsible <details>"]
+  Cells --> ColumnsDesktop[">800px day tabs + single-day compact agenda<br>tablist, today selected"]
+  Cells --> AccordMobile["≤800px stacked collapsible <details>, today open"]
   Cells --> Filters["Hide-past + Now + Near-me filters<br>(see hooks/useGeolocation)"]
 ```
 

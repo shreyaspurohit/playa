@@ -8,7 +8,7 @@
 //
 // "Favorited" = either you or any imported friend has starred the
 // event. Starring a whole camp does NOT auto-add its events here.
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Camp, Event } from '../types';
 import { friendChipStyle } from '../utils/friendColor';
 import { AddJournalButton } from './AddJournalButton';
@@ -33,6 +33,10 @@ type DayKey = typeof WEEKDAYS[number];
 
 /** Zero-pad an integer to 2 digits — small enough to inline. */
 function pad2(n: number): string { return n < 10 ? '0' + n : String(n); }
+
+// Stable id for the desktop day agenda, so each day tab can point its
+// aria-controls at the single tabpanel it drives.
+const SCHED_TABPANEL_ID = 'sched-tabpanel';
 
 /** One column in the grid. `iso` (YYYY-MM-DD) is a stable React key;
  *  `weekday` lets recurring events fan across every matching cell;
@@ -244,7 +248,38 @@ function collectSchedule(
   return { byCell, hiddenByCell, unscheduled };
 }
 
-function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
+function StarChips({ e, youLabel }: { e: ScheduleEntry; youLabel: string }) {
+  return (
+    <div class="sched-chips">
+      {e.starredBy.map((n) => {
+        const mine = n === youLabel;
+        return (
+          <span
+            key={n}
+            class={'sched-chip' + (mine ? ' mine' : ' friend')}
+            style={mine ? undefined : friendChipStyle(n)}
+          >★ {n}</span>
+        );
+      })}
+    </div>
+  );
+}
+
+function HideButton({ onToggleHide, hidden }: { onToggleHide: () => void; hidden?: boolean }) {
+  return (
+    <button
+      class="sched-hide-btn"
+      type="button"
+      title={hidden ? 'Show on this day' : 'Hide from this day'}
+      aria-label={hidden ? 'Show' : 'Hide'}
+      onClick={onToggleHide}
+    >
+      <EyeIcon slashed={!hidden} />
+    </button>
+  );
+}
+
+function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, dense }: {
   e: ScheduleEntry;
   onGotoCamp: (id: string) => void;
   youLabel: string;
@@ -254,11 +289,51 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
   /** When true, this row is shown inside the "hidden" disclosure and
    *  the button restores it; when false, the button hides it. */
   hidden?: boolean;
+  /** Compact layout for the desktop single-day agenda: time on the left,
+   *  then name · camp with the description beneath, and stars/actions on the
+   *  right. Mobile and Unscheduled keep the original stacked row. */
+  dense?: boolean;
 }) {
   const p = e.event.parsed_time;
   const st = p ? to12h(p.start_time) : '';
   const et = p ? to12h(p.end_time) : '';
   const span = p && p.end_day && p.end_day !== p.start_day ? ` → ${p.end_day}` : '';
+  // Per-day hide only makes sense for a recurring event (drop it from one of
+  // its days). Single-occurrence events don't offer it — but an already-hidden
+  // row always keeps its restore button so nothing can get stranded.
+  const showHide = onToggleHide && (hidden || p?.kind === 'recurring');
+  const camp = (
+    <span class="sched-meta">
+      at{' '}
+      <button class="sched-campname" type="button" onClick={() => onGotoCamp(e.camp.id)}>
+        {e.camp.name}
+      </button>
+      {e.camp.location && <> · {e.camp.location}</>}
+    </span>
+  );
+
+  if (dense) {
+    return (
+      <li class={'sched-row dense' + (hidden ? ' hidden' : '')}>
+        <span class="sched-time">
+          {st && et ? <span>{st}<span class="sched-dash"> – </span>{et}{span}</span> : <em>no time</em>}
+        </span>
+        <span class="sched-dtitle">
+          <span class="sched-dtitle-head">
+            <span class="sched-evname">{e.event.name}</span>
+            {camp}
+          </span>
+          {e.event.description && <p class="sched-desc">{e.event.description}</p>}
+        </span>
+        <StarChips e={e} youLabel={youLabel} />
+        <span class="sched-row-actions">
+          <AddJournalButton compact context={{ kind: 'event', title: e.event.name, campName: e.camp.name }} />
+          {showHide && <HideButton onToggleHide={onToggleHide!} hidden={hidden} />}
+        </span>
+      </li>
+    );
+  }
+
   return (
     <li class={'sched-row' + (hidden ? ' hidden' : '')}>
       <div class="sched-time">
@@ -268,45 +343,21 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden }: {
         <div class="sched-row-head">
           <span class="sched-evname">{e.event.name}</span>
           <AddJournalButton compact context={{ kind: 'event', title: e.event.name, campName: e.camp.name }} />
-          {onToggleHide && (
-            <button
-              class="sched-hide-btn"
-              type="button"
-              title={hidden ? 'Show on this day' : 'Hide from this day'}
-              aria-label={hidden ? 'Show' : 'Hide'}
-              onClick={onToggleHide}
-            >
-              <EyeIcon slashed={!hidden} />
-            </button>
-          )}
+          {showHide && <HideButton onToggleHide={onToggleHide!} hidden={hidden} />}
         </div>
-        <div class="sched-meta">
-          at{' '}
-          <button class="sched-campname" type="button" onClick={() => onGotoCamp(e.camp.id)}>
-            {e.camp.name}
-          </button>
-          {e.camp.location && <> · {e.camp.location}</>}
-        </div>
+        {camp}
         {e.event.description && <p class="sched-desc">{e.event.description}</p>}
-        <div class="sched-chips">
-          {e.starredBy.map((n) => {
-            const mine = n === youLabel;
-            return (
-              <span
-                key={n}
-                class={'sched-chip' + (mine ? ' mine' : ' friend')}
-                style={mine ? undefined : friendChipStyle(n)}
-              >★ {n}</span>
-            );
-          })}
-        </div>
+        <StarChips e={e} youLabel={youLabel} />
       </div>
     </li>
   );
 }
 
-function DayColumn({
-  cell, entries, hiddenEntries, onGotoCamp, youLabel, onToggleHide,
+/** The desktop single-day agenda: the selected day's events as a dense,
+ *  one-line-per-event list, with the per-day eye-hidden entries tucked
+ *  behind a disclosure. No header/collapse — the day tab above owns that. */
+function DayAgenda({
+  cell, entries, hiddenEntries, onGotoCamp, youLabel, onToggleHide, panelId, labelId,
 }: {
   cell: DayCell;
   entries: ScheduleEntry[];
@@ -314,20 +365,18 @@ function DayColumn({
   onGotoCamp: (id: string) => void;
   youLabel: string;
   onToggleHide: (eventId: string, iso: string) => void;
+  panelId: string;
+  labelId: string;
 }) {
   return (
-    <section class="sched-day">
-      <h3 class="sched-day-head">
-        {cell.weekday} {cell.dateLabel}
-        <span class="sched-day-count">{entries.length}</span>
-      </h3>
+    <section class="schedule-agenda" id={panelId} role="tabpanel" aria-labelledby={labelId}>
       {entries.length === 0 ? (
-        <div class="sched-empty">Star events to see them here</div>
+        <div class="sched-empty">No starred events on {cell.weekday} {cell.dateLabel}.</div>
       ) : (
         <ul class="sched-list">
           {entries.map((e) =>
             <EventRow
-              key={`${cell.iso}:${e.event.id}`} e={e}
+              key={`${cell.iso}:${e.event.id}`} e={e} dense
               onGotoCamp={onGotoCamp} youLabel={youLabel}
               onToggleHide={() => onToggleHide(e.event.id, cell.iso)}
             />)}
@@ -341,7 +390,7 @@ function DayColumn({
           <ul class="sched-list">
             {hiddenEntries.map((e) =>
               <EventRow
-                key={`${cell.iso}:hidden:${e.event.id}`} e={e}
+                key={`${cell.iso}:hidden:${e.event.id}`} e={e} dense
                 onGotoCamp={onGotoCamp} youLabel={youLabel}
                 onToggleHide={() => onToggleHide(e.event.id, cell.iso)}
                 hidden
@@ -364,9 +413,16 @@ export function ScheduleView({
     () => buildCalendarCells(burnStart ?? '', burnEnd ?? ''),
     [burnStart, burnEnd],
   );
-  const [expanded, setExpanded] = useState<Set<string>>(
-    // Start with every non-empty day open on mobile.
-    () => new Set(cells.map((c) => c.iso)),
+  // Desktop day-tab selection. Null until the user picks a tab; the resolved
+  // selection (see selectedIso below) is *derived* each render so it follows
+  // late-arriving burn metadata, BRC-midnight rollover, and active filters
+  // instead of a value seeded once at mount.
+  const [selectedIsoRaw, setSelectedIsoRaw] = useState<string | null>(null);
+  // Mobile accordion per-day open overrides. Empty by default; the open state
+  // is *derived* each render (see isDayOpen) for the same reasons. Only
+  // genuine user deviations from the default are stored.
+  const [dayOverride, setDayOverride] = useState<Map<string, boolean>>(
+    () => new Map(),
   );
 
   // Schedule filters default off so the full schedule shows on open.
@@ -408,11 +464,16 @@ export function ScheduleView({
     if (geo.status === 'idle' || geo.status === 'denied') requestGps();
   }
 
-  // Today's cell (iso match by M/D so local/UTC mismatches don't
-  // swallow a burn-day). Null when today isn't in the burn window.
+  // Today's cell. Matched on the full YYYY-MM-DD, not just M/D: both sides
+  // are already calendar dates in one frame (playaTimeParts normalizes
+  // through Intl in the Playa zone; cell.iso is the literal window-config
+  // string), so there's no local/UTC skew to dodge, and a same-M/D date in
+  // a different year — a stale build viewed the next season, or a preview
+  // ahead of the burn — must not read as "today". Null when today isn't in
+  // the burn window.
   const todayCell = useMemo(() => {
-    const md = `${currentPlayaTime.month}/${currentPlayaTime.day}`;
-    return cells.find((c) => c.dateLabel === md) ?? null;
+    const iso = `${currentPlayaTime.year}-${pad2(currentPlayaTime.month)}-${pad2(currentPlayaTime.day)}`;
+    return cells.find((c) => c.iso === iso) ?? null;
   }, [cells, currentPlayaTime]);
 
   // Current HH:MM + 2-hour horizon, both as 24-h strings for direct
@@ -516,6 +577,92 @@ export function ScheduleView({
   const nothing = totalScheduled === 0 && totalHiddenInWindow === 0 && unscheduled.length === 0;
   const filtersOn = hidePast || nowOnly || nearMeActive;
 
+  // Which day to surface by default when the user hasn't chosen one: today
+  // when it falls in the burn window, otherwise the first day (a pre-burn
+  // visit still shows something). Deriving this — rather than seeding it once —
+  // keeps it correct as burnStart/burnEnd arrive and as the shared clock
+  // crosses BRC midnight.
+  const primaryDayIso = todayCell?.iso ?? cells[0]?.iso;
+  // Under an active filter, prefer today only if it still has matches, else the
+  // first day that does, so the default never lands on an empty day.
+  const firstMatchIso = filtersOn
+    ? cells.find((c) => (byCell.get(c.iso)?.length ?? 0) > 0)?.iso
+    : undefined;
+  const defaultDayIso = filtersOn
+    ? (primaryDayIso && (byCell.get(primaryDayIso)?.length ?? 0) > 0
+        ? primaryDayIso : (firstMatchIso ?? primaryDayIso))
+    : primaryDayIso;
+
+  // Desktop day-tab: honor an explicit pick that's still in the window,
+  // otherwise fall back to the derived default.
+  const selectedIso = (selectedIsoRaw && cells.some((c) => c.iso === selectedIsoRaw))
+    ? selectedIsoRaw : defaultDayIso;
+  const selectedCell = cells.find((c) => c.iso === selectedIso) ?? null;
+
+  // APG tabs keyboard nav on the tablist (handler on the container so it
+  // fires whichever tab holds focus). Arrow/Home/End move the selection,
+  // and since we use activation-follows-focus the roving tabIndex=0 must
+  // travel with it — so we also move DOM focus to the new tab, otherwise
+  // the old tab keeps focus at tabIndex=-1 and the strip becomes a keyboard
+  // trap. Wraps around at both ends.
+  const onTabsKeyDown = (e: KeyboardEvent) => {
+    const idx = cells.findIndex((c) => c.iso === selectedIso);
+    if (idx < 0) return;
+    let next = idx;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % cells.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + cells.length) % cells.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = cells.length - 1;
+    else return;
+    e.preventDefault();
+    const iso = cells[next].iso;
+    setSelectedIsoRaw(iso);
+    // The keyed button node survives the re-render, so focusing it now (it is
+    // programmatically focusable even at tabIndex=-1) sticks.
+    document.getElementById(`sched-tab-${iso}`)?.focus();
+  };
+  // Keep the selected tab visible in the horizontally-scrolling strip — for
+  // keyboard nav and for derived-default shifts (a filter toggle or BRC
+  // midnight can move the selection without a user click). block:'nearest'
+  // avoids yanking the page vertically. Benign: no focus is stolen here.
+  // Query through the container ref rather than the global document so a
+  // deferred effect that runs after unmount short-circuits on a null ref.
+  const tablistRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tablistRef.current?.querySelector('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selectedIso]);
+
+  // Mobile accordion: with a filter active, open every day that still has
+  // matches so nothing hides behind a collapsed header; otherwise open only
+  // the primary day.
+  const dayDefaultOpen = (iso: string): boolean =>
+    filtersOn ? (byCell.get(iso)?.length ?? 0) > 0 : iso === primaryDayIso;
+  const isDayOpen = (iso: string): boolean => dayOverride.get(iso) ?? dayDefaultOpen(iso);
+  // Live record of the open state we last *rendered* for each day, updated
+  // below in the render body. `<details>` fires `toggle` for our own
+  // programmatic `open` changes (a filter/midnight shift, or the twin
+  // desktop/mobile tree re-syncing) as well as for user clicks, and the event
+  // can dispatch synchronously during commit — before the handler's closure
+  // reflects the new render. Reading a ref rather than recomputing a derived
+  // value dodges that staleness entirely: a programmatic toggle always equals
+  // what we just rendered (ignored), while a native user flip always differs
+  // (recorded). A flip back to the default clears the override so it never
+  // pins a stale value.
+  const renderedOpen = useRef<Map<string, boolean>>(new Map());
+  const setDayOpen = (iso: string, open: boolean) => {
+    if (open === renderedOpen.current.get(iso)) return;
+    setDayOverride((prev) => {
+      const next = new Map(prev);
+      if (open === dayDefaultOpen(iso)) next.delete(iso);
+      else next.set(iso, open);
+      return next;
+    });
+  };
+  const nextRenderedOpen = new Map<string, boolean>();
+  for (const c of cells) nextRenderedOpen.set(c.iso, isDayOpen(c.iso));
+  renderedOpen.current = nextRenderedOpen;
+
   return (
     <div class="schedule-wrap">
       <div class="schedule-filters">
@@ -585,7 +732,7 @@ export function ScheduleView({
         Tap <span class="schedule-notice-star">☆</span> next to any event
         to add it here &mdash; starring a camp doesn't add its events.
         Tap <span class="schedule-notice-icon"><EyeIcon slashed /></span>
-        on a column to hide a recurring event from a single day.
+        next to a recurring event to hide it from that day.
       </div>
 
       {hiddenCount > 0 && (
@@ -609,40 +756,64 @@ export function ScheduleView({
         </div>
       ) : (
         <>
-          {/* Desktop: 7-col grid that wraps to row 2 for the second burn
-              week. Mobile: accordion in chronological order. */}
-          <div class="schedule-grid">
-            {cells.map((c) => (
-              <DayColumn
-                key={c.iso} cell={c}
-                entries={byCell.get(c.iso) ?? []}
-                hiddenEntries={hiddenByCell.get(c.iso) ?? []}
+          {/* Desktop: a day-tab strip selects one day, shown below as a
+              dense agenda. Mobile: stacked accordion in chronological order. */}
+          <div class="schedule-week">
+            <div
+              ref={tablistRef}
+              class="schedule-days" role="tablist" aria-label="Schedule days"
+              onKeyDown={onTabsKeyDown}
+            >
+              {cells.map((c) => {
+                const count = byCell.get(c.iso)?.length ?? 0;
+                const isSel = c.iso === selectedIso;
+                return (
+                  <button
+                    key={c.iso}
+                    id={`sched-tab-${c.iso}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSel ? 'true' : 'false'}
+                    aria-controls={SCHED_TABPANEL_ID}
+                    // Roving tabindex: only the selected tab is in the Tab
+                    // order; arrow keys move between the rest (see onTabsKeyDown).
+                    tabIndex={isSel ? 0 : -1}
+                    class={'sched-daytab' + (isSel ? ' selected' : '')}
+                    onClick={() => setSelectedIsoRaw(c.iso)}
+                  >
+                    <span class="sched-day-label">{c.weekday} {c.dateLabel}</span>
+                    <span class="sched-day-count">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {selectedCell && (
+              <DayAgenda
+                key={selectedCell.iso} cell={selectedCell}
+                entries={byCell.get(selectedCell.iso) ?? []}
+                hiddenEntries={hiddenByCell.get(selectedCell.iso) ?? []}
                 onGotoCamp={onGotoCamp} youLabel={youLabel}
                 onToggleHide={onToggleDayHidden}
+                panelId={SCHED_TABPANEL_ID}
+                labelId={`sched-tab-${selectedCell.iso}`}
               />
-            ))}
+            )}
           </div>
           <div class="schedule-accordion">
             {cells.map((c) => {
               const entries = byCell.get(c.iso) ?? [];
               const hidden = hiddenByCell.get(c.iso) ?? [];
               if (entries.length === 0 && hidden.length === 0) return null;
-              const open = expanded.has(c.iso);
               return (
                 <details
                   key={c.iso}
-                  open={open}
-                  onToggle={(e) => {
-                    const det = e.target as HTMLDetailsElement;
-                    setExpanded((prev) => {
-                      const next = new Set(prev);
-                      if (det.open) next.add(c.iso); else next.delete(c.iso);
-                      return next;
-                    });
-                  }}
+                  open={isDayOpen(c.iso)}
+                  onToggle={(e) =>
+                    setDayOpen(c.iso, (e.currentTarget as HTMLDetailsElement).open)}
                 >
                   <summary>
-                    {c.weekday} {c.dateLabel}
+                    <span class="sched-day-chevron" aria-hidden="true">›</span>
+                    <span class="sched-day-label">{c.weekday} {c.dateLabel}</span>
                     <span class="sched-day-count">{entries.length}</span>
                   </summary>
                   <ul class="sched-list">
@@ -674,7 +845,7 @@ export function ScheduleView({
 
           {unscheduled.length > 0 && (
             <section class="sched-unscheduled">
-              <h3 class="sched-day-head">
+              <h3 class="sched-section-head">
                 Unscheduled
                 <span class="sched-day-count">{unscheduled.length}</span>
               </h3>

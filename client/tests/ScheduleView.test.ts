@@ -99,14 +99,12 @@ describe('<ScheduleView> recurring start date', () => {
       source: 'api-2026',
     }), mount);
 
-    const populatedDays = Array.from(mount.querySelectorAll<HTMLElement>('.sched-day'))
+    // The mobile accordion renders every populated day (content is in the DOM
+    // even when collapsed), so it is the stable place to assert placement.
+    const populatedDays = Array.from(
+      mount.querySelectorAll<HTMLElement>('.schedule-accordion > details'))
       .filter((day) => day.textContent?.includes('Blinky dance and light experience'))
-      .map((day) => {
-        const header = day.querySelector<HTMLElement>('.sched-day-head')
-          ?.cloneNode(true) as HTMLElement | undefined;
-        header?.querySelector('.sched-day-count')?.remove();
-        return header?.textContent?.trim() ?? '';
-      });
+      .map((day) => day.querySelector('summary > .sched-day-label')?.textContent?.trim() ?? '');
     assert.deepEqual(populatedDays, ['Tue 9/1', 'Wed 9/2', 'Fri 9/4']);
   });
 });
@@ -249,5 +247,222 @@ describe('<ScheduleView> past-event filter', () => {
     }), mount);
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(mount.textContent?.includes('Noodley night'), false);
+  });
+});
+
+const single = (id: string, name: string, date: string, day: string) => ({
+  id, name, description: '', time: name, display_time: name,
+  parsed_time: {
+    kind: 'single' as const, days: [day], start_day: day, start_date: date,
+    start_time: '12:00', end_day: day, end_date: date, end_time: '13:00',
+  },
+});
+const campWith = (events: ReturnType<typeof single>[]) => ([{
+  id: 'camp', name: 'Camp', location: '4:00 & B', description: '',
+  website: '', tags: [], events,
+}]);
+
+describe('<ScheduleView> desktop day tabs', () => {
+  const selectedTab = (root: HTMLElement) =>
+    root.querySelector('.schedule-days [role="tab"][aria-selected="true"] .sched-day-label')
+      ?.textContent?.trim() ?? '';
+  const agendaText = (root: HTMLElement) =>
+    root.querySelector('.schedule-agenda')?.textContent ?? '';
+  const clickTab = (root: HTMLElement, label: string) =>
+    Array.from(root.querySelectorAll<HTMLButtonElement>('.schedule-days [role="tab"]'))
+      .find((t) => t.querySelector('.sched-day-label')?.textContent?.trim() === label)
+      ?.click();
+
+  test('selects today by default and shows its agenda', () => {
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('a', 'Mon thing', '8/31', 'Mon'),
+        single('b', 'Wed thing', '9/2', 'Wed'),
+      ]),
+      favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    assert.equal(selectedTab(mount), 'Wed 9/2');
+    assert.ok(agendaText(mount).includes('Wed thing'));
+    assert.equal(agendaText(mount).includes('Mon thing'), false);
+  });
+
+  test('selects the first day before the burn, when today is outside the window', () => {
+    render(h(ScheduleView, {
+      camps: campWith([single('a', 'Mon thing', '8/31', 'Mon')]),
+      favEventIds: new Set(['a']), friendFavEventIds: () => [],
+      burnStart: '2027-08-29', burnEnd: '2027-09-06',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2027',
+      nowSnapshot: new Date('2026-08-21T12:00:00-07:00'),
+    }), mount);
+    assert.equal(selectedTab(mount), 'Sun 8/29');
+  });
+
+  test('clicking a tab switches the agenda to that day', async () => {
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('a', 'Mon thing', '8/31', 'Mon'),
+        single('b', 'Wed thing', '9/2', 'Wed'),
+      ]),
+      favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    clickTab(mount, 'Mon 8/31');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(selectedTab(mount), 'Mon 8/31');
+    assert.ok(agendaText(mount).includes('Mon thing'));
+    assert.equal(agendaText(mount).includes('Wed thing'), false);
+  });
+
+  test('with a filter active, defaults to a day that still has matches', async () => {
+    // Today (Wed) has only a past event; Hide-past empties it, so the default
+    // selection must fall to the first day that still has matches (Fri).
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('wed', 'Wed thing', '9/2', 'Wed'),
+        single('fri', 'Fri thing', '9/4', 'Fri'),
+      ]),
+      favEventIds: new Set(['wed', 'fri']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    assert.equal(selectedTab(mount), 'Wed 9/2');
+    mount.querySelector<HTMLButtonElement>('.sched-filter-btn.past')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(selectedTab(mount), 'Fri 9/4');
+  });
+
+  test('a same-month/day date in a different year is not treated as today', () => {
+    // 2027 burn window; the clock is 2026-09-02 — same M/D as the second
+    // burn day but a year off. Today must read as outside the window (fall
+    // to the first day), not match Wed 9/2 by month/day alone.
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('a', 'Wed thing', '9/2', 'Wed'),
+        single('b', 'Thu thing', '9/3', 'Thu'),
+      ]),
+      favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
+      burnStart: '2027-08-29', burnEnd: '2027-09-06',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2027',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    assert.equal(selectedTab(mount), 'Sun 8/29');
+  });
+
+  test('arrow keys move the selected day and carry focus with the roving tabindex', async () => {
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('a', 'Sun thing', '8/30', 'Sun'),
+        single('b', 'Mon thing', '8/31', 'Mon'),
+      ]),
+      favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-08-30T13:00:00-07:00'),
+    }), mount);
+    assert.equal(selectedTab(mount), 'Sun 8/30');
+    mount.querySelector('.schedule-days')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(selectedTab(mount), 'Mon 8/31');
+    const monTab = Array.from(mount.querySelectorAll<HTMLButtonElement>('.schedule-days [role="tab"]'))
+      .find((t) => t.querySelector('.sched-day-label')?.textContent?.trim() === 'Mon 8/31')!;
+    // Roving tabindex moved to the newly selected tab, and focus followed it
+    // so the strip never becomes a keyboard trap.
+    assert.equal(monTab.getAttribute('tabindex'), '0');
+    assert.equal(document.activeElement, monTab);
+  });
+});
+
+describe('<ScheduleView> mobile accordion', () => {
+  const openDays = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll<HTMLElement>('.schedule-accordion > details[open]'))
+      .map((d) => d.querySelector(':scope > summary > .sched-day-label')?.textContent?.trim() ?? '')
+      .filter(Boolean);
+
+  test('opens only today by default when today is in the burn window', () => {
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('a', 'Mon thing', '8/31', 'Mon'),
+        single('b', 'Wed thing', '9/2', 'Wed'),
+        single('c', 'Fri thing', '9/4', 'Fri'),
+      ]),
+      favEventIds: new Set(['a', 'b', 'c']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    assert.deepEqual(openDays(mount), ['Wed 9/2']);
+  });
+
+  test('toggling a filter on then off does not leave non-today days pinned open', async () => {
+    const ongoing = single('today', 'Today thing', '9/2', 'Wed');
+    ongoing.parsed_time.end_time = '14:00'; // still in progress at 13:00
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('past', 'Past thing', '9/1', 'Tue'),
+        ongoing,
+        single('future', 'Future thing', '9/4', 'Fri'),
+      ]),
+      favEventIds: new Set(['past', 'today', 'future']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    assert.deepEqual(openDays(mount), ['Wed 9/2']);
+    // Hide-past drops the past day and expands the days that still have
+    // matches — today (in progress) and Fri (future). Clearing must return
+    // to today-only, not pin Fri open just because a filter briefly opened it.
+    mount.querySelector<HTMLButtonElement>('.sched-filter-btn.past')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(openDays(mount).sort(), ['Fri 9/4', 'Wed 9/2']);
+    mount.querySelector<HTMLButtonElement>('.sched-filter-clear')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(openDays(mount), ['Wed 9/2']);
+  });
+
+  test('a user opening a collapsed day sticks', async () => {
+    render(h(ScheduleView, {
+      camps: campWith([
+        single('a', 'Mon thing', '8/31', 'Mon'),
+        single('b', 'Wed thing', '9/2', 'Wed'),
+      ]),
+      favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-05',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-02T13:00:00-07:00'),
+    }), mount);
+    assert.deepEqual(openDays(mount), ['Wed 9/2']);
+    // Simulate the native <details> toggle from a user tap on the Mon day.
+    const mon = Array.from(mount.querySelectorAll<HTMLDetailsElement>('.schedule-accordion > details'))
+      .find((d) => d.querySelector('summary > .sched-day-label')?.textContent?.trim() === 'Mon 8/31');
+    assert.ok(mon);
+    mon.open = true;
+    mon.dispatchEvent(new Event('toggle'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(openDays(mount).sort(), ['Mon 8/31', 'Wed 9/2']);
   });
 });

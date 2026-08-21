@@ -102,12 +102,14 @@ model.
 
 ### D13 — Site unlock and burn calendar are separate
 
-`SITE_UNLOCK_START` / `SITE_UNLOCK_END` control password-free spirit access when
-a deployment evaluates them; they do not schedule a deployment themselves.
-`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` control event-calendar dates.
-Location disclosure has its own timestamps. Manual `BURN_OPEN` dispatch input
-wins over the dated unlock window. With no scheduled workflow, operators run a
-manual deployment at the open/close boundaries when no push will occur.
+`SITE_UNLOCK_START` / `SITE_UNLOCK_END` control password-free spirit access as
+a half-open Playa-date interval: START is the first open date and END is the
+first re-locked date. A lightweight daily GitHub Actions trigger reads those
+repository variables and runs the full test/build/deploy path only on either
+boundary; local `.env` values cannot affect it. `BURN_WINDOW_OPEN_FROM` /
+`BURN_WINDOW_OPEN_TO` independently control event-calendar dates. Location
+disclosure has its own timestamps. A manual `BURN_OPEN` dispatch input wins
+over the dated unlock window.
 
 ### D14 — Art is part of the same snapshot
 

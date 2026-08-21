@@ -1113,7 +1113,10 @@ __SYNC_META__
   .my-camp-btn.active:hover { filter: brightness(1.08); }
 
   /* === Schedule view ================================================== */
-  .schedule-wrap { padding: 16px 24px 64px; }
+  /* Centered content column — the single-day agenda is one column, so a
+     capped, centered width reads better than hugging the left on wide screens.
+     Filters, notice, day tabs, and agenda all share this column. */
+  .schedule-wrap { padding: 16px 24px 64px; max-width: 1120px; margin: 0 auto; }
   .schedule-notice {
     padding: 10px 14px; margin-bottom: 14px;
     background: var(--accent-soft); border: 1px solid var(--border);
@@ -1151,26 +1154,84 @@ __SYNC_META__
     padding: 2px 6px;
   }
   .sched-filter-hint.err { color: #c2410c; }
-  .schedule-grid {
-    display: grid; grid-template-columns: repeat(7, minmax(180px, 1fr));
-    gap: 10px;
-  }
+  /* Desktop schedule: a day-tab strip selects one day, shown below as a
+     dense agenda. The mobile stacked accordion is hidden until ≤800px. */
   .schedule-accordion { display: none; }
-  .sched-day {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 10px; padding: 10px 10px 14px;
+  /* Single non-wrapping row, never a wrapped grid: the burn window is
+     usually 9 days, and any wrap (grid or flex) can strand a lone pill on
+     the last row at widths where all-but-one fit. flex: 1 0 auto grows the
+     tabs to share the row evenly but never shrinks them below their content,
+     so at narrow desktop widths the strip scrolls horizontally instead of
+     wrapping — orphans are structurally impossible. */
+  .schedule-days {
+    display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto;
+    padding-bottom: 14px; margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: thin;
   }
-  .sched-day-head {
-    margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.03em;
-    display: flex; align-items: center; justify-content: space-between;
+  .sched-daytab {
+    flex: 1 0 auto;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 10px; cursor: pointer;
+    color: var(--muted); font: inherit; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.02em;
+    white-space: nowrap; -webkit-tap-highlight-color: transparent;
+  }
+  .sched-daytab:hover { color: var(--text); border-color: var(--muted); }
+  /* Selected tab matches the app-wide active-on-accent idiom (white on
+     accent, as .sched-filter-btn.active) so contrast holds in every theme. */
+  .sched-daytab.selected {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .sched-daytab.selected .sched-day-count {
+    background: rgba(255, 255, 255, 0.25); color: #fff;
+  }
+  /* Rotating disclosure caret for the mobile accordion: points right when
+     collapsed, down when open. */
+  .sched-day-chevron {
+    flex: 0 0 auto; font-size: 16px; line-height: 1; color: var(--muted);
+    transition: transform 0.15s ease; transform-origin: center;
+  }
+  .sched-day-label { flex: 1 1 auto; min-width: 0; }
+  details[open] > summary > .sched-day-chevron { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .sched-day-chevron { transition: none; }
   }
   .sched-day-count {
     background: var(--chip-bg); color: var(--text); font-size: 11px;
     padding: 1px 7px; border-radius: 999px; font-variant-numeric: tabular-nums;
   }
-  .sched-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
-  .sched-row { border-left: 2px solid var(--accent-soft); padding: 4px 0 4px 8px; }
+  .sched-section-head {
+    margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.03em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .sched-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  /* Every event is a bordered card (matches the Food tab's card idiom) with a
+     thin accent left edge as a calendar-style cue. Theme tokens throughout, so
+     it holds in every theme. Shared by the desktop agenda and the mobile
+     accordion; the desktop `.dense` variant only changes the inner layout. */
+  .sched-row {
+    background: var(--card); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .sched-list .sched-row.dense {
+    display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+    padding: 11px 14px;
+  }
+  .sched-row.dense .sched-time { flex: 0 0 auto; min-width: 132px; padding-top: 1px; }
+  .sched-row.dense .sched-dtitle { flex: 1 1 260px; min-width: 0; }
+  .sched-row.dense .sched-dtitle-head .sched-evname {
+    display: inline; flex: none; font-size: 14px;
+  }
+  .sched-row.dense .sched-dtitle-head .sched-meta { margin-left: 6px; }
+  .sched-row.dense .sched-desc { max-width: 68ch; }
+  .sched-row.dense .sched-chips { margin-top: 2px; flex: 0 0 auto; }
+  .sched-row.dense .sched-row-actions {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px;
+  }
   .sched-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 500; }
   .sched-dash { opacity: 0.5; padding: 0 2px; }
   .sched-evname { font-weight: 600; font-size: 13px; color: var(--text); text-decoration: none; display: inline-block; flex: 1; min-width: 0; }
@@ -2352,13 +2413,13 @@ __SYNC_META__
   }
 
   @media (max-width: 800px) {
-    .schedule-grid { display: none; }
+    .schedule-week { display: none; }
     .schedule-accordion { display: block; }
-    .schedule-accordion details {
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 10px; padding: 8px 12px; margin-bottom: 8px;
-    }
-    .schedule-accordion summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 0; display: flex; justify-content: space-between; align-items: center; }
+    /* The day is a lightweight collapsible header; the event cards inside
+       carry the borders, so we don't box a day-card around event-cards. */
+    .schedule-accordion details { margin-bottom: 10px; }
+    .schedule-accordion details[open] summary { margin-bottom: 8px; }
+    .schedule-accordion summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 6px 2px; display: flex; gap: 6px; justify-content: space-between; align-items: center; }
     .schedule-accordion summary::-webkit-details-marker { display: none; }
     .food-typechip { min-height: 44px; }
     .food-star { min-width: 44px; min-height: 44px; }

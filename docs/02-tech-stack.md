@@ -74,12 +74,14 @@ data refreshes remain explicit operator actions.
 - **Pages over a real host**: free, custom-domain-ready, and the
   deploy story is just "upload an artifact." No DNS rewriting, no
   CDN config, no SSL renewal.
-- **Three-job workflow** (test → build → deploy): test gate prevents a
-  broken parser from ever overwriting the live site. See
+- **Gated deployment workflow** (boundary check → test → build → deploy): the
+  test gate prevents a broken parser from ever overwriting the live site. See
   `.github/workflows/refresh.yml`.
-- **No scheduled build**: PRs get validation-only CI; merges and direct pushes
-  to `main` test and deploy. Manual dispatches refresh selected API years and
-  handle date-boundary spirit unlocks without spending minutes every night.
+- **Boundary-gated schedule**: PRs get validation-only CI; merges and direct
+  pushes to `main` test and deploy. A cheap daily job reads the repository
+  `SITE_UNLOCK_START/END` variables and skips the expensive pipeline except on
+  those two Playa dates. Manual dispatches still refresh selected API years or
+  override spirit access.
 
 ### Dependency management — Renovate
 
