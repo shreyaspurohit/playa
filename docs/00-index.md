@@ -53,6 +53,7 @@ sections wherever they apply:
 | [20](./20-journal.md) | Offline journal and Dropbox archive | Year-owned plain-text memories, local-first timeline/search, and optional cloud merge |
 | [21](./21-on-device-assistant.md) | On-device "Ask" assistant | Opt-in, no-cloud, foreground-only NL Q&A grounded in the app's own data; tiered built-in-model / WebGPU-download / retrieval-only |
 | [22](./22-tag-taxonomy-audit.md) | Local Ollama tag-taxonomy audit | Annual proposer/verifier workflow for aggregate-only, human-reviewed tag candidates |
+| [23](./23-tab-counts.md) | Tab count badges | Per-tab "your saved items" counts; own-favs-only, hide-at-zero, all-years journal |
 | (op) | [Revocation runbook](./revocation-plan.md) | Step-by-step if a takedown lands |
 | (ref) | [Client architecture](./dev/client-architecture.md) | Compact Preact implementation reference; CLAUDE.md retains the full operational inventory |
 | (ref) | [Site UI](./dev/site-ui.md) | Compact embed-mode and UI reference; CLAUDE.md retains detailed behavior |

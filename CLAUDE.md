@@ -36,6 +36,8 @@ Read the relevant decision document before planning a non-trivial change.
 - `docs/19-food-classification-audit.md` — local Ollama semantic audit
 - `docs/20-journal.md` — offline year-owned journal
 - `docs/21-on-device-assistant.md` — opt-in on-device semantic search
+- `docs/22-tag-taxonomy-audit.md` — local Ollama tag-taxonomy audit
+- `docs/23-tab-counts.md` — per-tab saved-item count badges
 - `docs/revocation-plan.md` — Event Data shutdown and destruction runbook
 - `docs/dev/client-architecture.md` — compact client reference
 - `docs/dev/site-ui.md` — UI/embed reference
@@ -187,7 +189,7 @@ The package uses strict src layout. Run `pip install -e ./backend` (or
 | `BM_GIS_TIMEOUT` | `30` | GIS request timeout |
 | `MIN_CAMPS` | `500` | current-year primary safety rail; use `0` only for fixtures |
 | `SITE_TIERS` | unset | named tier password/source manifest |
-| `BURN_OPEN` | `0` | manual spirit wrapper auto-unlock override |
+| `BURN_OPEN` | `0` | spirit wrapper auto-unlock flag, resolved from the SITE_UNLOCK window at build time |
 | `SITE_UNLOCK_START/END` | unset | password-free spirit access window, evaluated at build time |
 | `BURN_WINDOW_OPEN_FROM/TO` | required | schedule calendar window |
 | `CAMP_LOCATION_RELEASE_AT` | required for current year | camp disclosure instant |
@@ -253,8 +255,9 @@ A lightweight daily Actions trigger checks the repository
 `SITE_UNLOCK_START/END` variables in Playa time and runs the full deployment
 only on those two boundary dates. The window is half-open: START is the first
 password-free date and END is the first re-locked date. Local `.env` values do
-not affect CI. Pushes and manual dispatches still resolve the same window;
-manual `burn_open` overrides take precedence. Client-side location-release
+not affect CI. Pushes and manual dispatches resolve the same window; the
+`SITE_UNLOCK_START/END` variables are the single source of truth with no
+one-off operator override. Client-side location-release
 timestamps and schedule time logic do not require a rebuild. GitHub may disable
 scheduled workflows after 60 days without public-repository activity, so verify
 the deploy workflow remains enabled before a long-dormant boundary.

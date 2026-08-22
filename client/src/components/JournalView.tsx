@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { JournalContext, JournalEntry, JournalEntryValue } from '../types';
-import { useJournal } from '../hooks/useJournal';
+import type { JournalController } from '../hooks/useJournal';
 import { JournalEditor } from './JournalEditor';
 import { JournalHero } from './JournalHero';
 import { TimeOfDayIcon } from './TimeOfDayIcon';
@@ -84,10 +84,10 @@ interface JournalViewProps {
    *  reachable, so the journal surfaces its own connect/sync/export controls. In
    *  the normal app these live in the global Export/Import + menu Sync instead. */
   standalone?: boolean;
+  journal: JournalController;
 }
 
-export function JournalView({ standalone = false }: JournalViewProps) {
-  const journal = useJournal();
+export function JournalView({ standalone = false, journal }: JournalViewProps) {
   const [editor, setEditor] = useState<OpenEditor | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [nudgeDismissed, setNudgeDismissed] = useState(() => readString(BACKUP_NUDGE_KEY, '') === '1');

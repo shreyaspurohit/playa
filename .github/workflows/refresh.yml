@@ -21,17 +21,8 @@ on:
   # 08:17 UTC is after midnight in America/Los_Angeles in both PST and PDT.
   schedule:
     - cron: '17 8 * * *'
-    # TEMP 2026-08-21: exercise the scheduled unlock boundary at 16:30 PDT.
-    # Remove after the run; GitHub cron has no one-time/date-specific syntax.
-    - cron: '30 23 * * *'
   workflow_dispatch:
     inputs:
-      burn_open:
-        description: 'Spirit-mode auto-unlock override'
-        required: false
-        type: choice
-        default: ''
-        options: ['', 'force-open', 'force-closed']
       refresh_api_years:
         description: 'Years to force-refresh (e.g. 2026 or 2025,2026)'
         required: false
@@ -353,9 +344,13 @@ jobs:
       # calendar (BURN_WINDOW_OPEN_FROM/TO, which drive the schedule and
       # do NOT affect access). See D13 amendment in docs/15.
       #
+      # The SITE_UNLOCK_START/END window is the single source of truth —
+      # there is no one-off operator override. To open/close, edit the repo
+      # variables; every trigger (push, schedule, dispatch) resolves them.
+      #
       # Order of precedence:
-      #   1. workflow_dispatch input (`force-open` / `force-closed`)
-      #      always wins — operator override.
+      #   1. Scheduled boundary (START/END date) forces the flip so a
+      #      no-activity day still opens/re-locks on time.
       #   2. On/after SITE_UNLOCK_END: BURN_OPEN=0 (re-locked).
       #   3. Inside [SITE_UNLOCK_START, SITE_UNLOCK_END): BURN_OPEN=1.
       #   4. Before SITE_UNLOCK_START: BURN_OPEN=0 (still gated).
@@ -372,7 +367,6 @@ jobs:
       # ===============================================================
       - name: Resolve BURN_OPEN from the site-unlock window
         env:
-          DISPATCH_INPUT: ${{ inputs.burn_open }}
           SCHEDULE_OVERRIDE: ${{ needs.unlock-boundary.outputs.burn_open_override }}
           SITE_UNLOCK_START: ${{ vars.SITE_UNLOCK_START }}
           SITE_UNLOCK_END: ${{ vars.SITE_UNLOCK_END }}
@@ -381,13 +375,7 @@ jobs:
           effective=0
           today_playa="$(TZ=America/Los_Angeles date +%Y-%m-%d)"
 
-          if [[ "$DISPATCH_INPUT" == "force-open" ]]; then
-            effective=1
-            echo "site-unlock: dispatch input force-open → BURN_OPEN=1"
-          elif [[ "$DISPATCH_INPUT" == "force-closed" ]]; then
-            effective=0
-            echo "site-unlock: dispatch input force-closed → BURN_OPEN=0"
-          elif [[ "$SCHEDULE_OVERRIDE" == "force-open" ]]; then
+          if [[ "$SCHEDULE_OVERRIDE" == "force-open" ]]; then
             effective=1
             echo "site-unlock: scheduled START boundary → BURN_OPEN=1"
           elif [[ "$SCHEDULE_OVERRIDE" == "force-closed" ]]; then

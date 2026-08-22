@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Art, Camp, EncryptedPayload, Source } from '../types';
 import { LS, scopedKey } from '../types';
+import { useJournal } from '../hooks/useJournal';
+import { isFoodEvent } from '../utils/foodAvailability';
 import {
   readEmbeddedPayload, readEmbeddedArt,
   indexHaystacks, haystackOf,
@@ -654,6 +656,7 @@ export function App() {
   const campFavs = useFavorites(favsKey);
   const eventFavs = useFavorites(eventFavsKey);
   const artFavs = useFavorites(artFavsKey);
+  const journal = useJournal();
   const friends = useFriends(sharedKey);
   const meetSpots = useMeetSpots(meetSpotsKey);
 
@@ -1154,6 +1157,27 @@ export function App() {
   // the Journal stays reachable — it reads only its own IndexedDB and can even
   // reconnect Dropbox without the site password. Data views show the gate; the
   // tab bar lets the user reach their journal.
+  // Tab count badges (ADR 23). Computed above every early return so the hook
+  // order stays stable across the locked-shell / unlocked transition.
+  const foodFavCount = useMemo(() => {
+    if (!eventFavs.size || !camps) return 0;
+    let n = 0;
+    for (const c of camps) {
+      for (const e of (c.events || [])) {
+        if (eventFavs.has(e.id) && isFoodEvent(e)) n++;
+      }
+    }
+    return n;
+  }, [camps, eventFavs]);
+
+  const tabCounts = useMemo<Partial<Record<View, number>>>(() => ({
+    camps: campFavs.size,
+    schedule: eventFavs.size,
+    food: foodFavCount,
+    art: artFavs.size,
+    journal: journal.count,
+  }), [campFavs, eventFavs, artFavs, foodFavCount, journal.count]);
+
   const locked = (envelopeSources && !unlockedDeks) || !!encEnvelope;
   if (locked) {
     // Journal is the one surface reachable without the password (D16). Keep the
@@ -1174,7 +1198,7 @@ export function App() {
             <strong class="locked-shell-title">Playa Camps</strong>
             <button type="button" class="subtle-btn" onClick={() => goto('camps')}>🔒 Enter password</button>
           </div>
-          <JournalView standalone />
+          <JournalView standalone journal={journal} />
           {hiddenGate}
         </div>
       );
@@ -1235,7 +1259,7 @@ export function App() {
               availableSources={effectiveAvailableSources}
               onSourceChange={setSource}
             />
-            <TabBar view={view} onGoto={goto} />
+            <TabBar view={view} onGoto={goto} counts={tabCounts} />
             <ActionBar
               onShare={() => setShareOpen(true)}
               onExport={onExportSnapshot}
@@ -1493,7 +1517,7 @@ export function App() {
             />
           </div>
           <div hidden={view !== 'journal'}>
-            <JournalView />
+            <JournalView journal={journal} />
           </div>
         </>
       )}
