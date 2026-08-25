@@ -67,33 +67,12 @@ class SiteBuilder:
         tagger: Tagger | None = None,
         sources: list[str] | None = None,
     ):
-        # Operators still configure the current-year bounds in CI/local env,
-        # but the values must match a reviewed official annual window. This
-        # prevents a typo or an inferred holiday-relative date from silently
-        # moving events. Password-free access and D8 location release use
-        # separate settings.
-        if not config.burn_start or not config.burn_end:
-            raise RuntimeError(
-                "BURN_WINDOW_OPEN_FROM and BURN_WINDOW_OPEN_TO must "
-                "both be set (repo variables in CI; `export "
-                "BURN_WINDOW_OPEN_FROM=YYYY-MM-DD "
-                "BURN_WINDOW_OPEN_TO=YYYY-MM-DD` locally, or in "
-                "`.env` at the repo root). "
-                f"Currently: BURN_WINDOW_OPEN_FROM={config.burn_start!r}, "
-                f"BURN_WINDOW_OPEN_TO={config.burn_end!r}.",
-            )
+        # Every build year must have one reviewed official schedule window.
+        # There is no environment override or holiday-relative fallback.
         try:
-            reviewed_window = event_window_for_year(config.brc_map_year)
+            event_window_for_year(config.brc_map_year)
         except ValueError as e:
             raise RuntimeError(f"invalid burn calendar window: {e}") from e
-        configured_window = (config.burn_start, config.burn_end)
-        if configured_window != reviewed_window:
-            raise RuntimeError(
-                "BURN_WINDOW_OPEN_FROM/TO must match the reviewed official "
-                f"event window for api-{config.brc_map_year}: "
-                f"{reviewed_window[0]} through {reviewed_window[1]}; got "
-                f"{config.burn_start!r} through {config.burn_end!r}."
-            )
         self.config = config
         self.tagger = tagger or Tagger()
         self.source_specs: list[str] = list(sources or [])

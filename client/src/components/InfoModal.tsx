@@ -484,7 +484,7 @@ function AboutTab({
         <strong>Search, Food, and scheduling:</strong> The Food tab groups
         matching meals and snacks by current availability; Schedule organizes
         starred events by day. Tags are generated from listing text, and event
-        times are formatted against the configured burn-week calendar.
+        times are formatted against the reviewed calendar for their API year.
       </p>
       <p>
         This is a personal, non-commercial tool with no ads, no accounts, and

@@ -36,6 +36,24 @@ describe('availableSources', () => {
 });
 
 describe('yearForSource', () => {
+  test('fails closed when builder current-year metadata is missing', () => {
+    assert.throws(
+      () => yearForSource('invalid'),
+      /bm-brc-map-year metadata is missing or invalid/,
+    );
+  });
+
+  test('fails closed when builder current-year metadata is malformed', () => {
+    const meta = document.createElement('meta');
+    meta.name = 'bm-brc-map-year';
+    meta.content = 'current';
+    document.head.appendChild(meta);
+    assert.throws(
+      () => yearForSource('invalid'),
+      /bm-brc-map-year metadata is missing or invalid/,
+    );
+  });
+
   test('reads the builder-provided current BRC year for invalid sources', () => {
     const meta = document.createElement('meta');
     meta.name = 'bm-brc-map-year';

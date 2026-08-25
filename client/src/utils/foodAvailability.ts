@@ -6,7 +6,7 @@
 // its exact occurrences. Otherwise it's "later". This is why a 12–5pm event is
 // NOT "starting soon" on Aug 9.
 import type { Event, ParsedTime } from '../types';
-import { playaTimeParts } from './clock';
+import { playaDateKey, playaTimeParts } from './clock';
 
 export type Availability = 'now' | 'soon' | 'later' | 'anytime';
 
@@ -40,11 +40,7 @@ export function nowContext(when: Date): NowContext {
   const parts = playaTimeParts(when);
   return {
     weekday: parts.weekday,
-    iso: [
-      String(parts.year),
-      String(parts.month).padStart(2, '0'),
-      String(parts.day).padStart(2, '0'),
-    ].join('-'),
+    iso: playaDateKey(when),
     minutes: parts.hours * 60 + parts.minutes,
   };
 }

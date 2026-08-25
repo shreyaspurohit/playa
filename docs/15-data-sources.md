@@ -100,19 +100,16 @@ JSON is gzip-compressed before encryption and decompressed after browser
 decryption. This keeps the deployed payload smaller without changing the trust
 model.
 
-### D13 — Site unlock and burn calendar are separate
+### D13 — Site unlock and schedule calendar are separate
 
 `SITE_UNLOCK_START` / `SITE_UNLOCK_END` control password-free spirit access as
 a half-open Playa-date interval: START is the first open date and END is the
 first re-locked date. A lightweight daily GitHub Actions trigger reads those
 repository variables and runs the full test/build/deploy path only on either
-boundary; local `.env` values cannot affect it. `BURN_WINDOW_OPEN_FROM` /
-`BURN_WINDOW_OPEN_TO` independently control event-calendar dates. Location
-disclosure has its own timestamps. A manual `BURN_OPEN` dispatch input wins
-over the dated unlock window.
+boundary; local `.env` values cannot affect it. Event-calendar dates come only
+from the committed, officially reviewed entries in
+`backend/src/playa/schedule.py`. Location disclosure has its own timestamps.
 
-The burn-window variables describe the `BRC_MAP_YEAR` window and must match its
-explicit, officially reviewed entry in `backend/src/playa/schedule.py`.
 Schedule and Food receive the separate reviewed window emitted for each
 embedded `api-YYYY`; they never derive a historical window from the current
 year or a holiday. Missing annual entries fail the build. Every window stays

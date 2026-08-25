@@ -28,7 +28,7 @@ function baseCamp(over: Partial<Camp> = {}): Camp {
         tags: ['yoga', 'food'],
     events: [
       { id: 'e1', name: 'Morning Vinyasa', description: 'daily yoga',
-        time: 'From 7 to 8', display_time: 'Mon–Fri · 7:00 AM – 8:00 AM', parsed_time: null },
+        time: 'From 7 to 8', display_time: 'Mon–Fri 8/31–9/4 · 7:00 AM – 8:00 AM', parsed_time: null },
     ],
     ...over,
   };
@@ -133,7 +133,7 @@ describe('<CampCard>', () => {
 
   test('event time uses display_time when available', () => {
     mountCard();
-    assert.match(mount.innerHTML, /Mon–Fri · 7:00 AM – 8:00 AM/);
+    assert.match(mount.innerHTML, /Mon–Fri 8\/31–9\/4 · 7:00 AM – 8:00 AM/);
   });
 
   test('event time falls back to raw time when display_time is empty', () => {
@@ -142,6 +142,24 @@ describe('<CampCard>', () => {
                   display_time: '', parsed_time: null }],
     })});
     assert.match(mount.innerHTML, /whenever/);
+  });
+
+  test('fully filtered recurrence renders its exact-date fallback', () => {
+    mountCard({ camp: baseCamp({
+      events: [{
+        id: 'e1', name: 'Before the burn', description: '',
+        time: 'Thu, Fri 8/20–8/21 · 8:00 PM – 10:00 PM',
+        display_time: '',
+        parsed_time: {
+          kind: 'recurring', dates: [], days: ['Thu', 'Fri'],
+          start_time: '20:00', end_time: '22:00', overnight: false,
+        },
+      }],
+    })});
+    assert.match(
+      mount.querySelector('.evtime')?.textContent ?? '',
+      /^Thu, Fri 8\/20–8\/21 · 8:00 PM – 10:00 PM$/,
+    );
   });
 
   test('shows "set as my camp" when no home camp is chosen', () => {

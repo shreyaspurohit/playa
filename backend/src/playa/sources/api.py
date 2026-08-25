@@ -42,9 +42,11 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ..config import Config
 from ..models import Art, Camp, Event
+from ..schedule import format_schedule_display
 from . import SourceSnapshot
 
 
@@ -52,6 +54,13 @@ from . import SourceSnapshot
 # `-salt` is set; we use the prefix to distinguish encrypted caches
 # from legacy plaintext caches written by older builds.
 _OPENSSL_MAGIC = b"Salted__"
+
+
+# Event occurrences are Black Rock City wall-clock data.  The API currently
+# sends explicit Pacific offsets, but normalize every aware timestamp so a
+# future UTC or other-offset response cannot move a late-night event to the
+# wrong calendar day.
+PLAYA_TIME_ZONE = ZoneInfo("America/Los_Angeles")
 
 
 _DAY_BY_WEEKDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -401,7 +410,7 @@ def _events_from_api(d: dict[str, Any], *, source_year: int) -> list[Event]:
 
     Coalescing rule:
       * If all occurrences share start_time + end_time of day (same
-        HH:MM in the local TZ of the timestamps), produce ONE recurring
+        HH:MM in America/Los_Angeles), produce ONE recurring
         Event covering each day.
       * Otherwise, produce one Event per occurrence.
 
@@ -447,11 +456,15 @@ def _events_from_api(d: dict[str, Any], *, source_year: int) -> list[Event]:
         if len(pt["dates"]) == 1:
             time_str = _single_time_str(st0, et0)
         else:
-            time_str = (
-                f"From {st0.strftime('%I:%M %p').lstrip('0')} to "
-                f"{et0.strftime('%I:%M %p').lstrip('0')} on "
-                + ", ".join(pt["days"])
-            )
+            # `time` is the card/Ask fallback when the builder filters every
+            # occurrence out of the reviewed annual window. It must therefore
+            # retain the exact API occurrence bounds instead of collapsing to
+            # an ambiguous weekday-only label such as "on Sun, Mon".
+            time_str = format_schedule_display(pt)
+            if time_str is None:
+                raise RuntimeError(
+                    "normalized recurring occurrence set has no displayable dates"
+                )
         return [Event(
             id=str(uid),
             name=title,
@@ -537,13 +550,19 @@ def _single_event(
 
 
 def _parse_iso(s: str | None) -> datetime | None:
-    if not s:
+    if not isinstance(s, str) or not s.strip():
         return None
     try:
         # Python 3.11+ accepts 'Z' suffix; strip just in case for older.
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
         return None
+    # Never let the runner's own timezone assign meaning to a naive API value.
+    # Dropping it is safer than manufacturing a date; normalization coverage is
+    # reported by the build so a broad upstream schema regression stays visible.
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(PLAYA_TIME_ZONE)
 
 
 def _day_abbrev(dt: datetime) -> str:

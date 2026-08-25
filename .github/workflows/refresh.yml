@@ -145,7 +145,14 @@ jobs:
       # openssl for the deployed-site payload AND the API cache
       # (encrypted at fetch time, decrypted at build time).
       - name: Verify build prerequisites
+        env:
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR }}
         run: |
+          set -euo pipefail
+          if [[ ! "${BRC_MAP_YEAR:-}" =~ ^[0-9]{4}$ ]]; then
+            echo "::error ::Repository variable BRC_MAP_YEAR is required and must be YYYY."
+            exit 1
+          fi
           openssl version
           python3 --version
           node --version
@@ -161,7 +168,7 @@ jobs:
         id: gis-revision
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
         run: |
           set -euo pipefail
@@ -266,7 +273,7 @@ jobs:
           BM_CACHE_PASSWORD: ${{ secrets.BM_CACHE_PASSWORD }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           BM_API_YEARS: ${{ vars.BM_API_YEARS }}
-          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR }}
           REFRESH_YEARS: ${{ inputs.refresh_api_years }}
           EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -340,9 +347,8 @@ jobs:
       # ADR D13: resolve `BURN_OPEN` for the build step.
       #
       # Driven by the SITE UNLOCK WINDOW (SITE_UNLOCK_START/END) — the
-      # password-free access window, decoupled from the burn-week
-      # calendar (BURN_WINDOW_OPEN_FROM/TO, which drive the schedule and
-      # do NOT affect access). See D13 amendment in docs/15.
+      # password-free access window, decoupled from the committed annual
+      # schedule windows. See D13 amendment in docs/15.
       #
       # The SITE_UNLOCK_START/END window is the single source of truth —
       # there is no one-off operator override. To open/close, edit the repo
@@ -395,13 +401,6 @@ jobs:
         env:
           # Pulled from repo secrets. Blank → plaintext build.
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
-          # Burn-week dates — REQUIRED. This pair drives only the current-year
-          # calendar and must match its reviewed official schedule window
-          # (see Config.burn_start / burn_end). No environment fallback;
-          # if the operator hasn't set these repo vars, the build
-          # fails loud rather than producing a site with stale dates.
-          BURN_WINDOW_OPEN_FROM: ${{ vars.BURN_WINDOW_OPEN_FROM }}
-          BURN_WINDOW_OPEN_TO: ${{ vars.BURN_WINDOW_OPEN_TO }}
           # D8: independent public disclosure timestamps for the
           # current API year's location fields. Keep the explicit
           # Pacific offset; the build rejects missing/naive values.
@@ -417,10 +416,9 @@ jobs:
           # variables; leaving them unset emits no sync UI or Dropbox origin.
           SYNC_PROVIDER: ${{ vars.SYNC_PROVIDER }}
           SYNC_CLIENT_ID: ${{ vars.SYNC_CLIENT_ID }}
-          # Current API/GIS year. Keep the fallback aligned with the
-          # newest BRC_BY_YEAR entry; next year can be switched via a repo
-          # variable after the annual map constants are reviewed.
-          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR || '2026' }}
+          # Current API/GIS year. Required repository variable; no annual
+          # fallback may silently build the wrong edition.
+          BRC_MAP_YEAR: ${{ vars.BRC_MAP_YEAR }}
           # D10 multi-tier passwords + source manifest. Operator
           # composes SITE_TIERS from the per-tier secrets so literal
           # passwords don't sit in the workflow YAML.

@@ -53,6 +53,17 @@ export function playaTimeParts(when: Date): PlayaTimeParts {
   };
 }
 
+/** Calendar date for an instant in Black Rock City, independent of the
+ * browser/device timezone. */
+export function playaDateKey(when: Date): string {
+  const parts = playaTimeParts(when);
+  return [
+    String(parts.year),
+    String(parts.month).padStart(2, '0'),
+    String(parts.day).padStart(2, '0'),
+  ].join('-');
+}
+
 /** Concise user-facing label for an instant in playa local time. */
 export function formatPlayaTime(when: Date): string {
   return when.toLocaleTimeString([], {

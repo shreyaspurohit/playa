@@ -9,6 +9,7 @@ import { quoteForDay } from '../utils/journalQuotes';
 import { JOURNAL_ADD_EVENT } from '../utils/journalEntryBus';
 import { moodOption, timeOfDayFor } from '../utils/journalStore';
 import { readString, writeString } from '../utils/storage';
+import { now, playaDateKey } from '../utils/clock';
 
 // bm- prefixed so "Clear all local data" removes it too.
 const BACKUP_NUDGE_KEY = 'bm-journal-backup-nudge';
@@ -55,7 +56,7 @@ function downloadJournal(json: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `playa-journal-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `playa-journal-${playaDateKey(now())}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -96,13 +97,10 @@ export function JournalView({ standalone = false, journal }: JournalViewProps) {
   const [dayOpen, setDayOpen] = useState<Map<string, boolean>>(new Map());
   const currentYear = useMemo(defaultBurnYear, []);
   const emptyPrompt = useMemo(() => EMPTY_PROMPTS[Math.floor(Math.random() * EMPTY_PROMPTS.length)], []);
-  const quote = useMemo(() => quoteForDay(), []);
-
-  const todayKey = useMemo(() => {
-    const d = new Date();
-    const p = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  }, []);
+  // Re-evaluated on render so the shared simulated clock and a Playa-midnight
+  // rollover drive the Journal even when the device itself is in another zone.
+  const todayKey = playaDateKey(now());
+  const quote = useMemo(() => quoteForDay(todayKey), [todayKey]);
   const allDayKeys = useMemo(
     () => journal.groups.flatMap((g) => g.days.map((day) => day.dayKey)),
     [journal.groups],

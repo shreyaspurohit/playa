@@ -14,9 +14,10 @@ and multi-tier envelope encryption. Camps and art are parallel per-source
 payloads. In envelope mode the source picker contains only sources unlocked by
 the password or burn key.
 
-Current-year API locations are client-masked before the configured burn start,
-unless an internal trusted wrapper unlocked. When the cutoff passes, the client
-can prompt a refresh so data is re-ingested.
+Current-year API locations are client-masked until their independently
+configured camp/art release timestamps, unless an internal trusted wrapper is
+unlocked. The client evaluates those timestamps directly; no rebuild or data
+re-ingestion is required when a release instant passes.
 
 ## Main surfaces
 

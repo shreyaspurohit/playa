@@ -77,7 +77,33 @@ class TimeDisplayTests(unittest.TestCase):
         }
         self.assertEqual(
             format_schedule_display(parsed),
-            "Sun · 12:00 PM – 1:00 PM",
+            "Sun 8/30 & 9/6 · 12:00 PM – 1:00 PM",
+        )
+
+    def test_formats_daily_recurrence_with_exact_bounds(self):
+        parsed = {
+            "dates": [
+                "2026-08-31", "2026-09-01", "2026-09-02",
+                "2026-09-03", "2026-09-04", "2026-09-05",
+                "2026-09-06",
+            ],
+            "start_time": "10:00", "end_time": "11:00",
+            "overnight": False,
+        }
+        self.assertEqual(
+            format_schedule_display(parsed),
+            "Daily 8/31–9/6 · 10:00 AM – 11:00 AM",
+        )
+
+    def test_formats_recurring_overnight_with_next_day_marker(self):
+        parsed = {
+            "dates": ["2026-08-31", "2026-09-01", "2026-09-02"],
+            "start_time": "23:00", "end_time": "02:00",
+            "overnight": True,
+        }
+        self.assertEqual(
+            format_schedule_display(parsed),
+            "Mon–Wed 8/31–9/2 · 11:00 PM – 2:00 AM +1",
         )
 
     def test_empty_dates_have_no_schedule_display(self):

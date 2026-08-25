@@ -28,8 +28,6 @@ class BuilderFixture(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.config = Config(
             root=self.root,
-            burn_start="2026-08-30",
-            burn_end="2026-09-07",
             camp_location_release_at="2026-08-23T00:00:00-07:00",
             art_location_release_at="2026-08-30T00:00:00-07:00",
             brc_map_year=2026,
@@ -73,22 +71,10 @@ class BuilderFixture(unittest.TestCase):
 
 
 class SnapshotAndMetadataTests(BuilderFixture):
-    def test_current_window_must_match_reviewed_official_dates(self):
-        bad = Config(
-            root=self.root,
-            brc_map_year=2026,
-            burn_start="2026-08-31",
-            burn_end="2026-09-07",
-        )
-        with self.assertRaisesRegex(RuntimeError, "reviewed official event window"):
-            SiteBuilder(bad, sources=["api-2026"])
-
     def test_unknown_current_year_window_is_not_inferred(self):
         unknown = Config(
             root=self.root,
             brc_map_year=2027,
-            burn_start="2027-08-29",
-            burn_end="2027-09-06",
         )
         with self.assertRaisesRegex(RuntimeError, "no reviewed official event window"):
             SiteBuilder(unknown, sources=["api-2027"])
@@ -246,8 +232,6 @@ class SnapshotAndMetadataTests(BuilderFixture):
             text,
         )
         self.assertIn('name="bm-fetched-at" content="2026-08-10T05:06:07Z"', text)
-        self.assertNotIn('name="bm-burn-start"', text)
-        self.assertNotIn('name="bm-burn-end"', text)
 
 
 @unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")
@@ -263,8 +247,8 @@ class EncryptionAndTierTests(BuilderFixture):
 
     def test_password_encryption_round_trip(self):
         cfg = Config(
-            root=self.root, site_password="pw", pbkdf2_iter=1000,
-            burn_start="2026-08-30", burn_end="2026-09-07",
+            root=self.root, brc_map_year=2026,
+            site_password="pw", pbkdf2_iter=1000,
         )
         enc = SiteBuilder(cfg).encrypt_payload(b'{"ok":true}')
         blob = b"Salted__" + base64.b64decode(enc["salt"]) + base64.b64decode(enc["ct"])

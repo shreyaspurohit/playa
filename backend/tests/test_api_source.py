@@ -6,6 +6,7 @@ snapshots at the production cache path.
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,7 +29,7 @@ class APISourceLoadTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.config = Config(root=self.root)
+        self.config = Config(root=self.root, brc_map_year=2026)
         self.config.api_dir.mkdir(parents=True)
 
     def tearDown(self):
@@ -212,6 +213,54 @@ class APISourceLoadTests(unittest.TestCase):
         self.assertEqual(ev.parsed_time["days"], ["Tue", "Wed", "Thu"])
         self.assertEqual(ev.parsed_time["start_time"], "13:00")
         self.assertEqual(ev.parsed_time["end_time"], "14:30")
+        self.assertEqual(
+            ev.time,
+            "Tue–Thu 8/27–8/29 · 1:00 PM – 2:30 PM",
+        )
+
+    def test_out_of_window_recurring_fallback_keeps_exact_dates(self):
+        """Cards cannot imply a recurrence extends past its API dates."""
+        from playa.builder import SiteBuilder
+
+        self._write(2026, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2026,
+                "location_string": "",
+            }],
+            "events": [{
+                "uid": "outside", "title": "Before the burn", "year": 2026,
+                "hosted_by_camp": "c",
+                "occurrence_set": [
+                    {
+                        "start_time": "2026-08-20T20:00:00-07:00",
+                        "end_time": "2026-08-20T22:00:00-07:00",
+                    },
+                    {
+                        "start_time": "2026-08-21T20:00:00-07:00",
+                        "end_time": "2026-08-21T22:00:00-07:00",
+                    },
+                ],
+            }],
+        })
+        camps = _silent(_load_camps, APISource(year=2026), self.config)
+        event = camps[0].events[0]
+        self.assertEqual(
+            event.time,
+            "Thu, Fri 8/20–8/21 · 8:00 PM – 10:00 PM",
+        )
+
+        SiteBuilder(
+            self.config, sources=["api-2026"],
+        )._enrich_event_times(camps, source_year=2026)
+
+        self.assertEqual(event.parsed_time["dates"], [])
+        self.assertEqual(event.display_time, "")
+        # EventItem and Ask deliberately fall back to `time`; it remains dated
+        # after the schedule window removes every structured occurrence.
+        self.assertEqual(
+            event.time,
+            "Thu, Fri 8/20–8/21 · 8:00 PM – 10:00 PM",
+        )
 
     def test_mixed_times_split_into_separate_events(self):
         # Different start times per day → one Event per occurrence,
@@ -262,6 +311,67 @@ class APISourceLoadTests(unittest.TestCase):
         self.assertEqual(ev.parsed_time["start_time"], "22:00")
         self.assertEqual(ev.parsed_time["end_time"], "23:30")
 
+    def test_utc_occurrence_is_normalized_to_playa_date_before_placement(self):
+        # 06:30Z on 9/7 is still closing Sunday (9/6 at 11:30 PM PDT).
+        # Normalizing after extracting the date would recreate the original
+        # wrong-Sunday class of bug.
+        self._write(2026, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2026,
+                "location_string": "",
+            }],
+            "events": [{
+                "uid": "utc-closing", "title": "Closing", "year": 2026,
+                "hosted_by_camp": "c", "occurrence_set": [{
+                    "start_time": "2026-09-07T06:30:00Z",
+                    "end_time": "2026-09-07T08:00:00Z",
+                }],
+            }],
+        })
+        camps = _silent(_load_camps, APISource(year=2026), self.config)
+        event = camps[0].events[0]
+        self.assertEqual(event.parsed_time["dates"], ["2026-09-06"])
+        self.assertEqual(event.parsed_time["days"], ["Sun"])
+        self.assertEqual(event.parsed_time["start_time"], "23:30")
+        self.assertEqual(event.parsed_time["end_time"], "01:00")
+        self.assertTrue(event.parsed_time["overnight"])
+
+    def test_naive_occurrence_is_dropped_instead_of_using_runner_timezone(self):
+        self._write(2026, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2026,
+                "location_string": "",
+            }],
+            "events": [{
+                "uid": "naive", "title": "Ambiguous", "year": 2026,
+                "hosted_by_camp": "c", "occurrence_set": [{
+                    "start_time": "2026-09-06T23:30:00",
+                    "end_time": "2026-09-07T01:00:00",
+                }],
+            }],
+        })
+        camps = _silent(_load_camps, APISource(year=2026), self.config)
+        self.assertEqual(camps[0].events, [])
+
+    def test_source_year_guard_runs_after_playa_normalization(self):
+        # Both raw ISO values say 2026, but the occurrence is still 2025 in
+        # Black Rock City. It must not cross into api-2026 by UTC date alone.
+        self._write(2026, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2026,
+                "location_string": "",
+            }],
+            "events": [{
+                "uid": "utc-year-edge", "title": "Boundary", "year": 2026,
+                "hosted_by_camp": "c", "occurrence_set": [{
+                    "start_time": "2026-01-01T06:00:00Z",
+                    "end_time": "2026-01-01T07:00:00Z",
+                }],
+            }],
+        })
+        camps = _silent(_load_camps, APISource(year=2026), self.config)
+        self.assertEqual(camps[0].events, [])
+
     def test_builder_places_events_on_exact_occurrence_dates(self):
         # End-to-end API → builder (ADR 11). 2025's window has two Sundays
         # (8/24, 8/31). A lone closing-Sunday event keeps 8/31 (not the opening
@@ -296,7 +406,6 @@ class APISourceLoadTests(unittest.TestCase):
         })
         cfg = Config(
             root=self.root, brc_map_year=2025,
-            burn_start="2025-08-24", burn_end="2025-09-01",
         )
         camps = _silent(_load_camps, APISource(year=2025), cfg)
         SiteBuilder(cfg, sources=["api-2025"])._enrich_event_times(
@@ -378,7 +487,6 @@ class APISourceLoadTests(unittest.TestCase):
         })
         cfg = Config(
             root=self.root, brc_map_year=2026,
-            burn_start="2026-08-30", burn_end="2026-09-07",
         )
         camps = _silent(_load_camps, APISource(year=2026), cfg)
         SiteBuilder(cfg, sources=["api-2026"])._enrich_event_times(
@@ -484,7 +592,6 @@ class APISourceLoadTests(unittest.TestCase):
         })
         cfg = Config(
             root=self.root, brc_map_year=2026,
-            burn_start="2026-08-30", burn_end="2026-09-07",
         )
         camps = _silent(_load_camps, APISource(year=2025), cfg)
         SiteBuilder(cfg, sources=["api-2025"])._enrich_event_times(
@@ -512,19 +619,19 @@ class APISourceLoadTests(unittest.TestCase):
     def test_year_below_minimum_rejected_by_fetch(self):
         # `load_camps()` reads from disk and isn't year-restricted,
         # but `fetch_and_cache()` validates year ≥ bm_api_year_min.
-        cfg = Config(root=self.root, bm_api_key="dummy")
+        cfg = Config(root=self.root, brc_map_year=2026, bm_api_key="dummy")
         with self.assertRaises(ValueError):
             APISource(year=2010).fetch_and_cache(cfg)
 
     def test_fetch_without_key_raises(self):
-        cfg = Config(root=self.root)  # bm_api_key default ""
+        cfg = Config(root=self.root, brc_map_year=2026)  # bm_api_key default ""
         with self.assertRaises(RuntimeError):
             APISource(year=2024).fetch_and_cache(cfg)
 
     def test_encrypted_cache_round_trip(self):
         """Encrypted API snapshots decrypt with the cache password."""
         from playa.sources.api import _openssl_encrypt
-        cfg = Config(root=self.root, bm_cache_password="cache-secret")
+        cfg = Config(root=self.root, brc_map_year=2026, bm_cache_password="cache-secret")
         cfg.api_dir.mkdir(parents=True, exist_ok=True)
         plaintext = json.dumps({
             "fetched_at": "2026-08-15T12:34:56Z",
@@ -541,7 +648,7 @@ class APISourceLoadTests(unittest.TestCase):
 
     def test_encrypted_cache_wrong_password_raises(self):
         from playa.sources.api import _openssl_encrypt
-        cfg_write = Config(root=self.root, bm_cache_password="right")
+        cfg_write = Config(root=self.root, brc_map_year=2026, bm_cache_password="right")
         cfg_write.api_dir.mkdir(parents=True, exist_ok=True)
         plaintext = json.dumps({
             "fetched_at": "2026-08-15T12:34:56Z",
@@ -552,7 +659,7 @@ class APISourceLoadTests(unittest.TestCase):
         }).encode("utf-8")
         blob = _openssl_encrypt(plaintext, "right", cfg_write.pbkdf2_iter)
         cfg_write.api_payload_file(2024).write_bytes(blob)
-        cfg_read = Config(root=self.root, bm_cache_password="wrong")
+        cfg_read = Config(root=self.root, brc_map_year=2026, bm_cache_password="wrong")
         with self.assertRaises(RuntimeError) as cm:
             _silent(_load_camps, APISource(year=2024), cfg_read)
         self.assertIn("wrong BM_CACHE_PASSWORD", str(cm.exception))
@@ -562,12 +669,12 @@ class APISourceLoadTests(unittest.TestCase):
         the error should tell the user which env var to set, not just
         crash on the magic-byte mismatch."""
         from playa.sources.api import _openssl_encrypt
-        cfg_write = Config(root=self.root, bm_cache_password="x")
+        cfg_write = Config(root=self.root, brc_map_year=2026, bm_cache_password="x")
         cfg_write.api_dir.mkdir(parents=True, exist_ok=True)
         cfg_write.api_payload_file(2024).write_bytes(
             _openssl_encrypt(b'{"fetched_at":"2026-08-15T12:34:56Z","camps":[],"events":[],"art":[]}', "x", cfg_write.pbkdf2_iter),
         )
-        cfg_read = Config(root=self.root)  # no password
+        cfg_read = Config(root=self.root, brc_map_year=2026)  # no password
         with self.assertRaises(RuntimeError) as cm:
             _load_camps(APISource(year=2024), cfg_read)
         msg = str(cm.exception)
@@ -578,7 +685,7 @@ class APISourceLoadTests(unittest.TestCase):
         """Single-secret deployments: setting just SITE_PASSWORD
         should make the cache key default to it."""
         from playa.sources.api import _openssl_encrypt
-        cfg = Config(root=self.root, site_password="single-secret")
+        cfg = Config(root=self.root, brc_map_year=2026, site_password="single-secret")
         cfg.api_dir.mkdir(parents=True, exist_ok=True)
         blob = _openssl_encrypt(
             b'{"fetched_at":"2026-08-15T12:34:56Z","camps":[],"events":[],"art":[]}', "single-secret", cfg.pbkdf2_iter,
@@ -593,27 +700,60 @@ class ConfigAPIYearsTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp())
 
     def test_empty_string_returns_empty_list(self):
-        self.assertEqual(Config(root=self.root, bm_api_years="").parsed_api_years(), [])
+        self.assertEqual(
+            Config(root=self.root, brc_map_year=2026, bm_api_years="").parsed_api_years(),
+            [],
+        )
+
+    def test_environment_requires_explicit_current_year(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "BRC_MAP_YEAR is required"):
+                Config.from_env(root=self.root)
+
+    def test_environment_accepts_explicit_current_year(self):
+        with mock.patch.dict(
+            os.environ, {"BRC_MAP_YEAR": "2026"}, clear=True,
+        ):
+            self.assertEqual(Config.from_env(root=self.root).brc_map_year, 2026)
+
+    def test_environment_rejects_malformed_current_year(self):
+        with mock.patch.dict(
+            os.environ, {"BRC_MAP_YEAR": "current"}, clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "expected YYYY"):
+                Config.from_env(root=self.root)
 
     def test_parses_csv(self):
         self.assertEqual(
-            Config(root=self.root, bm_api_years="2024,2025").parsed_api_years(),
+            Config(
+                root=self.root, brc_map_year=2026,
+                bm_api_years="2024,2025",
+            ).parsed_api_years(),
             [2024, 2025],
         )
 
     def test_strips_whitespace_and_dedupes(self):
         self.assertEqual(
-            Config(root=self.root, bm_api_years=" 2024 , 2025 , 2024 ").parsed_api_years(),
+            Config(
+                root=self.root, brc_map_year=2026,
+                bm_api_years=" 2024 , 2025 , 2024 ",
+            ).parsed_api_years(),
             [2024, 2025],
         )
 
     def test_rejects_below_minimum_year(self):
         with self.assertRaisesRegex(ValueError, "below"):
-            Config(root=self.root, bm_api_years="2010,2020,2024").parsed_api_years()
+            Config(
+                root=self.root, brc_map_year=2026,
+                bm_api_years="2010,2020,2024",
+            ).parsed_api_years()
 
     def test_rejects_non_numeric_entries(self):
         with self.assertRaisesRegex(ValueError, "expected YYYY"):
-            Config(root=self.root, bm_api_years="2024,latest,2025,").parsed_api_years()
+            Config(
+                root=self.root, brc_map_year=2026,
+                bm_api_years="2024,latest,2025,",
+            ).parsed_api_years()
 
 
 class CLISourceResolutionTests(unittest.TestCase):
@@ -624,7 +764,10 @@ class CLISourceResolutionTests(unittest.TestCase):
 
     def test_explicit_arg_wins_over_env(self):
         from playa.cli import _resolve_sources
-        cfg = Config(root=self.root, bm_api_years="2024,2025,2026")
+        cfg = Config(
+            root=self.root, brc_map_year=2026,
+            bm_api_years="2024,2025,2026",
+        )
         self.assertEqual(
             _resolve_sources("api-2024,api-2026,api-2025", cfg),
             ["api-2026", "api-2025", "api-2024"],
@@ -632,7 +775,10 @@ class CLISourceResolutionTests(unittest.TestCase):
 
     def test_env_used_when_arg_omitted(self):
         from playa.cli import _resolve_sources
-        cfg = Config(root=self.root, bm_api_years="2024,2025,2026")
+        cfg = Config(
+            root=self.root, brc_map_year=2026,
+            bm_api_years="2024,2025,2026",
+        )
         self.assertEqual(
             _resolve_sources(None, cfg),
             ["api-2026", "api-2025", "api-2024"],
@@ -641,24 +787,29 @@ class CLISourceResolutionTests(unittest.TestCase):
     def test_missing_configuration_is_rejected(self):
         from playa.cli import _resolve_sources
         with self.assertRaisesRegex(ValueError, "no API sources configured"):
-            _resolve_sources(None, Config(root=self.root))
+            _resolve_sources(None, Config(root=self.root, brc_map_year=2026))
 
     def test_retired_source_is_rejected(self):
         from playa.cli import _resolve_sources
         with self.assertRaisesRegex(ValueError, "only api-YYYY"):
-            _resolve_sources("retired", Config(root=self.root))
+            _resolve_sources(
+                "retired", Config(root=self.root, brc_map_year=2026),
+            )
 
     def test_current_year_is_required(self):
         from playa.cli import _resolve_sources
         with self.assertRaisesRegex(ValueError, "api-2026"):
-            _resolve_sources("api-2025", Config(root=self.root))
+            _resolve_sources(
+                "api-2025", Config(root=self.root, brc_map_year=2026),
+            )
 
 
 class APIRetryTests(unittest.TestCase):
     def test_retries_server_error_with_api_specific_settings(self):
         from playa.sources.api import _request_json
         cfg = Config(
-            root=Path(tempfile.mkdtemp()), bm_api_key="key",
+            root=Path(tempfile.mkdtemp()), brc_map_year=2026,
+            bm_api_key="key",
             bm_api_retries=2, bm_api_backoff=1,
         )
         failed = mock.Mock(returncode=0, stdout=b'{"detail":"later"}\n500', stderr=b"")

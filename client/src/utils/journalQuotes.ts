@@ -45,8 +45,10 @@ export const JOURNAL_QUOTES: readonly Quote[] = [
 
 const MS_PER_DAY = 86_400_000;
 
-/** The quote for a given day — stable within the day, advancing each day. */
-export function quoteForDay(now: number = Date.now()): Quote {
-  const dayIndex = Math.floor(now / MS_PER_DAY);
+/** The quote for an explicit Playa calendar day — stable within that day and
+ * independent of the browser/device timezone. */
+export function quoteForDay(dayKey: string): Quote {
+  const parsed = Date.parse(`${dayKey}T00:00:00Z`);
+  const dayIndex = Number.isNaN(parsed) ? 0 : Math.floor(parsed / MS_PER_DAY);
   return JOURNAL_QUOTES[((dayIndex % JOURNAL_QUOTES.length) + JOURNAL_QUOTES.length) % JOURNAL_QUOTES.length];
 }

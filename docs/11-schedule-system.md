@@ -1,7 +1,7 @@
 ---
 title: Schedule System
 date: 2026-04-27
-updated: 2026-08-24
+updated: 2026-08-25
 status: current
 ---
 
@@ -29,10 +29,9 @@ whole burn week. The hard parts are:
   checking an official Burning Man Project page. The current reviewed entries
   are [2025: August 24–September 1](https://history.burningman.org/timeline/2025/)
   and [2026: August 30–September 7](https://burningman.org/event/black).
-  `BURN_WINDOW_OPEN_FROM` and `BURN_WINDOW_OPEN_TO` must exactly match the
-  reviewed `BRC_MAP_YEAR` entry. The builder emits the explicit window for each
-  embedded source; the client parses that metadata and never projects one
-  year's dates into another year. A missing annual entry fails the build.
+  The builder emits the explicit window for each embedded source; the client
+  parses that metadata and never projects one year's dates into another year.
+  There is no environment override, and a missing annual entry fails the build.
 - **Exact occurrence dates, not a weekday fan-out** *(2026-08-24, supersedes the
   earlier weekday-set + start-date model)*. Each event carries the explicit list
   of its in-window occurrence start dates — `parsed_time.dates`
@@ -112,21 +111,33 @@ whole burn week. The hard parts are:
 
 ```mermaid
 flowchart TD
-  Raw["API occurrence_set<br>ISO start + end timestamps"]
-  Guard["require start.year = end.year = source year"]
+  Raw["API occurrence_set<br>timezone-aware ISO start + end timestamps"]
+  Playa["normalize to<br>America/Los_Angeles"]
+  Guard["require Playa-local start.year = end.year = source year"]
   Parsed["parsed_time<br>{kind, dates[], days[], start_time, end_time, overnight}"]
   Window["source-year annual window filter"]
   Display["display_time<br>'Tue 8/27 · 10:00 AM – 11:15 AM'"]
-  Raw --> Guard --> Parsed --> Window
+  Raw --> Playa --> Guard --> Parsed --> Window
   Window -->|"format_schedule_display"| Display
 ```
 
 Same-time occurrences coalesce into one event with multiple exact dates;
-mixed-time occurrences remain separate records. Invalid timestamps, wrong-year
-timestamps, and cross-New-Year spans do not enter `parsed_time`. A normalized
+mixed-time occurrences remain separate records. Every timezone-aware upstream
+timestamp is first converted to `America/Los_Angeles`; naive or invalid
+timestamps, wrong-year timestamps, and cross-New-Year spans do not enter
+`parsed_time`. A normalized
 event with no date inside its source window remains visible as Unscheduled via
-the raw fallback time. The old free-text parsing and week-map helpers were
-deleted; there is no fallback path that can remap an occurrence.
+an exact-date fallback time derived from its unfiltered normalized occurrence
+set. That fallback is also used by Camp cards and Ask results, so even a wholly
+out-of-window recurrence cannot degrade to an ambiguous weekday-only label.
+The old free-text parsing and week-map helpers were deleted; there is no
+fallback path that can remap an occurrence.
+
+Recurring card labels retain their exact occurrence bounds rather than showing
+a weekday pattern alone: for example, `Daily 8/31–9/6 · 10:00 AM – 11:00 AM`
+and `Sun 8/30 & 9/6 · 12:00 PM – 1:00 PM`. Recurring overnight labels append
+`+1`. These are display summaries only; calendar placement continues to use
+every literal date in `parsed_time.dates`.
 
 ### Day compaction
 
@@ -198,9 +209,12 @@ so nothing is lost.
 - **Unknown annual windows fail closed.** Adding an `api-YYYY` source requires
   an official-date review and a new explicit `schedule.py` entry. Neither the
   builder nor browser infers dates from a holiday or another burn year.
-- **Occurrence timestamps are read in their source offset** (`_parse_iso` keeps
-  the API's `-07:00`), so the ISO date is Playa-local. A future snapshot delivered
-  in UTC would shift late-night dates and needs a Pacific conversion first.
+- **Occurrence timestamps require an explicit offset and are normalized to
+  Playa time.** The reviewed 2025 and 2026 cached API responses currently use
+  `-07:00` for every occurrence timestamp. The adapter nevertheless converts
+  any aware offset (including `Z`) to `America/Los_Angeles` before extracting
+  the source year, exact date, weekday, or time. Naive values are dropped
+  rather than interpreted in the build runner's timezone.
 
 ## Code references
 

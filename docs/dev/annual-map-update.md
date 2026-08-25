@@ -20,10 +20,9 @@ borrow another year's geometry.
    sources; spirit receives only `api-YYYY`.
 4. Verify the event dates on an official Burning Man Project page, record its
    link, add the exact same-year window to
-   `backend/src/playa/schedule.py::ANNUAL_EVENT_WINDOWS`, and set
-   `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` to those exact values. Set
-   `CAMP_LOCATION_RELEASE_AT` and `ART_LOCATION_RELEASE_AT` from current
-   official communications as well.
+   `backend/src/playa/schedule.py::ANNUAL_EVENT_WINDOWS`. Set
+   `CAMP_LOCATION_RELEASE_AT` and `ART_LOCATION_RELEASE_AT` from current official
+   communications as well. There is no schedule-date environment override.
 5. Run a strict GIS refresh and inspect the normalized payload:
 
    ```bash

@@ -259,14 +259,6 @@ export const BRC_BY_YEAR: Record<number, BrcMapData> = {
   2026: BRC_2026,
 };
 
-/**
- * Current BRC year used by source-independent defaults. Bumped by the
- * annual map-update workflow. Geometry may be
- * published later; until the matching `BRC_BY_YEAR` entry lands, source-aware
- * map consumers deliberately show an unavailable state.
- */
-export const CURRENT_BRC_YEAR = 2026;
-
 /** Resolve a year only when its exact geometry is present.
  *
  * Annual camp/API data and city geometry are released in stages. Returning a
@@ -278,9 +270,10 @@ export function getBrcForYear(year: number): BrcMapData | null {
 }
 
 /**
- * Backward-compat default: code that doesn't yet know about per-year
- * geometry imports `BRC` and gets a known geometry object. Source-aware code
- * must use the nullable exact-year resolver instead; this compatibility export
- * must never be used to place records from an arbitrary source year.
+ * Backward-compat geometry fixture for source-independent address helpers and
+ * tests. This is deliberately not called "current": the builder-emitted
+ * bm-brc-map-year metadata is the only current-edition authority. Source-aware
+ * code must use the nullable exact-year resolver; this compatibility export
+ * must never place records from an arbitrary source year.
  */
-export const BRC: BrcMapData = BRC_BY_YEAR[CURRENT_BRC_YEAR] ?? BRC_2026;
+export const BRC: BrcMapData = BRC_2026;

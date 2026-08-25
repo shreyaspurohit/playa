@@ -18,25 +18,14 @@ class Config:
     that tree. Env-derived fields default to unset/safe.
     """
     root: Path
+    # Required annual authority. There is deliberately no calendar-derived or
+    # hard-coded current-year fallback; CLI builds read the explicit
+    # BRC_MAP_YEAR environment value.
+    brc_map_year: int
 
     # Runtime settings (via env when using Config.from_env()).
     site_password: str = ""
     pbkdf2_iter: int = 200_000
-
-    # Burn-week calendar window (ISO YYYY-MM-DD).
-    #
-    # `burn_start` and `burn_end` are the schedule's authoritative first and
-    # last calendar columns. Source event dates do not expand this window.
-    # Password-free spirit access uses separate SITE_UNLOCK_START/END repo
-    # variables evaluated by the deploy workflow; those values are
-    # intentionally not part of Config.
-    #
-    # Both REQUIRED at build time — set via env
-    # (`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`) which CI
-    # sources from repo variables. SiteBuilder requires them to match the
-    # explicitly reviewed official entry in schedule.ANNUAL_EVENT_WINDOWS.
-    burn_start: str = ""
-    burn_end:   str = ""
 
     # Current-year API location-release policy (ADR D8). These are
     # deliberately separate because Burning Man publishes camp
@@ -69,7 +58,6 @@ class Config:
         "innovate-GIS-data/master"
     )
     gis_timeout: int = 30
-    brc_map_year: int = 2026
 
     # Comma-separated years to auto-fetch + auto-include in the build
     # when --sources isn't passed explicitly. Empty is invalid for build/all.
@@ -166,20 +154,21 @@ class Config:
     @classmethod
     def from_env(cls, root: Path | None = None) -> "Config":
         """Build a Config from env vars. Used by the CLI entry points."""
+        brc_map_year_raw = os.environ.get("BRC_MAP_YEAR", "").strip()
+        if not brc_map_year_raw:
+            raise ValueError(
+                "BRC_MAP_YEAR is required; set the explicitly reviewed "
+                "current API/GIS year",
+            )
+        if len(brc_map_year_raw) != 4 or not brc_map_year_raw.isdigit():
+            raise ValueError(
+                f"BRC_MAP_YEAR={brc_map_year_raw!r} is invalid; expected YYYY",
+            )
         return cls(
             root=root or cls.project_root(),
+            brc_map_year=int(brc_map_year_raw),
             site_password=os.environ.get("SITE_PASSWORD", "").strip(),
             pbkdf2_iter=int(os.environ.get("PBKDF2_ITER", "200000")),
-            # No environment fallback — operator MUST set the burn-window
-            # repo variables in CI (or `export BURN_WINDOW_OPEN_FROM=…
-            # BURN_WINDOW_OPEN_TO=…` locally). Empty values surface as
-            # a build-time error in SiteBuilder.__init__ rather than
-            # silently producing a broken site. SiteBuilder validates the
-            # values against the reviewed annual entry. Location disclosure
-            # has its own timestamp settings below; do not reuse this
-            # schedule/access date for the D8 embargo.
-            burn_start=os.environ.get("BURN_WINDOW_OPEN_FROM", "").strip(),
-            burn_end=os.environ.get("BURN_WINDOW_OPEN_TO", "").strip(),
             camp_location_release_at=os.environ.get(
                 "CAMP_LOCATION_RELEASE_AT", "",
             ).strip(),
@@ -201,7 +190,6 @@ class Config:
                 "innovate-GIS-data/master",
             ).strip(),
             gis_timeout=int(os.environ.get("BM_GIS_TIMEOUT", "30")),
-            brc_map_year=int(os.environ.get("BRC_MAP_YEAR", "2026")),
             site_tiers=os.environ.get("SITE_TIERS", "").strip(),
             sync_provider=os.environ.get("SYNC_PROVIDER", "").strip().lower(),
             sync_client_id=os.environ.get("SYNC_CLIENT_ID", "").strip(),

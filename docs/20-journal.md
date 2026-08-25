@@ -199,7 +199,9 @@ This is intentional: the journal is a Playa story, and a user reviewing it from
 another timezone should still see “11:30 PM” as it occurred in Black Rock City.
 The date/time editor interprets its value in the Playa timezone. The selected
 burn edition remains independently editable and does not change automatically
-when the timestamp crosses a year boundary.
+when the timestamp crosses a year boundary. Journal "today" expansion, daily
+quote rotation, and export filenames use that same Playa calendar date rather
+than the browser/device calendar date.
 
 ### D6 — Year rollover is archival, never migratory
 
@@ -506,16 +508,16 @@ does not receive the new key loses the *data* views but must still open Journal
 and relive every prior year. Three operator concerns are deliberately **separate
 knobs**, none derived from another and none gating the journal:
 
-- **Burn end** — a schedule signal (e.g. the existing `BURN_WINDOW_OPEN_TO`
-  spirit window). It does not re-lock the site or roll the journal edition.
+- **Schedule end** — the reviewed end date committed for an annual API source.
+  It does not re-lock the site or roll the journal edition.
 - **Edition rollover** — happens when the 2027 build is deployed and
   `BRC_MAP_YEAR` advances; *that*, not burn-end, is what makes new entries
   default to 2027 (D6).
 - **Site re-lock** — an independent rotation of `SITE_PASSWORD`/`SITE_TIERS` at
   migration time.
 
-This mirrors the standing rule that `BURN_WINDOW_OPEN_*` must never be reused for
-location disclosure: temporal and access gates stay orthogonal on purpose.
+This mirrors the standing rule that schedule dates must never be reused for
+location disclosure or access: those concerns stay orthogonal on purpose.
 
 The journal is therefore independent of both the encrypted payload and the site
 password:

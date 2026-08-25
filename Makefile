@@ -86,14 +86,7 @@ help:
 	@echo "  BUILD          site assembly"
 	@echo "                 used by: build, rebuild, dev, fetch"
 	@echo ""
-	@echo "    -- Required dates (no code defaults — set per burn year) --"
-	@echo "    BURN_WINDOW_OPEN_FROM   REQUIRED. ISO date for the schedule's"
-	@echo "                              current-year start, e.g. 2026-08-30."
-	@echo "                              Must match the reviewed official window."
-	@echo "                              Does NOT control access or locations."
-	@echo "    BURN_WINDOW_OPEN_TO     REQUIRED. ISO date, end of burn"
-	@echo "                              (e.g., 2026-09-07). Must match the"
-	@echo "                              reviewed official current-year window."
+	@echo "    -- Required current-year disclosure dates --"
 	@echo "    CAMP_LOCATION_RELEASE_AT  REQUIRED when the current api-YYYY"
 	@echo "                              is embedded. Timezone-aware ISO"
 	@echo "                              timestamp; 2026:"
@@ -107,9 +100,11 @@ help:
 	@echo "                          same page size as encrypted)."
 	@echo "    BM_API_YEARS        comma-separated years to embed,"
 	@echo "                          e.g., BM_API_YEARS=2025,2026 (required)"
+	@echo "                          Schedule windows are reviewed and committed"
+	@echo "                          per year in backend/src/playa/schedule.py."
 	@echo "    BM_CACHE_PASSWORD   used to DECRYPT data/api/YYYY.json when"
 	@echo "                          building. Same key set by fetch-api."
-	@echo "    BRC_MAP_YEAR       current API/map year (default 2026); must be configured"
+	@echo "    BRC_MAP_YEAR       REQUIRED explicit current API/map year; no fallback"
 	@echo "                          in BM_API_YEARS"
 	@echo "    BM_GIS_BASE_URL    official annual GIS base URL (normally unchanged)"
 	@echo "    BM_GIS_TIMEOUT     GIS request timeout in seconds (default 30)"
@@ -195,7 +190,7 @@ fetch-api: install-backend
 	fi
 	python3 -m playa api-fetch --year $(YEAR)
 	@echo "==> Cached at data/api/$(YEAR).json"
-	@echo "    Build with: BM_API_YEARS=$(YEAR) make rebuild"
+	@echo "    Build with: BRC_MAP_YEAR=<current> BM_API_YEARS=<years> make rebuild"
 
 gis-fetch: install-backend
 	python3 -m playa gis-fetch

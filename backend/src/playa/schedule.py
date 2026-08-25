@@ -116,11 +116,39 @@ def format_schedule_display(parsed: Optional[dict]) -> Optional[str]:
             )
         return f"{weekday(iso)} {month_day(iso)} · {start_time} – {end_time}"
 
+    occurrence_dates = sorted({parsed_date(iso) for iso in dates})
     day_abbrevs: list[str] = []
     seen: set[str] = set()
-    for iso in dates:
-        day = weekday(iso)
+    for occurrence_date in occurrence_dates:
+        day = WEEK_ORDER[occurrence_date.weekday()]
         if day not in seen:
             seen.add(day)
             day_abbrevs.append(day)
-    return f"{_compact_days(day_abbrevs)} · {start_time} – {end_time}"
+
+    first = occurrence_dates[0]
+    last = occurrence_dates[-1]
+    first_label = f"{first.month}/{first.day}"
+    last_label = f"{last.month}/{last.day}"
+    consecutive = all(
+        right - left == timedelta(days=1)
+        for left, right in zip(occurrence_dates, occurrence_dates[1:])
+    )
+
+    # A weekday-only label such as "Daily" or "Sun" hides the recurrence's
+    # actual bounds. Keep compact weekday language, but always include the
+    # first/last exact occurrence dates so Camp/Food/Map cards cannot imply an
+    # event continues beyond its API occurrence_set.
+    if len(day_abbrevs) == 1:
+        date_labels = [f"{value.month}/{value.day}" for value in occurrence_dates]
+        recurrence_label = f"{day_abbrevs[0]} " + " & ".join(date_labels)
+    else:
+        compact_days = _compact_days(day_abbrevs)
+        if compact_days == "Daily" and not consecutive:
+            compact_days = f"{len(occurrence_dates)} dates"
+        recurrence_label = f"{compact_days} {first_label}–{last_label}"
+
+    overnight_suffix = " +1" if parsed.get("overnight") else ""
+    return (
+        f"{recurrence_label} · {start_time} – {end_time}"
+        f"{overnight_suffix}"
+    )

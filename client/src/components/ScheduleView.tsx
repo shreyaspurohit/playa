@@ -1,5 +1,5 @@
 // Chronological calendar of favorited events. One column per date in
-// the configured burn window — typically 9 days, so the 7-col CSS grid
+// the active source's reviewed annual window — typically 9 days, so the 7-col CSS grid
 // wraps into two
 // rows of 7. Events appear only in the cells named by their full ISO
 // occurrence dates. Events with no in-window occurrence drop to the bottom
@@ -59,8 +59,8 @@ function buildCalendarCells(startISO: string, endISO: string): DayCell[] {
   ) return [];
   const cells: DayCell[] = [];
   const cur = new Date(start);
-  // Cap defensively at 60 days: protects against a pathological meta
-  // tag (burn_end years after burn_start) from producing a huge grid.
+  // Cap defensively at 60 days: protects against pathological metadata bounds
+  // years apart producing a huge grid.
   for (let i = 0; i < 60 && cur <= end; i++) {
     cells.push({
       iso: cur.toISOString().slice(0, 10),

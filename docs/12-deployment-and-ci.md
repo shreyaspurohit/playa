@@ -51,8 +51,11 @@ concurrency group so a push cannot interrupt a manual Release replacement.
   and decrypts annual snapshots.
 - Secret `SITE_PASSWORD` or `SITE_TIERS`: browser data gate.
 - Variable `BM_API_YEARS`: required annual snapshot list.
-- Variable `BRC_MAP_YEAR`: current year and required member of that list.
-- Variables `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`: schedule calendar.
+- Variable `BRC_MAP_YEAR`: explicit current year and required member of that
+  list. The workflow and runtime have no fallback; a missing/malformed value
+  fails before snapshots are loaded.
+- Annual schedule windows are committed in `backend/src/playa/schedule.py`;
+  there is no environment or repository-variable override.
 - Variables `CAMP_LOCATION_RELEASE_AT` / `ART_LOCATION_RELEASE_AT`: disclosure
   gates.
 - Optional Dropbox variables documented in `CLAUDE.md`.

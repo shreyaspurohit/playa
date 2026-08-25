@@ -9,16 +9,17 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { LS, type Source } from '../types';
 import { readString, writeString } from '../utils/storage';
-import { CURRENT_BRC_YEAR, type BrcMapData, getBrcForYear } from '../map/data';
+import { type BrcMapData, getBrcForYear } from '../map/data';
 
 function configuredBrcYear(): number {
-  if (typeof document !== 'undefined') {
-    const raw = document.querySelector('meta[name="bm-brc-map-year"]')
-      ?.getAttribute('content');
-    const year = raw ? Number.parseInt(raw, 10) : Number.NaN;
-    if (Number.isInteger(year) && year >= 2000 && year <= 2200) return year;
+  if (typeof document === 'undefined') {
+    throw new Error('bm-brc-map-year metadata is unavailable');
   }
-  return CURRENT_BRC_YEAR;
+  const raw = document.querySelector('meta[name="bm-brc-map-year"]')
+    ?.getAttribute('content');
+  const year = raw && /^\d{4}$/.test(raw) ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isInteger(year) && year >= 2000 && year <= 2200) return year;
+  throw new Error('bm-brc-map-year metadata is missing or invalid');
 }
 
 /** Resolve a source identifier to the burn year its data represents.
@@ -42,12 +43,13 @@ export function brcForSource(source: Source): BrcMapData | null {
 
 /** Sources embedded in this build, in declaration order (first = default). */
 export function availableSources(): Source[] {
-  const fallback = [`api-${configuredBrcYear()}`];
-  if (typeof document === 'undefined') return fallback;
+  if (typeof document === 'undefined') {
+    throw new Error('bm-sources metadata is unavailable');
+  }
   const m = document.querySelector('meta[name="bm-sources"]');
   const raw = (m?.getAttribute('content') ?? '').trim();
   const parts = raw.split(',').map((s) => s.trim()).filter((s) => /^api-\d{4}$/.test(s));
-  return parts.length > 0 ? parts : fallback;
+  return parts.length > 0 ? parts : [`api-${configuredBrcYear()}`];
 }
 
 /** Pick the source that visible labels and source-specific notices should use.
@@ -58,9 +60,10 @@ export function sourceForDisplay(
   selected: Source,
   available: Source[],
 ): Source {
-  return available.includes(selected)
-    ? selected
-    : (available[0] ?? `api-${configuredBrcYear()}`);
+  if (available.includes(selected)) return selected;
+  if (available[0]) return available[0];
+  if (/^api-\d{4}$/.test(selected)) return selected;
+  return `api-${configuredBrcYear()}`;
 }
 
 export interface SourceApi {

@@ -135,7 +135,7 @@ class GisFetcherTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.config = Config(root=Path(self.tmp.name))
+        self.config = Config(root=Path(self.tmp.name), brc_map_year=2026)
 
     def test_fetch_writes_validated_payload_with_provenance_and_reuses_it(self):
         raw = {
@@ -242,9 +242,7 @@ class GisOrchestrationTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.config = Config(
-            root=Path(self.tmp.name),
-            burn_start="2026-08-30",
-            burn_end="2026-09-07",
+            root=Path(self.tmp.name), brc_map_year=2026,
         )
 
     def test_explicit_fetch_remains_strict(self):

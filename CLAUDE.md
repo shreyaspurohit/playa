@@ -184,14 +184,13 @@ The package uses strict src layout. Run `pip install -e ./backend` (or
 | `BM_API_BACKOFF` | `1.5` | exponential retry base seconds |
 | `BM_API_YEARS` | unset | required comma-separated annual sources |
 | `BM_CACHE_PASSWORD` | `SITE_PASSWORD` | annual cache encryption/decryption |
-| `BRC_MAP_YEAR` | `2026` | current API/GIS/burn default year |
+| `BRC_MAP_YEAR` | required | explicit current API/GIS/burn year; no fallback |
 | `BM_GIS_BASE_URL` | official GIS repo | test override |
 | `BM_GIS_TIMEOUT` | `30` | GIS request timeout |
 | `MIN_CAMPS` | `500` | current-year primary safety rail; use `0` only for fixtures |
 | `SITE_TIERS` | unset | named tier password/source manifest |
 | `BURN_OPEN` | `0` | spirit wrapper auto-unlock flag, resolved from the SITE_UNLOCK window at build time |
 | `SITE_UNLOCK_START/END` | unset | password-free spirit access window, evaluated at build time |
-| `BURN_WINDOW_OPEN_FROM/TO` | required | schedule calendar window |
 | `CAMP_LOCATION_RELEASE_AT` | required for current year | camp disclosure instant |
 | `ART_LOCATION_RELEASE_AT` | required for current year | art disclosure instant |
 | `SYNC_PROVIDER` | unset | set `dropbox` to emit sync UI |
@@ -214,7 +213,7 @@ policy. Any unregistered source fails the build.
 make bootstrap
 make test
 BM_API_KEY=... make fetch-api YEAR=2026
-BM_API_YEARS=2026 make rebuild
+BRC_MAP_YEAR=2026 BM_API_YEARS=2026 make rebuild
 make preview
 make review-mobile
 ```
@@ -320,7 +319,7 @@ geometry-dependent controls.
 make test-py
 make test-js
 cd client && npm run typecheck && npm run build
-BM_API_YEARS=2026 make rebuild
+BRC_MAP_YEAR=2026 BM_API_YEARS=2026 make rebuild
 node --check site/sw.js
 git diff --check
 ```

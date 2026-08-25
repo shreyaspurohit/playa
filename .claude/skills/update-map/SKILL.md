@@ -184,11 +184,12 @@ export const BRC_BY_YEAR: Record<number, BrcMapData> = {
   // Keep every existing historical entry.
   20YY: BRC_20YY,
 };
-
-// Bump with BRC_MAP_YEAR. If BRC_20YY is not registered yet, the source remains
-// usable and its Map tab explicitly stays unavailable.
-export const CURRENT_BRC_YEAR = 20YY;
 ```
+
+There is no client-side current-year constant. The required builder/repository
+`BRC_MAP_YEAR` value is emitted as `bm-brc-map-year`; missing metadata fails
+closed. If `BRC_20YY` is not registered yet, the source remains usable and its
+Map tab explicitly stays unavailable.
 
 Also update the top-of-file comment block — especially the
 **"Last refreshed: YYYY-MM-DD"** line and the source URLs.
@@ -209,11 +210,11 @@ instead of reusing the old cache:
 python3 -m playa gis-fetch --year "$YEAR" --force
 ```
 
-The burn window has **no code default**. Set the official dates in local
-`.env` and GitHub repository variables `BURN_WINDOW_OPEN_FROM` and
-`BURN_WINDOW_OPEN_TO`. Also align `BRC_MAP_YEAR`, `BM_API_YEARS`, the
-workflow/config map-year fallbacks, and `SITE_TIERS` source lists when a
-new API source is enabled. Never copy last year's dates into Python.
+Verify the official event dates and add the exact same-year window to
+`backend/src/playa/schedule.py::ANNUAL_EVENT_WINDOWS`; there is no environment
+override. Also align `BRC_MAP_YEAR`, `BM_API_YEARS`, the workflow/config
+requirements, and `SITE_TIERS` source lists when a new API source is enabled.
+Never infer dates from a holiday or copy last year's dates.
 
 ## Step 5 — sanity-check the math before committing
 

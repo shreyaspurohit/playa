@@ -75,13 +75,7 @@ class CollectReleaseNotesTests(unittest.TestCase):
         _git(self.root, "add", "log.txt")
         _git(self.root, "commit", "-q", "-m", "chore: initial seed")
 
-        # Test fixture supplies burn dates explicitly — production
-        # Config has no defaults (CI repo vars are the source of truth).
-        self.config = Config(
-            root=self.root,
-            burn_start="2026-08-30",
-            burn_end="2026-09-07",
-        )
+        self.config = Config(root=self.root, brc_map_year=2026)
         # Builder needs a Tagger; default taxonomy is fine.
         self.builder = SiteBuilder(self.config, Tagger())
 
@@ -158,11 +152,7 @@ class CollectReleaseNotesTests(unittest.TestCase):
         # the subprocess returncode will be non-zero, which the
         # collector turns into [].
         with tempfile.TemporaryDirectory() as plain_dir:
-            cfg = Config(
-                root=Path(plain_dir),
-                burn_start="2026-08-30",
-                burn_end="2026-09-07",
-            )
+            cfg = Config(root=Path(plain_dir), brc_map_year=2026)
             builder = SiteBuilder(cfg, Tagger())
             with contextlib.redirect_stdout(io.StringIO()):
                 with contextlib.redirect_stderr(io.StringIO()):
