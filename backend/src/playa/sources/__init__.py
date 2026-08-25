@@ -19,6 +19,7 @@ class SourceSnapshot:
 
 class Source(Protocol):
     name: str
+    year: int
 
     def load_snapshot(self, config: Config) -> SourceSnapshot: ...
 

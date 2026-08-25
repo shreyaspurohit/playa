@@ -1,9 +1,8 @@
 // Chronological calendar of favorited events. One column per date in
 // the configured burn window — typically 9 days, so the 7-col CSS grid
 // wraps into two
-// rows of 7. Recurring events appear in every matching-weekday cell;
-// single-occurrence events land in the cell whose date matches their
-// canonical start_date. Events with no parse time drop to the bottom
+// rows of 7. Events appear only in the cells named by their full ISO
+// occurrence dates. Events with no in-window occurrence drop to the bottom
 // "Unscheduled" section.
 //
 // "Favorited" = either you or any imported friend has starred the
@@ -38,10 +37,8 @@ function pad2(n: number): string { return n < 10 ? '0' + n : String(n); }
 // aria-controls at the single tabpanel it drives.
 const SCHED_TABPANEL_ID = 'sched-tabpanel';
 
-/** One column in the grid. `iso` (YYYY-MM-DD) is a stable React key;
- *  `weekday` lets recurring events fan across every matching cell;
- *  `dateLabel` (M/D) shows up in the header + matches canonicalized
- *  `parsed_time.start_date` for single-occurrence events. */
+/** One column in the grid. `iso` (YYYY-MM-DD) is both the stable key and
+ *  occurrence identity; `dateLabel` (M/D) is presentation only. */
 interface DayCell {
   iso: string;
   weekday: DayKey;
@@ -56,7 +53,10 @@ function buildCalendarCells(startISO: string, endISO: string): DayCell[] {
   if (!startISO || !endISO) return [];
   const start = new Date(startISO + 'T00:00:00Z');
   const end = new Date(endISO + 'T00:00:00Z');
-  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return [];
+  if (
+    isNaN(start.getTime()) || isNaN(end.getTime()) || end < start
+    || start.getUTCFullYear() !== end.getUTCFullYear()
+  ) return [];
   const cells: DayCell[] = [];
   const cur = new Date(start);
   // Cap defensively at 60 days: protects against a pathological meta
@@ -91,7 +91,7 @@ interface Props {
   camps: Camp[];
   favEventIds: Set<string>;
   friendFavEventIds: (id: string) => string[];   // returns friend names
-  /** Authoritative burn-week window from build metadata. */
+  /** Active source's annual burn-week window. */
   burnStart?: string;                             // 'YYYY-MM-DD'
   burnEnd?: string;                               // 'YYYY-MM-DD'
   /** Per-day hide state for recurring events. `isDayHidden(id, iso)`
@@ -137,23 +137,14 @@ function occurrenceEndKey(entry: ScheduleEntry, cellIso: string): string | null 
   const p = entry.event.parsed_time;
   if (!p || !entry.startTime) return null;
   const endTime = p.end_time || entry.startTime;
-  let dayOffset = 0;
-  if (p.start_day && p.end_day && p.start_day !== p.end_day) {
-    const startIndex = WEEKDAYS.indexOf(p.start_day as DayKey);
-    const endIndex = WEEKDAYS.indexOf(p.end_day as DayKey);
-    if (startIndex >= 0 && endIndex >= 0) {
-      dayOffset = (endIndex - startIndex + WEEKDAYS.length) % WEEKDAYS.length;
-    }
-  } else if (endTime < entry.startTime) {
-    dayOffset = 1;
-  }
+  // The occurrence's end is on the next calendar day iff it crosses midnight.
+  const dayOffset = (p.overnight || endTime < entry.startTime) ? 1 : 0;
   return `${addIsoDays(cellIso, dayOffset)}T${endTime}`;
 }
 
-/** Bucket every starred event into one or more DayCells. Single-
- *  occurrence events land in the one cell whose dateLabel matches
- *  `parsed_time.start_date`; recurring events fan across every cell
- *  whose weekday is in `parsed_time.days`. Events with no parsed
+/** Bucket every starred event into one or more DayCells. Every occurrence
+ *  lands only in the cell whose full ISO date matches `parsed_time.dates`.
+ *  Events with no parsed
  *  time drop to the Unscheduled bucket. Entries the user has hidden
  *  for a specific day are separated into `hiddenByCell` — still
  *  rendered per-column, but collapsed behind a "N hidden · show"
@@ -170,17 +161,11 @@ function collectSchedule(
   hiddenByCell: Map<string, ScheduleEntry[]>;
   unscheduled: ScheduleEntry[];
 } {
-  // Index for O(1) lookups.
+  // Index cells by full ISO date. M/D is display-only and must never erase a
+  // source year or allow one annual source to bleed into another.
   const cellByDate = new Map<string, DayCell>();
-  const cellsByWeekday = new Map<DayKey, DayCell[]>();
   for (const c of cells) {
-    // First-occurrence-wins for dateLabel: if the window ever repeated
-    // a date (it can't across a single burn year, but be defensive),
-    // the first cell keeps the bucket.
-    if (!cellByDate.has(c.dateLabel)) cellByDate.set(c.dateLabel, c);
-    const list = cellsByWeekday.get(c.weekday);
-    if (list) list.push(c);
-    else cellsByWeekday.set(c.weekday, [c]);
+    cellByDate.set(c.iso, c);
   }
 
   const byCell = new Map<string, ScheduleEntry[]>();
@@ -204,7 +189,7 @@ function collectSchedule(
       starredBy.push(...friends);
 
       const p = event.parsed_time;
-      if (!p) {
+      if (!p || !p.dates || p.dates.length === 0) {
         unscheduled.push({ event, camp, starredBy, startTime: '' });
         continue;
       }
@@ -212,33 +197,17 @@ function collectSchedule(
         event, camp, starredBy, startTime: p.start_time || '',
       };
 
-      if (p.kind === 'single') {
-        // Prefer exact date match; fall back to first occurrence of the
-        // weekday in the window if the fetched date doesn't align with
-        // our configured window.
-        const cell = (p.start_date && cellByDate.get(p.start_date))
-          || (p.start_day && cellsByWeekday.get(p.start_day as DayKey)?.[0])
-          || null;
-        if (cell) push(cell.iso, event.id, entry);
-        else unscheduled.push(entry);
-      } else {
-        // Recurring: every matching-weekday cell on or after the event's
-        // canonical start date. Without this gate, a Tue/Wed/Fri event that
-        // starts 9/1 also appears in matching columns from the prior week.
-        const recurringStart = p.start_date
-          ? cellByDate.get(p.start_date) ?? null
-          : null;
-        let placed = false;
-        for (const d of p.days) {
-          const matches = cellsByWeekday.get(d as DayKey) ?? [];
-          for (const cell of matches) {
-            if (recurringStart && cell.iso < recurringStart.iso) continue;
-            push(cell.iso, event.id, entry);
-            placed = true;
-          }
+      // Place on exactly the dates the event occurs (ADR 11) — no weekday
+      // fan-out, no gates. Each entry lands on the cell whose date matches.
+      let placed = false;
+      for (const occurrenceDate of p.dates) {
+        const cell = cellByDate.get(occurrenceDate);
+        if (cell) {
+          push(cell.iso, event.id, entry);
+          placed = true;
         }
-        if (!placed) unscheduled.push(entry);
       }
+      if (!placed) unscheduled.push(entry);
     }
   }
 
@@ -297,7 +266,7 @@ function EventRow({ e, onGotoCamp, youLabel, onToggleHide, hidden, dense }: {
   const p = e.event.parsed_time;
   const st = p ? to12h(p.start_time) : '';
   const et = p ? to12h(p.end_time) : '';
-  const span = p && p.end_day && p.end_day !== p.start_day ? ` → ${p.end_day}` : '';
+  const span = p?.overnight ? ' +1' : '';
   // Per-day hide only makes sense for a recurring event (drop it from one of
   // its days). Single-occurrence events don't offer it — but an already-hidden
   // row always keeps its restore button so nothing can get stranded.

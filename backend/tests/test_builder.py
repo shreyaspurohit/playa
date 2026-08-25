@@ -73,6 +73,31 @@ class BuilderFixture(unittest.TestCase):
 
 
 class SnapshotAndMetadataTests(BuilderFixture):
+    def test_current_window_must_match_reviewed_official_dates(self):
+        bad = Config(
+            root=self.root,
+            brc_map_year=2026,
+            burn_start="2026-08-31",
+            burn_end="2026-09-07",
+        )
+        with self.assertRaisesRegex(RuntimeError, "reviewed official event window"):
+            SiteBuilder(bad, sources=["api-2026"])
+
+    def test_unknown_current_year_window_is_not_inferred(self):
+        unknown = Config(
+            root=self.root,
+            brc_map_year=2027,
+            burn_start="2027-08-29",
+            burn_end="2027-09-06",
+        )
+        with self.assertRaisesRegex(RuntimeError, "no reviewed official event window"):
+            SiteBuilder(unknown, sources=["api-2027"])
+
+    def test_unknown_historical_source_window_is_not_inferred(self):
+        builder = SiteBuilder(self.config, sources=["api-2026", "api-2027"])
+        with self.assertRaisesRegex(ValueError, "no reviewed official event window"):
+            builder._enrich_event_times([], source_year=2027)
+
     def test_snapshot_loads_camps_art_and_fetched_at_once(self):
         self.write_cache(2026, fetched_at="2026-08-14T23:45:00Z")
         snapshot = SiteBuilder(self.config, sources=["api-2026"]).load_snapshot_for_source(
@@ -212,9 +237,17 @@ class SnapshotAndMetadataTests(BuilderFixture):
         text = out.read_text()
         self.assertIn('name="bm-sources" content="api-2026,api-2025"', text)
         self.assertIn('name="bm-brc-map-year" content="2026"', text)
+        self.assertIn(
+            'name="bm-schedule-windows" '
+            'content="{&quot;api-2026&quot;:{&quot;start&quot;:'
+            '&quot;2026-08-30&quot;,&quot;end&quot;:&quot;2026-09-07&quot;},'
+            '&quot;api-2025&quot;:{&quot;start&quot;:&quot;2025-08-24&quot;,'
+            '&quot;end&quot;:&quot;2025-09-01&quot;}}"',
+            text,
+        )
         self.assertIn('name="bm-fetched-at" content="2026-08-10T05:06:07Z"', text)
-        self.assertIn('name="bm-burn-start" content="2026-08-30"', text)
-        self.assertNotIn('name="bm-burn-start" content="2026-08-24"', text)
+        self.assertNotIn('name="bm-burn-start"', text)
+        self.assertNotIn('name="bm-burn-end"', text)
 
 
 @unittest.skipUnless(HAS_OPENSSL, "openssl not found on PATH")

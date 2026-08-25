@@ -18,9 +18,12 @@ borrow another year's geometry.
 2. Set `BRC_MAP_YEAR=YYYY` and include `YYYY` in `BM_API_YEARS`.
 3. Update all three `SITE_TIERS`: god and demigod receive all configured annual
    sources; spirit receives only `api-YYYY`.
-4. Set `BURN_WINDOW_OPEN_FROM`, `BURN_WINDOW_OPEN_TO`,
-   `CAMP_LOCATION_RELEASE_AT`, and `ART_LOCATION_RELEASE_AT` from current
-   official communications.
+4. Verify the event dates on an official Burning Man Project page, record its
+   link, add the exact same-year window to
+   `backend/src/playa/schedule.py::ANNUAL_EVENT_WINDOWS`, and set
+   `BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO` to those exact values. Set
+   `CAMP_LOCATION_RELEASE_AT` and `ART_LOCATION_RELEASE_AT` from current
+   official communications as well.
 5. Run a strict GIS refresh and inspect the normalized payload:
 
    ```bash
@@ -45,6 +48,8 @@ borrow another year's geometry.
 - Current-year camp/art location masks follow their independent timestamps for
   spirit and demigod, while trusted god can validate the retained coordinates.
 - The generated `bm-brc-map-year` and `bm-sources` values match configuration.
+- The generated `bm-schedule-windows` contains the independently reviewed
+  bounds for every embedded source and no window crosses a calendar year.
 - Tests, typecheck, bundle, service-worker syntax, and `git diff --check` pass.
 
 ## Annual record

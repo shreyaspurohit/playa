@@ -1,0 +1,126 @@
+"""Official annual event windows and normalized occurrence formatting."""
+from __future__ import annotations
+
+from datetime import date, timedelta
+from typing import Optional
+
+
+# Add a year only after verifying it against an official Burning Man page.
+# 2025: https://history.burningman.org/timeline/2025/
+# 2026: https://burningman.org/event/black
+ANNUAL_EVENT_WINDOWS: dict[int, tuple[str, str]] = {
+    2025: ("2025-08-24", "2025-09-01"),
+    2026: ("2026-08-30", "2026-09-07"),
+}
+
+WEEK_ORDER = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_DAY_INDEX = {day.lower(): index for index, day in enumerate(WEEK_ORDER)}
+
+
+def event_window_for_year(year: int) -> tuple[str, str]:
+    """Return a reviewed official window; never infer an unknown year."""
+    try:
+        first_iso, last_iso = ANNUAL_EVENT_WINDOWS[year]
+    except KeyError as error:
+        raise ValueError(
+            f"no reviewed official event window for api-{year}; verify the "
+            "dates with Burning Man Project and add them to ANNUAL_EVENT_WINDOWS"
+        ) from error
+    try:
+        first = date.fromisoformat(first_iso)
+        last = date.fromisoformat(last_iso)
+    except ValueError as error:
+        raise ValueError(f"invalid reviewed event window for api-{year}") from error
+    if first.year != year or last.year != year or first > last:
+        raise ValueError(
+            f"reviewed event window for api-{year} must stay inside that year"
+        )
+    return first_iso, last_iso
+
+
+def _to_12h(hm24: str) -> str:
+    """Convert a normalized 24-hour ``HH:MM`` value for display."""
+    h_str, m_str = hm24.split(":")
+    hour = int(h_str)
+    if hour == 0:
+        return f"12:{m_str} AM"
+    if hour < 12:
+        return f"{hour}:{m_str} AM"
+    if hour == 12:
+        return f"12:{m_str} PM"
+    return f"{hour - 12}:{m_str} PM"
+
+
+def _compact_days(days) -> str:
+    """Compact weekday labels for a recurring event's display string."""
+    if not days:
+        return ""
+    indices = sorted({_DAY_INDEX[day.lower()] for day in days})
+    if len(indices) == 7:
+        return "Daily"
+    if len(indices) >= 3 and indices == list(range(indices[0], indices[-1] + 1)):
+        return f"{WEEK_ORDER[indices[0]]}–{WEEK_ORDER[indices[-1]]}"
+    return ", ".join(WEEK_ORDER[index] for index in indices)
+
+
+def date_in_year(iso: str, year: int) -> bool:
+    """True only for a real ISO date belonging to the annual API source."""
+    try:
+        return date.fromisoformat(iso).year == year
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def date_in_window(iso: str, window_start: str, window_end: str) -> bool:
+    """True when an ISO occurrence date is inside one same-year window."""
+    try:
+        first = date.fromisoformat(window_start)
+        last = date.fromisoformat(window_end)
+        candidate = date.fromisoformat(iso)
+        return (
+            first.year == last.year == candidate.year
+            and first <= candidate <= last
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def format_schedule_display(parsed: Optional[dict]) -> Optional[str]:
+    """Render a card label from exact normalized occurrence dates."""
+    if not parsed:
+        return None
+    dates = parsed.get("dates") or []
+    if not dates:
+        return None
+    start_time = _to_12h(parsed["start_time"])
+    end_time = _to_12h(parsed["end_time"])
+
+    def parsed_date(iso: str) -> date:
+        return date.fromisoformat(iso)
+
+    def weekday(iso: str) -> str:
+        return WEEK_ORDER[parsed_date(iso).weekday()]
+
+    def month_day(iso: str) -> str:
+        value = parsed_date(iso)
+        return f"{value.month}/{value.day}"
+
+    if len(dates) == 1:
+        iso = dates[0]
+        if parsed.get("overnight"):
+            next_day = parsed_date(iso) + timedelta(days=1)
+            return (
+                f"{weekday(iso)} {month_day(iso)} {start_time} – "
+                f"{WEEK_ORDER[next_day.weekday()]} "
+                f"{next_day.month}/{next_day.day} {end_time}"
+            )
+        return f"{weekday(iso)} {month_day(iso)} · {start_time} – {end_time}"
+
+    day_abbrevs: list[str] = []
+    seen: set[str] = set()
+    for iso in dates:
+        day = weekday(iso)
+        if day not in seen:
+            seen.add(day)
+            day_abbrevs.append(day)
+    return f"{_compact_days(day_abbrevs)} · {start_time} – {end_time}"

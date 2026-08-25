@@ -262,6 +262,154 @@ class APISourceLoadTests(unittest.TestCase):
         self.assertEqual(ev.parsed_time["start_time"], "22:00")
         self.assertEqual(ev.parsed_time["end_time"], "23:30")
 
+    def test_builder_places_events_on_exact_occurrence_dates(self):
+        # End-to-end API → builder (ADR 11). 2025's window has two Sundays
+        # (8/24, 8/31). A lone closing-Sunday event keeps 8/31 (not the opening
+        # Sunday); a multi-night overnight event keeps *every* in-window night;
+        # an out-of-window night is dropped, never remapped.
+        from playa.builder import SiteBuilder
+        self._write(2025, {
+            "camps": [{"uid": "c", "name": "C", "year": 2025, "location_string": ""}],
+            "events": [
+                {
+                    "uid": "closing", "title": "Closing party", "year": 2025,
+                    "hosted_by_camp": "c",
+                    "occurrence_set": [
+                        {"start_time": "2025-08-31T23:00:00-07:00",
+                         "end_time":   "2025-08-31T23:45:00-07:00"},
+                    ],
+                },
+                {
+                    "uid": "overnight", "title": "Late night", "year": 2025,
+                    "hosted_by_camp": "c",
+                    "occurrence_set": [
+                        {"start_time": "2025-08-30T23:00:00-07:00",
+                         "end_time":   "2025-08-31T01:00:00-07:00"},
+                        {"start_time": "2025-08-31T23:00:00-07:00",
+                         "end_time":   "2025-09-01T01:00:00-07:00"},
+                        # After the window end (9/1) — must be dropped.
+                        {"start_time": "2025-09-05T23:00:00-07:00",
+                         "end_time":   "2025-09-06T01:00:00-07:00"},
+                    ],
+                },
+            ],
+        })
+        cfg = Config(
+            root=self.root, brc_map_year=2025,
+            burn_start="2025-08-24", burn_end="2025-09-01",
+        )
+        camps = _silent(_load_camps, APISource(year=2025), cfg)
+        SiteBuilder(cfg, sources=["api-2025"])._enrich_event_times(
+            camps, source_year=2025,
+        )
+        by_id = {e.id: e for c in camps for e in c.events}
+
+        closing = by_id["closing"].parsed_time
+        self.assertEqual(closing["kind"], "single")
+        self.assertEqual(closing["dates"], ["2025-08-31"])  # not opening Sunday
+        self.assertEqual(
+            by_id["closing"].display_time, "Sun 8/31 · 11:00 PM – 11:45 PM",
+        )
+
+        overnight = by_id["overnight"].parsed_time
+        self.assertEqual(overnight["kind"], "recurring")
+        self.assertEqual(
+            overnight["dates"], ["2025-08-30", "2025-08-31"],
+        )  # 9/5 dropped
+        self.assertTrue(overnight["overnight"])
+
+    def test_occurrence_matrix_covers_both_weeks_and_window_boundaries(self):
+        """ADR 11 matrix: single/recurring, both weeks, and overnight edges."""
+        from playa.builder import SiteBuilder
+
+        def event(uid, occurrences):
+            return {
+                "uid": uid, "title": uid, "year": 2026,
+                "hosted_by_camp": "c", "occurrence_set": occurrences,
+            }
+
+        def occurrence(start, end):
+            return {"start_time": start, "end_time": end}
+
+        self._write(2026, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2026,
+                "location_string": "",
+            }],
+            "events": [
+                # Single occurrences in week one and week two.
+                event("single-week-one", [occurrence(
+                    "2026-08-30T10:00:00-07:00",
+                    "2026-08-30T11:00:00-07:00",
+                )]),
+                event("single-week-two", [occurrence(
+                    "2026-09-06T10:00:00-07:00",
+                    "2026-09-06T11:00:00-07:00",
+                )]),
+                # Same-time recurrence on the repeated Sunday in both weeks.
+                event("recurring-both-weeks", [
+                    occurrence(
+                        "2026-08-30T12:00:00-07:00",
+                        "2026-08-30T13:00:00-07:00",
+                    ),
+                    occurrence(
+                        "2026-09-06T12:00:00-07:00",
+                        "2026-09-06T13:00:00-07:00",
+                    ),
+                ]),
+                # A single occurrence may start on the inclusive window end and
+                # finish after midnight outside the start-date window.
+                event("single-window-end-overnight", [occurrence(
+                    "2026-09-07T23:00:00-07:00",
+                    "2026-09-08T01:00:00-07:00",
+                )]),
+                # Recurring overnight starts on both inclusive window edges.
+                event("recurring-window-edges-overnight", [
+                    occurrence(
+                        "2026-08-30T23:00:00-07:00",
+                        "2026-08-31T01:00:00-07:00",
+                    ),
+                    occurrence(
+                        "2026-09-07T23:00:00-07:00",
+                        "2026-09-08T01:00:00-07:00",
+                    ),
+                ]),
+            ],
+        })
+        cfg = Config(
+            root=self.root, brc_map_year=2026,
+            burn_start="2026-08-30", burn_end="2026-09-07",
+        )
+        camps = _silent(_load_camps, APISource(year=2026), cfg)
+        SiteBuilder(cfg, sources=["api-2026"])._enrich_event_times(
+            camps, source_year=2026,
+        )
+        parsed = {e.id: e.parsed_time for c in camps for e in c.events}
+
+        self.assertEqual(parsed["single-week-one"]["kind"], "single")
+        self.assertEqual(parsed["single-week-one"]["dates"], ["2026-08-30"])
+        self.assertFalse(parsed["single-week-one"]["overnight"])
+        self.assertEqual(parsed["single-week-two"]["kind"], "single")
+        self.assertEqual(parsed["single-week-two"]["dates"], ["2026-09-06"])
+
+        self.assertEqual(parsed["recurring-both-weeks"]["kind"], "recurring")
+        self.assertEqual(
+            parsed["recurring-both-weeks"]["dates"],
+            ["2026-08-30", "2026-09-06"],
+        )
+        self.assertFalse(parsed["recurring-both-weeks"]["overnight"])
+
+        self.assertEqual(parsed["single-window-end-overnight"]["kind"], "single")
+        self.assertEqual(
+            parsed["single-window-end-overnight"]["dates"], ["2026-09-07"],
+        )
+        self.assertTrue(parsed["single-window-end-overnight"]["overnight"])
+        self.assertEqual(
+            parsed["recurring-window-edges-overnight"]["dates"],
+            ["2026-08-30", "2026-09-07"],
+        )
+        self.assertTrue(parsed["recurring-window-edges-overnight"]["overnight"])
+
     def test_overnight_event_marks_single_kind(self):
         # Crossing midnight in a single occurrence → kind=single (not
         # recurring), so the schedule view's overnight rendering kicks
@@ -282,8 +430,69 @@ class APISourceLoadTests(unittest.TestCase):
         camps = _silent(_load_camps, APISource(year=2024), self.config)
         ev = camps[0].events[0]
         self.assertEqual(ev.parsed_time["kind"], "single")
-        self.assertEqual(ev.parsed_time["start_day"], "Tue")
-        self.assertEqual(ev.parsed_time["end_day"], "Wed")
+        self.assertEqual(ev.parsed_time["dates"], ["2024-08-27"])
+        self.assertTrue(ev.parsed_time["overnight"])
+
+    def test_source_year_and_new_year_are_hard_occurrence_boundaries(self):
+        self._write(2026, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2026,
+                "location_string": "",
+            }],
+            "events": [
+                {
+                    "uid": "valid", "title": "Valid", "year": 2026,
+                    "hosted_by_camp": "c", "occurrence_set": [{
+                        "start_time": "2026-08-30T10:00:00-07:00",
+                        "end_time": "2026-08-30T11:00:00-07:00",
+                    }],
+                },
+                {
+                    "uid": "stale-year", "title": "Stale", "year": 2026,
+                    "hosted_by_camp": "c", "occurrence_set": [{
+                        "start_time": "2025-08-30T10:00:00-07:00",
+                        "end_time": "2025-08-30T11:00:00-07:00",
+                    }],
+                },
+                {
+                    "uid": "cross-new-year", "title": "Boundary", "year": 2026,
+                    "hosted_by_camp": "c", "occurrence_set": [{
+                        "start_time": "2026-12-31T23:00:00-08:00",
+                        "end_time": "2027-01-01T01:00:00-08:00",
+                    }],
+                },
+            ],
+        })
+        camps = _silent(_load_camps, APISource(year=2026), self.config)
+        self.assertEqual([event.id for event in camps[0].events], ["valid"])
+
+    def test_historical_source_uses_its_own_annual_window(self):
+        from playa.builder import SiteBuilder
+
+        self._write(2025, {
+            "camps": [{
+                "uid": "c", "name": "C", "year": 2025,
+                "location_string": "",
+            }],
+            "events": [{
+                "uid": "opening", "title": "Opening", "year": 2025,
+                "hosted_by_camp": "c", "occurrence_set": [{
+                    "start_time": "2025-08-24T10:00:00-07:00",
+                    "end_time": "2025-08-24T11:00:00-07:00",
+                }],
+            }],
+        })
+        cfg = Config(
+            root=self.root, brc_map_year=2026,
+            burn_start="2026-08-30", burn_end="2026-09-07",
+        )
+        camps = _silent(_load_camps, APISource(year=2025), cfg)
+        SiteBuilder(cfg, sources=["api-2025"])._enrich_event_times(
+            camps, source_year=2025,
+        )
+        self.assertEqual(
+            camps[0].events[0].parsed_time["dates"], ["2025-08-24"],
+        )
 
     def test_denylist_drops_camps_by_uid(self):
         self.config.api_denylist_file.write_text(

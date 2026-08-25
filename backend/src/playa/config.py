@@ -33,9 +33,8 @@ class Config:
     #
     # Both REQUIRED at build time — set via env
     # (`BURN_WINDOW_OPEN_FROM` / `BURN_WINDOW_OPEN_TO`) which CI
-    # sources from repo variables. No hardcoded year-specific
-    # defaults; bumping to a new burn year is a CI variable change,
-    # not a code change.
+    # sources from repo variables. SiteBuilder requires them to match the
+    # explicitly reviewed official entry in schedule.ANNUAL_EVENT_WINDOWS.
     burn_start: str = ""
     burn_end:   str = ""
 
@@ -171,11 +170,12 @@ class Config:
             root=root or cls.project_root(),
             site_password=os.environ.get("SITE_PASSWORD", "").strip(),
             pbkdf2_iter=int(os.environ.get("PBKDF2_ITER", "200000")),
-            # No hardcoded fallback — operator MUST set the burn-window
+            # No environment fallback — operator MUST set the burn-window
             # repo variables in CI (or `export BURN_WINDOW_OPEN_FROM=…
             # BURN_WINDOW_OPEN_TO=…` locally). Empty values surface as
             # a build-time error in SiteBuilder.__init__ rather than
-            # silently producing a broken site. Location disclosure
+            # silently producing a broken site. SiteBuilder validates the
+            # values against the reviewed annual entry. Location disclosure
             # has its own timestamp settings below; do not reuse this
             # schedule/access date for the D8 embargo.
             burn_start=os.environ.get("BURN_WINDOW_OPEN_FROM", "").strip(),

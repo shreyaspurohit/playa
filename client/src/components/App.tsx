@@ -32,6 +32,7 @@ import { useFavorites } from '../hooks/useFavorites';
 import { useFriends } from '../hooks/useFriends';
 import { useMeetSpots } from '../hooks/useMeetSpots';
 import { useSource, sourceForDisplay } from '../hooks/useSource';
+import { parseScheduleWindows, type ScheduleWindows } from '../utils/scheduleWindow';
 import { useTheme } from '../hooks/useTheme';
 import { useHashRoute, type View } from '../hooks/useHashRoute';
 import { ActionBar } from './ActionBar';
@@ -73,10 +74,8 @@ interface Meta {
   fetchedDate: string;
   fetchedAt: string;
   version: string;
-  /** Authoritative schedule window (ISO YYYY-MM-DD). Independent from
-   *  password-free access and D8 location disclosure. */
-  burnStart: string;
-  burnEnd: string;
+  /** Reviewed, explicit ISO bounds keyed by annual API source. */
+  scheduleWindows: ScheduleWindows;
   /** Explicit current-year public release policy for API location fields. */
   locationReleaseYear: number;
   campLocationReleaseAt: string;
@@ -91,8 +90,7 @@ function readMeta(): Meta {
     fetchedDate:  get('bm-fetched-date') || 'unknown',
     fetchedAt:    get('bm-fetched-at')   || 'unknown',
     version:      get('bm-version')      || 'v0.0.0',
-    burnStart:    get('bm-burn-start') || '',
-    burnEnd:      get('bm-burn-end')   || '',
+    scheduleWindows: parseScheduleWindows(get('bm-schedule-windows')),
     locationReleaseYear: Number.parseInt(get('bm-location-release-year'), 10),
     campLocationReleaseAt: get('bm-camp-location-release-at') || '',
     artLocationReleaseAt: get('bm-art-location-release-at') || '',
@@ -489,8 +487,9 @@ export function App() {
   // A persisted selection can point at a source this password did not
   // unlock. The effect below fixes localStorage/state, but effects run after
   // paint; derive the source used by visible source labels and notices so an
-  // An unlock never flashes copy for a stale persisted source for one frame.
+  // unlock never flashes copy for a stale persisted source for one frame.
   const visibleSource = sourceForDisplay(source, effectiveAvailableSources);
+  const scheduleWindow = meta.scheduleWindows[visibleSource];
   const sync = useSync(effectiveAvailableSources);
 
   // If the user's persisted source isn't in their unlocked set
@@ -1439,14 +1438,14 @@ export function App() {
               camps={camps}
               favEventIds={eventFavs.favs}
               friendFavEventIds={friends.friendsFavingEvent}
-              burnStart={meta.burnStart}
-              burnEnd={meta.burnEnd}
+              burnStart={scheduleWindow?.start}
+              burnEnd={scheduleWindow?.end}
               isDayHidden={isDayHidden}
               onToggleDayHidden={toggleDayHidden}
               hiddenCount={hiddenDays.size}
               onClearHidden={hiddenDays.clear}
               onGotoCamp={onGotoCamp}
-              source={source}
+              source={visibleSource}
               nowSnapshot={nowSnapshot}
             />
           </div>
@@ -1457,9 +1456,9 @@ export function App() {
               onToggleEventFav={eventFavs.toggle}
               friendFavEventIds={friends.friendsFavingEvent}
               onGotoCamp={onGotoCamp}
-              source={source}
-              burnStart={meta.burnStart}
-              burnEnd={meta.burnEnd}
+              source={visibleSource}
+              burnStart={scheduleWindow?.start}
+              burnEnd={scheduleWindow?.end}
               nowSnapshot={nowSnapshot}
               onRefreshNow={refreshNow}
             />

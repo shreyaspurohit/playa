@@ -111,6 +111,14 @@ boundary; local `.env` values cannot affect it. `BURN_WINDOW_OPEN_FROM` /
 disclosure has its own timestamps. A manual `BURN_OPEN` dispatch input wins
 over the dated unlock window.
 
+The burn-window variables describe the `BRC_MAP_YEAR` window and must match its
+explicit, officially reviewed entry in `backend/src/playa/schedule.py`.
+Schedule and Food receive the separate reviewed window emitted for each
+embedded `api-YYYY`; they never derive a historical window from the current
+year or a holiday. Missing annual entries fail the build. Every window stays
+inside its source year, and occurrence timestamps must have both start and end
+in that year. Dates are never rewritten across annual source boundaries.
+
 ### D14 — Art is part of the same snapshot
 
 Art is loaded, encrypted, tiered, searched, shared, and embargoed alongside

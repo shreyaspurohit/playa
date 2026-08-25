@@ -75,16 +75,16 @@ describe('<ScheduleView> source geometry', () => {
   });
 });
 
-describe('<ScheduleView> recurring start date', () => {
+describe('<ScheduleView> exact occurrence dates', () => {
   test('does not fan a recurring event backward before its first occurrence', () => {
     const recurring = {
       id: 'blinky', name: 'Blinky dance and light experience',
       description: '', time: '', display_time: '',
       parsed_time: {
         kind: 'recurring' as const,
+        dates: ['2026-09-01', '2026-09-02', '2026-09-04'],
         days: ['Tue', 'Wed', 'Fri'],
-        start_day: 'Tue', start_date: '9/1',
-        start_time: '20:00', end_day: 'Fri', end_date: '9/4', end_time: '23:45',
+        start_time: '20:00', end_time: '23:45', overnight: false,
       },
     };
     render(h(ScheduleView, {
@@ -107,6 +107,77 @@ describe('<ScheduleView> recurring start date', () => {
       .map((day) => day.querySelector('summary > .sched-day-label')?.textContent?.trim() ?? '');
     assert.deepEqual(populatedDays, ['Tue 9/1', 'Wed 9/2', 'Fri 9/4']);
   });
+
+  test('places single and recurring events in both weeks and on window edges', () => {
+    const event = (
+      id: string, dates: string[], days: string[], overnight = false,
+    ) => ({
+      id, name: id, description: '', time: '', display_time: '',
+      parsed_time: {
+        kind: dates.length === 1 ? 'single' as const : 'recurring' as const,
+        dates, days, start_time: '23:00', end_time: overnight ? '01:00' : '23:45',
+        overnight,
+      },
+    });
+    const events = [
+      event('single-week-one', ['2026-08-30'], ['Sun']),
+      event('single-week-two', ['2026-09-06'], ['Sun']),
+      event('recurring-both-weeks', ['2026-08-30', '2026-09-06'], ['Sun']),
+      event('recurring-window-edges-overnight', ['2026-08-30', '2026-09-07'], ['Sun', 'Mon'], true),
+    ];
+    render(h(ScheduleView, {
+      camps: [{
+        id: 'camp', name: 'Camp', location: '', description: '', website: '',
+        tags: [], events,
+      }],
+      favEventIds: new Set(events.map((e) => e.id)), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-07',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+    }), mount);
+
+    const populatedDays = (name: string) => Array.from(
+      mount.querySelectorAll<HTMLElement>('.schedule-accordion > details'))
+      .filter((day) => day.textContent?.includes(name))
+      .map((day) => day.querySelector('summary > .sched-day-label')?.textContent?.trim() ?? '');
+
+    assert.deepEqual(populatedDays('single-week-one'), ['Sun 8/30']);
+    assert.deepEqual(populatedDays('single-week-two'), ['Sun 9/6']);
+    assert.deepEqual(
+      populatedDays('recurring-both-weeks'), ['Sun 8/30', 'Sun 9/6'],
+    );
+    assert.deepEqual(
+      populatedDays('recurring-window-edges-overnight'), ['Sun 8/30', 'Mon 9/7'],
+    );
+  });
+
+  test('never places the same month/day from a different year', () => {
+    const wrongYear = {
+      id: 'wrong-year', name: 'Wrong-year event', description: '', time: '',
+      display_time: '', parsed_time: {
+        kind: 'single' as const, dates: ['2025-08-30'], days: ['Sat'],
+        start_time: '10:00', end_time: '11:00', overnight: false,
+      },
+    };
+    render(h(ScheduleView, {
+      camps: [{
+        id: 'camp', name: 'Camp', location: '', description: '', website: '',
+        tags: [], events: [wrongYear],
+      }],
+      favEventIds: new Set(['wrong-year']), friendFavEventIds: () => [],
+      burnStart: '2026-08-30', burnEnd: '2026-09-07',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+    }), mount);
+
+    const populatedDay = Array.from(
+      mount.querySelectorAll<HTMLElement>('.schedule-accordion > details'),
+    ).some((day) => day.textContent?.includes('Wrong-year event'));
+    assert.equal(populatedDay, false);
+    assert.match(mount.querySelector('.sched-unscheduled')?.textContent ?? '', /Wrong-year event/);
+  });
 });
 
 describe('<ScheduleView> past-event filter', () => {
@@ -116,8 +187,8 @@ describe('<ScheduleView> past-event filter', () => {
     ) => ({
       id, name, description: '', time: start_time, display_time: start_time,
       parsed_time: parsed ? {
-        kind: 'single' as const, days: ['Mon'], start_day: 'Mon', start_date: '8/31',
-        start_time, end_day: 'Mon', end_date: '8/31', end_time,
+        kind: 'single' as const, dates: ['2026-08-31'], days: ['Mon'],
+        start_time, end_time, overnight: false,
       } : null,
     });
     const camps = [{
@@ -160,8 +231,8 @@ describe('<ScheduleView> past-event filter', () => {
     const event = (id: string, name: string, start_time: string, end_time: string) => ({
       id, name, description: '', time: start_time, display_time: start_time,
       parsed_time: {
-        kind: 'single' as const, days: ['Mon'], start_day: 'Mon', start_date: '8/31',
-        start_time, end_day: 'Mon', end_date: '8/31', end_time,
+        kind: 'single' as const, dates: ['2026-08-31'], days: ['Mon'],
+        start_time, end_time, overnight: false,
       },
     });
     const props = {
@@ -194,8 +265,8 @@ describe('<ScheduleView> past-event filter', () => {
     const pastEvent = {
       id: 'past', name: 'Past event', description: '', time: '', display_time: '',
       parsed_time: {
-        kind: 'single' as const, days: ['Mon'], start_day: 'Mon', start_date: '8/31',
-        start_time: '10:00', end_day: 'Mon', end_date: '8/31', end_time: '11:00',
+        kind: 'single' as const, dates: ['2026-08-31'], days: ['Mon'],
+        start_time: '10:00', end_time: '11:00', overnight: false,
       },
     };
     render(h(ScheduleView, {
@@ -222,8 +293,8 @@ describe('<ScheduleView> past-event filter', () => {
     const overnight = {
       id: 'overnight', name: 'Noodley night', description: '', time: '', display_time: '',
       parsed_time: {
-        kind: 'single' as const, days: ['Sat'], start_day: 'Sat', start_date: '9/5',
-        start_time: '23:00', end_day: 'Sun', end_date: '9/6', end_time: '01:00',
+        kind: 'single' as const, dates: ['2026-09-05'], days: ['Sat'],
+        start_time: '23:00', end_time: '01:00', overnight: true,
       },
     };
     const props = {
@@ -248,13 +319,47 @@ describe('<ScheduleView> past-event filter', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(mount.textContent?.includes('Noodley night'), false);
   });
+
+  test('keeps the week-two occurrence of a recurring overnight event through its end', async () => {
+    const recurring = {
+      id: 'recurring-overnight', name: 'Recurring night',
+      description: '', time: '', display_time: '',
+      parsed_time: {
+        kind: 'recurring' as const, dates: ['2026-08-30', '2026-09-06'], days: ['Sun'],
+        start_time: '23:00', end_time: '01:00', overnight: true,
+      },
+    };
+    const props = {
+      camps: [{
+        id: 'camp', name: 'Camp', location: '', description: '', website: '',
+        tags: [], events: [recurring],
+      }],
+      favEventIds: new Set(['recurring-overnight']),
+      friendFavEventIds: () => [], youLabel: 'You',
+      burnStart: '2026-08-30', burnEnd: '2026-09-07',
+      isDayHidden: () => false, onToggleDayHidden: () => {},
+      hiddenCount: 0, onClearHidden: () => {}, onGotoCamp: () => {},
+      source: 'api-2026',
+      nowSnapshot: new Date('2026-09-07T00:30:00-07:00'),
+    };
+    render(h(ScheduleView, props), mount);
+    mount.querySelector<HTMLButtonElement>('.sched-filter-btn.past')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(mount.textContent?.includes('Recurring night'), true);
+
+    render(h(ScheduleView, {
+      ...props, nowSnapshot: new Date('2026-09-07T01:00:00-07:00'),
+    }), mount);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(mount.textContent?.includes('Recurring night'), false);
+  });
 });
 
 const single = (id: string, name: string, date: string, day: string) => ({
   id, name, description: '', time: name, display_time: name,
   parsed_time: {
-    kind: 'single' as const, days: [day], start_day: day, start_date: date,
-    start_time: '12:00', end_day: day, end_date: date, end_time: '13:00',
+    kind: 'single' as const, dates: [date], days: [day],
+    start_time: '12:00', end_time: '13:00', overnight: false,
   },
 });
 const campWith = (events: ReturnType<typeof single>[]) => ([{
@@ -276,8 +381,8 @@ describe('<ScheduleView> desktop day tabs', () => {
   test('selects today by default and shows its agenda', () => {
     render(h(ScheduleView, {
       camps: campWith([
-        single('a', 'Mon thing', '8/31', 'Mon'),
-        single('b', 'Wed thing', '9/2', 'Wed'),
+        single('a', 'Mon thing', '2026-08-31', 'Mon'),
+        single('b', 'Wed thing', '2026-09-02', 'Wed'),
       ]),
       favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',
@@ -293,7 +398,7 @@ describe('<ScheduleView> desktop day tabs', () => {
 
   test('selects the first day before the burn, when today is outside the window', () => {
     render(h(ScheduleView, {
-      camps: campWith([single('a', 'Mon thing', '8/31', 'Mon')]),
+      camps: campWith([single('a', 'Mon thing', '2027-08-30', 'Mon')]),
       favEventIds: new Set(['a']), friendFavEventIds: () => [],
       burnStart: '2027-08-29', burnEnd: '2027-09-06',
       isDayHidden: () => false, onToggleDayHidden: () => {},
@@ -307,8 +412,8 @@ describe('<ScheduleView> desktop day tabs', () => {
   test('clicking a tab switches the agenda to that day', async () => {
     render(h(ScheduleView, {
       camps: campWith([
-        single('a', 'Mon thing', '8/31', 'Mon'),
-        single('b', 'Wed thing', '9/2', 'Wed'),
+        single('a', 'Mon thing', '2026-08-31', 'Mon'),
+        single('b', 'Wed thing', '2026-09-02', 'Wed'),
       ]),
       favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',
@@ -329,8 +434,8 @@ describe('<ScheduleView> desktop day tabs', () => {
     // selection must fall to the first day that still has matches (Fri).
     render(h(ScheduleView, {
       camps: campWith([
-        single('wed', 'Wed thing', '9/2', 'Wed'),
-        single('fri', 'Fri thing', '9/4', 'Fri'),
+        single('wed', 'Wed thing', '2026-09-02', 'Wed'),
+        single('fri', 'Fri thing', '2026-09-04', 'Fri'),
       ]),
       favEventIds: new Set(['wed', 'fri']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',
@@ -351,8 +456,8 @@ describe('<ScheduleView> desktop day tabs', () => {
     // to the first day), not match Wed 9/2 by month/day alone.
     render(h(ScheduleView, {
       camps: campWith([
-        single('a', 'Wed thing', '9/2', 'Wed'),
-        single('b', 'Thu thing', '9/3', 'Thu'),
+        single('a', 'Wed thing', '2027-09-01', 'Wed'),
+        single('b', 'Thu thing', '2027-09-02', 'Thu'),
       ]),
       favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
       burnStart: '2027-08-29', burnEnd: '2027-09-06',
@@ -367,8 +472,8 @@ describe('<ScheduleView> desktop day tabs', () => {
   test('arrow keys move the selected day and carry focus with the roving tabindex', async () => {
     render(h(ScheduleView, {
       camps: campWith([
-        single('a', 'Sun thing', '8/30', 'Sun'),
-        single('b', 'Mon thing', '8/31', 'Mon'),
+        single('a', 'Sun thing', '2026-08-30', 'Sun'),
+        single('b', 'Mon thing', '2026-08-31', 'Mon'),
       ]),
       favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',
@@ -400,9 +505,9 @@ describe('<ScheduleView> mobile accordion', () => {
   test('opens only today by default when today is in the burn window', () => {
     render(h(ScheduleView, {
       camps: campWith([
-        single('a', 'Mon thing', '8/31', 'Mon'),
-        single('b', 'Wed thing', '9/2', 'Wed'),
-        single('c', 'Fri thing', '9/4', 'Fri'),
+        single('a', 'Mon thing', '2026-08-31', 'Mon'),
+        single('b', 'Wed thing', '2026-09-02', 'Wed'),
+        single('c', 'Fri thing', '2026-09-04', 'Fri'),
       ]),
       favEventIds: new Set(['a', 'b', 'c']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',
@@ -415,13 +520,13 @@ describe('<ScheduleView> mobile accordion', () => {
   });
 
   test('toggling a filter on then off does not leave non-today days pinned open', async () => {
-    const ongoing = single('today', 'Today thing', '9/2', 'Wed');
+    const ongoing = single('today', 'Today thing', '2026-09-02', 'Wed');
     ongoing.parsed_time.end_time = '14:00'; // still in progress at 13:00
     render(h(ScheduleView, {
       camps: campWith([
-        single('past', 'Past thing', '9/1', 'Tue'),
+        single('past', 'Past thing', '2026-09-01', 'Tue'),
         ongoing,
-        single('future', 'Future thing', '9/4', 'Fri'),
+        single('future', 'Future thing', '2026-09-04', 'Fri'),
       ]),
       favEventIds: new Set(['past', 'today', 'future']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',
@@ -445,8 +550,8 @@ describe('<ScheduleView> mobile accordion', () => {
   test('a user opening a collapsed day sticks', async () => {
     render(h(ScheduleView, {
       camps: campWith([
-        single('a', 'Mon thing', '8/31', 'Mon'),
-        single('b', 'Wed thing', '9/2', 'Wed'),
+        single('a', 'Mon thing', '2026-08-31', 'Mon'),
+        single('b', 'Wed thing', '2026-09-02', 'Wed'),
       ]),
       favEventIds: new Set(['a', 'b']), friendFavEventIds: () => [],
       burnStart: '2026-08-30', burnEnd: '2026-09-05',

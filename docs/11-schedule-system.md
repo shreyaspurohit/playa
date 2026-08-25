@@ -1,7 +1,7 @@
 ---
 title: Schedule System
 date: 2026-04-27
-updated: 2026-08-17
+updated: 2026-08-24
 status: current
 ---
 
@@ -12,28 +12,48 @@ status: current
 The Schedule tab lays starred events out on a per-day grid for the
 whole burn week. The hard parts are:
 
-1. **Parsing API free-text time strings** into a
-   structured form (kind / days / start / end).
-2. **Bucketing recurring events** correctly across the day columns.
-3. **Year-aware occurrence dates** — valid `(M/D)` tuples distinguish repeated
-   weekdays across the two-week window, while stale prior-year tuples must be
-   detected and repaired.
+1. **Normalizing API occurrence timestamps** without a lossy display-string
+   round trip.
+2. **Bucketing single and recurring occurrences** on their literal dates.
+3. **Preserving annual source identity** so a date from `api-YYYY` can never be
+   interpreted as belonging to another year.
 
 ## Decisions
 
-- **Server-side parsing**, client-side rendering. `timeparser.py`
-  runs at build time and stamps every event with a structured
-  `parsed_time` plus a pre-rendered `display_time` string. The
-  client never sees the raw upstream format.
-- **Configured window is authoritative.** `BURN_WINDOW_OPEN_FROM` and
-  `BURN_WINDOW_OPEN_TO` define the calendar's first and last columns. Event
-  records outside that interval do not expand the schedule.
-- **Occurrence-aware single dates.** A valid explicit `(M/D)` is retained when
-  it falls inside the configured event window and its weekday agrees with the
-  current burn year. This distinguishes the second Saturday from the first.
-  Stale tuples whose weekday no longer agrees are repaired through the
-  canonical burn-window map. Overnight end dates are derived from the resolved
-  start occurrence, so a second-week Saturday ends on the following Sunday.
+- **Server-side normalization, client-side rendering.** `sources/api.py`
+  converts upstream ISO occurrence timestamps directly into structured
+  `parsed_time`; `schedule.py` filters/formats that structure at build time.
+  Calendar placement never reparses `event.time` or `display_time`.
+- **Reviewed source-year windows are authoritative.** Every supported
+  `api-YYYY` has an explicit annual window in `schedule.py`, added only after
+  checking an official Burning Man Project page. The current reviewed entries
+  are [2025: August 24–September 1](https://history.burningman.org/timeline/2025/)
+  and [2026: August 30–September 7](https://burningman.org/event/black).
+  `BURN_WINDOW_OPEN_FROM` and `BURN_WINDOW_OPEN_TO` must exactly match the
+  reviewed `BRC_MAP_YEAR` entry. The builder emits the explicit window for each
+  embedded source; the client parses that metadata and never projects one
+  year's dates into another year. A missing annual entry fails the build.
+- **Exact occurrence dates, not a weekday fan-out** *(2026-08-24, supersedes the
+  earlier weekday-set + start-date model)*. Each event carries the explicit list
+  of its in-window occurrence start dates — `parsed_time.dates`
+  (`YYYY-MM-DD`, sorted) —
+  read straight from the API `occurrence_set` and filtered to the configured
+  window. The client places an event on exactly those dates; it never infers
+  placement by matching weekdays across the calendar. The prior model stored a
+  weekday set plus one start date and fanned it across the window, which was
+  lossy two ways: it kept only the first night of a multi-night overnight event
+  (40 events / ~150 nights dropped in the 2026 snapshot), and it fabricated
+  entries on every matching weekday past an event's real last occurrence (26
+  phantom closing-Sunday events). With exact dates the builder trusts the
+  normalizer's structured occurrences instead of **re-parsing the display
+  string** — that round-trip was itself lossy (a date-less `"…on Sun"` string
+  re-read as a weekly recurrence and collapsed onto the opening Sunday, moving 18
+  real 9/6 events to 8/30). Out-of-window occurrences are dropped, never
+  remapped. The API adapter drops a tuple unless both its start and end belong
+  to the source's `api-YYYY`; this also rejects Dec 31 → Jan 1 occurrences.
+  The builder then drops dates outside that source year's reviewed window.
+  `parsed_time.overnight` marks an occurrence whose end crosses midnight within
+  the same year, so the card renders the end on `date + 1`.
 - **Day-of-week labels, not dates, in the calendar.** Burners think
   in "Wednesday of burn week," not "Aug 27." The columns are
   Mon-first (matches camp usage) and labelled by short day name +
@@ -88,37 +108,25 @@ whole burn week. The hard parts are:
 
 ## Mechanism
 
-### Time parsing pipeline
+### Occurrence normalization pipeline
 
 ```mermaid
 flowchart TD
-  Raw["raw event.time<br>'Begins Tue (8/27) at 10:00 AM, Ends 11:15 AM'"]
-  R1[_BEGINS_RE]
-  R2[_FROM_RE]
-  Parsed["parsed_time<br>{kind, days, start_*, end_*}"]
+  Raw["API occurrence_set<br>ISO start + end timestamps"]
+  Guard["require start.year = end.year = source year"]
+  Parsed["parsed_time<br>{kind, dates[], days[], start_time, end_time, overnight}"]
+  Window["source-year annual window filter"]
   Display["display_time<br>'Tue 8/27 · 10:00 AM – 11:15 AM'"]
-  Raw --> R1 --> Parsed
-  Raw --> R2 --> Parsed
-  Parsed -->|"_compact_days +<br>format_display"| Display
+  Raw --> Guard --> Parsed --> Window
+  Window -->|"format_schedule_display"| Display
 ```
 
-Two regex flavors handle ~99.98% of the corpus:
-
-- **Begins/Ends form** — single occurrence, sometimes spans
-  midnight: `Begins Thu (8/29) at 9:00 PM, Ends Fri at 2:00 AM`.
-- **From/On form** — recurring: `From 11:00 AM to 3:00 PM on Mon,
-  Tue, Wed, Thu, Fri`.
-
-Anything that doesn't match keeps an empty `display_time`; the
-template falls back to `e.display_time || e.time` so unparsed events
-still render with their raw string. The build prints a coverage
-percentage to catch parser regressions.
-
-After parsing, `resolve_single_start_date` validates explicit single-event
-dates against the configured burn year, weekday, and event window. Valid dates
-survive; invalid/stale dates fall back to `canonical_week_map`. The resolved
-start occurrence also drives `resolve_end_date`, keeping both `display_time`
-and structured `parsed_time.end_date` aligned for overnight events.
+Same-time occurrences coalesce into one event with multiple exact dates;
+mixed-time occurrences remain separate records. Invalid timestamps, wrong-year
+timestamps, and cross-New-Year spans do not enter `parsed_time`. A normalized
+event with no date inside its source window remains visible as Unscheduled via
+the raw fallback time. The old free-text parsing and week-map helpers were
+deleted; there is no fallback path that can remap an occurrence.
 
 ### Day compaction
 
@@ -144,7 +152,7 @@ ambiguously (could be a single label like "Mon-day Tue-sday").
 ```mermaid
 flowchart TD
   StarredEvents[event favs + friend favs]
-  Window["Config.burn_start<br>+ Config.burn_end"]
+  Window["active source's explicit<br>reviewed annual window"]
   Cells["Map<dayKey → events[]>"]
   StarredEvents -->|filter has parsed_time| Cells
   Window --> Cells
@@ -153,10 +161,12 @@ flowchart TD
   Cells --> Filters["Hide-past + Now + Near-me filters<br>(see hooks/useGeolocation)"]
 ```
 
-Recurring events render once **per day they recur, on or after their stamped
-`start_date`**. A Tue/Wed/Fri event that starts on the second Tuesday does not
-fan backward into the prior week's matching columns. Unparsed events land in a dashed-border
-"Unscheduled" section with their raw time so nothing is lost.
+An event renders once **per date in `parsed_time.dates`** — the exact calendar
+days it occurs. There is no weekday fan-out and no start/end gate: a Tue/Wed/Fri
+event that runs only the second week appears on precisely those three dates, and
+a multi-night overnight event appears on each of its nights. Events with no
+in-window date land in a dashed-border "Unscheduled" section with their raw time
+so nothing is lost.
 
 ### Filters
 
@@ -177,28 +187,36 @@ fan backward into the prior week's matching columns. Unparsed events land in a d
 
 ## Failure modes & trade-offs
 
-- **Format drift** in API strings will tank the parse rate. The
-  build log prints the percentage; if it falls below ~99% we
-  inspect samples and add a regex.
-- **Day labels can span two Sundays** (Sun and Sun2 in source data).
-  The parser strips trailing `2`/`3` digits and dedupes — second
-  occurrence is collapsed into the first. The calendar columns
-  derive from the actual date window so this is fine.
-- **Recurring events with no date tuple** get their `(starts M/D)` annotation
-  from the earliest mapped calendar date among their weekdays—not from a
-  Monday-first weekday ordering. This handles event windows that begin on
-  Sunday. The builder stamps the same date into `parsed_time.start_date` so
-  Food and Schedule display/date-gating agree.
+- **Timestamp/schema drift** can reduce normalization coverage. The build log
+  prints the scheduled percentage so a wholesale snapshot problem is visible.
+- **Two same-weekday columns** (opening and closing Sunday; two Mondays) are no
+  longer a hazard: placement is by exact ISO date, so an occurrence lands on the
+  literal date it happens. There is no weekday collapse to get wrong.
+- **Stale / out-of-window occurrences are dropped, not repaired.** Full ISO
+  dates and explicit source-year guards mean a prior-year tuple cannot match a
+  current or historical calendar by month/day coincidence.
+- **Unknown annual windows fail closed.** Adding an `api-YYYY` source requires
+  an official-date review and a new explicit `schedule.py` entry. Neither the
+  builder nor browser infers dates from a holiday or another burn year.
+- **Occurrence timestamps are read in their source offset** (`_parse_iso` keeps
+  the API's `-07:00`), so the ISO date is Playa-local. A future snapshot delivered
+  in UTC would shift late-night dates and needs a Pacific conversion first.
 
 ## Code references
 
-- `backend/src/playa/timeparser.py` — all parsing + compaction
-- `backend/tests/test_timeparser.py` — AM/PM boundaries, day
-  compaction, year-free guarantee
-- `backend/src/playa/builder.py::_enrich_event_times` — two-pass
-  walk that derives the week map then formats display strings
-- `client/src/components/ScheduleView.tsx` — calendar grid +
-  filters + day-hide
+- `backend/src/playa/sources/api.py::_occ_parsed_time` — builds
+  `parsed_time` (exact `dates`, `overnight`) from an event's occurrences
+- `backend/src/playa/builder.py::_enrich_event_times` — window-filters
+  the occurrence dates and renders `display_time`; trusts `parsed_time`
+- `backend/src/playa/schedule.py` — reviewed annual windows,
+  `format_schedule_display`, `date_in_window`, AM/PM conversion, day compaction
+- `backend/tests/test_api_source.py` — API → builder → exact-date path,
+  including multi-night overnight and out-of-window dropping
+- `client/src/components/ScheduleView.tsx::collectSchedule` — places each
+  event on exactly its `parsed_time.dates`
+- `client/src/utils/scheduleWindow.ts` — validates the builder's explicit
+  per-source window metadata and rejects malformed/cross-year entries
+- `client/src/utils/foodAvailability.ts::occursOn` — date-membership test
 - `client/src/utils/clock.ts` — shared real/simulated clock
 - `client/src/hooks/useGeolocation.ts` — opt-in GPS for Near-me
 - `client/src/utils/mockGps.ts` — persistent `?gps=` test override

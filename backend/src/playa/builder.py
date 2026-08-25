@@ -39,13 +39,10 @@ from .gis import validate_normalized_gis
 from .models import Art, Camp
 from .sources import Source, SourceSnapshot, make_source
 from .tagger import Tagger
-from .timeparser import (
-    canonical_week_map,
-    earliest_day_in_map,
-    format_display,
-    parse_event_time,
-    resolve_end_date,
-    resolve_single_start_date,
+from .schedule import (
+    date_in_window,
+    event_window_for_year,
+    format_schedule_display,
 )
 
 
@@ -70,13 +67,11 @@ class SiteBuilder:
         tagger: Tagger | None = None,
         sources: list[str] | None = None,
     ):
-        # Year-specific dates have NO code defaults — operator sets
-        # them via repo variables in CI (BURN_WINDOW_OPEN_FROM /
-        # BURN_WINDOW_OPEN_TO) or `.env` locally. Fail loud here
-        # rather than later with an unhelpful "Invalid isoformat: ''"
-        # deep in the event parser. These dates are the authoritative
-        # schedule window. Password-free access and D8 location release
-        # use separate settings.
+        # Operators still configure the current-year bounds in CI/local env,
+        # but the values must match a reviewed official annual window. This
+        # prevents a typo or an inferred holiday-relative date from silently
+        # moving events. Password-free access and D8 location release use
+        # separate settings.
         if not config.burn_start or not config.burn_end:
             raise RuntimeError(
                 "BURN_WINDOW_OPEN_FROM and BURN_WINDOW_OPEN_TO must "
@@ -86,6 +81,18 @@ class SiteBuilder:
                 "`.env` at the repo root). "
                 f"Currently: BURN_WINDOW_OPEN_FROM={config.burn_start!r}, "
                 f"BURN_WINDOW_OPEN_TO={config.burn_end!r}.",
+            )
+        try:
+            reviewed_window = event_window_for_year(config.brc_map_year)
+        except ValueError as e:
+            raise RuntimeError(f"invalid burn calendar window: {e}") from e
+        configured_window = (config.burn_start, config.burn_end)
+        if configured_window != reviewed_window:
+            raise RuntimeError(
+                "BURN_WINDOW_OPEN_FROM/TO must match the reviewed official "
+                f"event window for api-{config.brc_map_year}: "
+                f"{reviewed_window[0]} through {reviewed_window[1]}; got "
+                f"{config.burn_start!r} through {config.burn_end!r}."
             )
         self.config = config
         self.tagger = tagger or Tagger()
@@ -233,59 +240,43 @@ class SiteBuilder:
                 "exclusion(s) did not match a classified record",
             )
         camps.sort(key=lambda c: c.name.lower())
-        self._enrich_event_times(camps)
+        self._enrich_event_times(camps, source_year=source.year)
         for piece in snapshot.art:
             piece.tags = self.tagger.tag_art(piece)
         snapshot.art.sort(key=lambda a: a.name.lower())
         return snapshot
 
-    def _enrich_event_times(self, camps: list[Camp]) -> None:
-        """Populate event.display_time + parsed_time in place.
+    def _enrich_event_times(self, camps: list[Camp], *, source_year: int) -> None:
+        """Window-filter each event's occurrence dates and render display_time.
 
-        The configured burn window is authoritative. Source records may carry
-        dates outside it, but those dates must never expand the site's calendar.
+        Trusts the normalizer's structured `parsed_time` (exact occurrence
+        dates) — no re-parse of the display string and no weekday fan-out.
+        The reviewed official window for the source year is authoritative:
+        occurrence dates outside it are dropped, never remapped, so a stale
+        prior-year tuple yields no calendar placement rather than a fabricated
+        one. See ADR 11.
         """
-        # Pass 1: parse every event's raw time.
-        parses: list[tuple] = []
+        window_start, window_end = event_window_for_year(source_year)
+        recognized = 0
+        total = 0
         for camp in camps:
             for ev in camp.events:
-                parses.append((ev, parse_event_time(ev.time)))
-        week_map = canonical_week_map(
-            self.config.burn_start, self.config.burn_end,
-        )
-
-        # Pass 2: stamp canonical dates + format display strings.
-        recognized = 0
-        for ev, p in parses:
-            if p:
-                # Override fetched start_date + fill end_date from canonical map.
-                end_day = p["end_day"] or p["start_day"]
-                p["end_day"] = end_day
-                if p["kind"] == "recurring" and p.get("days"):
-                    # Stamp the earliest occurrence date (the same one the
-                    # display's "(starts M/D)" uses) so the client can date-gate
-                    # recurring availability rather than matching weekday-only.
-                    earliest = earliest_day_in_map(p["days"], week_map)
-                    p["start_date"] = week_map.get(earliest or "") or p.get("start_date")
-                else:
-                    p["start_date"] = resolve_single_start_date(
-                        p, week_map, self.config.burn_start, self.config.burn_end,
-                    )
-            s = format_display(p, week_map)
-            if s:
-                ev.display_time = s
-                recognized += 1
-            if p:
-                ev.parsed_time = {
-                    **p,
-                    "end_date": resolve_end_date(p, week_map),
-                }
-        if parses:
-            print(f"  event times parsed: {recognized}/{len(parses)} "
-                  f"({100 * recognized // len(parses)}%); "
-                  f"calendar window: {self.config.burn_start} → "
-                  f"{self.config.burn_end}; "
-                  f"week map: {dict(sorted(week_map.items()))}")
+                p = ev.parsed_time
+                if not p:
+                    continue
+                total += 1
+                p["dates"] = [
+                    d for d in p.get("dates", [])
+                    if date_in_window(d, window_start, window_end)
+                ]
+                s = format_schedule_display(p)
+                if s:
+                    ev.display_time = s
+                    recognized += 1
+        if total:
+            print(f"  event times: {recognized}/{total} scheduled "
+                  f"({100 * recognized // total}%); "
+                  f"calendar window: {window_start} → {window_end}")
 
     # --- encryption -------------------------------------------------------
 
@@ -1290,11 +1281,25 @@ class SiteBuilder:
 
         # Comma-separated source list; client picks the first as
         # default if there's no `bm-source` in localStorage.
+        schedule_windows: dict[str, dict[str, str]] = {}
+        for spec, _ in loaded:
+            window_start, window_end = event_window_for_year(
+                make_source(spec).year,
+            )
+            schedule_windows[spec] = {
+                "start": window_start,
+                "end": window_end,
+            }
+        schedule_windows_json = html_lib.escape(
+            json.dumps(schedule_windows, separators=(",", ":")), quote=True,
+        )
         sources_meta = (
             f'<meta name="bm-sources" content="'
             f'{",".join(spec for spec, _ in loaded)}">\n'
             f'<meta name="bm-brc-map-year" '
-            f'content="{self.config.brc_map_year}">'
+            f'content="{self.config.brc_map_year}">\n'
+            f'<meta name="bm-schedule-windows" '
+            f'content="{schedule_windows_json}">'
         )
         gis_script, gis_years = self._gis_data_scripts(
             [spec for spec, _ in loaded],
@@ -1326,8 +1331,8 @@ class SiteBuilder:
             f'</script>'
         )
 
-        # The client derives calendar columns directly from the configured
-        # burn_start + burn_end; no separate week-map tag is needed.
+        # The client uses the explicit per-source schedule-window metadata;
+        # it never derives an annual window from another year's dates.
         html = (
             self._read_template()
             .replace("__DATA_SCRIPT__",        data_script)
@@ -1339,8 +1344,6 @@ class SiteBuilder:
             .replace("__VERSION__",            meta.get("version", "v0.0.0"))
             .replace("__FETCHED_DATE__",       meta.get("fetched_date", "unknown"))
             .replace("__FETCHED_AT__",         meta.get("fetched_at", "unknown"))
-            .replace("__BURN_START__",         self.config.burn_start)
-            .replace("__BURN_END__",           self.config.burn_end)
             .replace(
                 "__LOCATION_RELEASE_YEAR__",
                 str(self.config.brc_map_year),

@@ -142,37 +142,35 @@ an aggregate warning without printing IDs.
 
 Each food *event* is placed by comparing `parsed_time` to the viewer's clock:
 
-- **Serving now** — `start_time ≤ now < end_time` on a matching day (handle the
-  midnight wrap via `end_day`, as `parsed_time` already encodes it).
+- **Serving now** — `start_time ≤ now < end_time` on an exact occurrence date;
+  `parsed_time.overnight` carries the midnight wrap.
 - **Starting soon** — `now < start_time ≤ now + NOW_WINDOW_HOURS` today
   (the same two-hour policy used by Schedule).
 - **Upcoming** — remaining current/future timed events in one collapsible list,
-  sorted by canonical start date, then start time, then camp name.
+  sorted by earliest exact occurrence date, then start time, then camp name.
 - **Hours not listed** (`anytime` internally) — food with **no** parsed
   food-event time: camps whose food is only in prose, or events with no
   `parsed_time`. Deliberately **not** labeled "Anytime" — many are actually
   time-bound (e.g. a night-only camp) and we simply lack a structured time.
 
-**Date-gating (`utils/foodAvailability`).** Availability is DATE-aware, not just
-weekday+time — an event is "now"/"soon" only when today is genuinely a day it
-occurs: inside the **burn window** (`bm-burn-start`/`bm-burn-end` passed to
-FoodView), on a matching weekday, and **on/after its start date**. Recurring
-events don't carry a date in the raw parse (`start_date` is null), so the
-builder now **stamps `parsed_time.start_date`** for recurring events with the
-earliest occurrence date (the same value the display's "(starts M/D)" uses).
-The earliest occurrence is chosen by its mapped calendar date, not a
-Monday-first weekday ordering; this matters when a source window starts on a
-Sunday. Off-window (pre/post burn) → "now/soon" are empty by design; current or
-future events fall to Upcoming/Hours not listed. Known limitation: the
-weekday→date map has one date per weekday, so a two-week "Mon–Fri" recurrence
-resolves to a single week — a pre-existing Schedule limitation, not solved here.
+**Date-gating (`utils/foodAvailability`).** Availability uses exact full-date
+membership: an event is "now"/"soon" only when today's Playa-local
+`YYYY-MM-DD` appears in `parsed_time.dates`. The same list represents single
+events, recurrences in either week, and occurrences on the inclusive window
+edges. There is no weekday inference, first-occurrence map, or month/day-only
+comparison. Consequently an `api-2025` date cannot become available while the
+viewer is on the 2026 source, even when the month and day are identical.
+Structured events with no occurrence inside the active source window are
+excluded from Food; genuinely unstructured offerings remain in Hours not
+listed.
 
 Overnight service checks both sides of midnight. Before midnight it validates
 the current day's occurrence; after midnight it validates the previous day's
-occurrence. A missing `end_day` is treated as an overnight range when the end
-time is earlier than the start time. Completed single-occurrence events are
-removed from the Food view, including Upcoming and Your upcoming picks, rather
-than relabeled as future food.
+occurrence. An end time earlier than the start time is also treated as an
+overnight range defensively. Source normalization rejects any
+occurrence whose end crosses into a different calendar year. Completed
+single-occurrence events are removed from the Food view, including Upcoming and
+Your upcoming picks, rather than relabeled as future food.
 
 The clock snapshot is owned by `App`, refreshed whenever Food is opened, and
 updated once per minute during long-lived PWA sessions. FoodView's manual
@@ -386,11 +384,10 @@ flowchart TD
 - `backend/src/playa/tagger.py` — `FOOD_TYPES`, event classification, and
   camp-own-text classification, including phrase masking.
 - `backend/src/playa/builder.py` / `backend/src/playa/config.py` — per-source
-  classification, API-year Food exclusions, and recurring canonical-date
-  stamping.
+  classification, API-year Food exclusions, and occurrence window filtering.
 - `data/food-exclusions-api-2026.txt` — approved ID-only API-2026 suppressions.
-- `backend/src/playa/timeparser.py` — parsing, canonical week maps, and
-  earliest mapped occurrence selection.
+- `backend/src/playa/schedule.py` — reviewed annual windows and exact-date
+  display formatting shared with Schedule.
 - `backend/src/playa/cli.py` / `Makefile` — aggregate-only `food-audit` command.
 - `backend/src/playa/foodreview.py` / `scripts/food_hours_ollama_audit.py` —
   local semantic Hours-not-listed audit and ID-only proposals (ADR 19).
@@ -403,5 +400,5 @@ flowchart TD
   wiring; `client/src/components/TabBar.tsx` — count-free Food route.
 - `client/tests/foodAvailability.test.ts`, `client/tests/FoodView.test.ts`,
   `client/tests/clock.test.ts`, `backend/tests/test_tagger.py`,
-  `backend/tests/test_timeparser.py`, `backend/tests/test_builder.py` — focused
+  `backend/tests/test_schedule.py`, `backend/tests/test_builder.py` — focused
   regression coverage.

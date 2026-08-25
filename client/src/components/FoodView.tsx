@@ -30,7 +30,7 @@ interface Props {
   onGotoCamp: (campId: string) => void;
   /** Active data source — drives the per-year BRC geometry for "near me". */
   source: Source;
-  /** Burn window edges ('YYYY-MM-DD') so availability is date-gated. */
+  /** Active source's annual window edges ('YYYY-MM-DD'). */
   burnStart?: string;
   burnEnd?: string;
   youLabel?: string;
@@ -45,7 +45,7 @@ interface FoodEntry {
   tags: string[];
   avail: Availability;
   startMin: number;      // for sorting; +Infinity when no time
-  dateNum: number;       // start date as M*100+D (8/31→831); +Infinity if none
+  dateNum: number;       // start date as YYYYMMDD; +Infinity if none
 }
 
 const SECTIONS: Array<{ key: Availability; icon: string; title: string }> = [
@@ -62,14 +62,14 @@ function startMinutes(ev: Event | null): number {
   return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : Number.POSITIVE_INFINITY;
 }
 
-/** Start date ('M/D') → M*100+D for date ordering; +Infinity when absent.
- *  Recurring events carry the earliest occurrence date (stamped server-side),
- *  which is exactly the "(starts M/D)" shown in the row — so ordering by this
- *  matches what the user sees. */
+/** Earliest occurrence date (ISO) → YYYYMMDD for date ordering; +Infinity when
+ *  absent. `dates` is sorted earliest-first (ADR 11), so `dates[0]` is the first
+ *  day the event happens — matching how the row reads. */
 function startDateNum(ev: Event | null): number {
-  const sd = ev?.parsed_time?.start_date;
-  const m = sd ? /^(\d{1,2})\/(\d{1,2})$/.exec(sd) : null;
-  return m ? parseInt(m[1], 10) * 100 + parseInt(m[2], 10) : Number.POSITIVE_INFINITY;
+  const sd = ev?.parsed_time?.dates?.[0];
+  return sd && /^\d{4}-\d{2}-\d{2}$/.test(sd)
+    ? Number.parseInt(sd.replaceAll('-', ''), 10)
+    : Number.POSITIVE_INFINITY;
 }
 
 /** Lowercased text a search query matches against. */

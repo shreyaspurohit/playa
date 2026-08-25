@@ -162,7 +162,7 @@ preserving the source-independent `transformers-cache`.
 - `gis.py` — official annual GIS fetch, allowlist, validation, atomic cache
 - `mapaudit.py` — read-only base-grid candidate report
 - `tagger.py` — camp/art/food taxonomies and classifiers
-- `timeparser.py` — free-text event time normalization/display
+- `schedule.py` — reviewed annual event windows and occurrence display
 - `foodreview.py` — local, loopback-only semantic food audit
 - `builder.py` — source load, tiers, encryption, HTML/worker/privacy generation
 - `templates/site.html`, `templates/privacy.html` — build templates

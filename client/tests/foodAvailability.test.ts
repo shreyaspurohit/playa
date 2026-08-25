@@ -20,13 +20,11 @@ function makeEvent(overrides: Partial<Event> = {}): Event {
 function makeParsedTime(overrides: Partial<ParsedTime> = {}): ParsedTime {
   return {
     kind: 'recurring',
+    dates: [],
     days: ['Mon'],
-    start_day: 'Mon',
-    start_date: null,
-    end_day: 'Mon',
-    end_date: null,
     start_time: '10:00',
     end_time: '11:00',
+    overnight: false,
     ...overrides,
   };
 }
@@ -58,7 +56,7 @@ describe('eventAvailability', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
         kind: 'recurring',
-        days: [ctx.weekday],
+        dates: [ctx.iso],
         start_time: '10:00',
         end_time: '11:00',
       }),
@@ -74,7 +72,7 @@ describe('eventAvailability', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
         kind: 'recurring',
-        days: [ctx.weekday],
+        dates: [ctx.iso],
         start_time: '11:00',
         end_time: '12:00',
       }),
@@ -83,16 +81,12 @@ describe('eventAvailability', () => {
     assert.equal(result, 'soon');
   });
 
-  test('returns "later" when event is on a different weekday', () => {
+  test('returns "later" when the event does not occur today', () => {
     const now = playaDate('2026-08-31', '10:30');
-    const ctx = nowContext(now);
-    // Find a different weekday
-    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const otherDay = weekdays[(weekdays.indexOf(ctx.weekday) + 1) % 7];
     const ev = makeEvent({
       parsed_time: makeParsedTime({
         kind: 'recurring',
-        days: [otherDay],
+        dates: ['2026-09-01'],   // a different day than 2026-08-31
         start_time: '10:00',
         end_time: '11:00',
       }),
@@ -108,7 +102,7 @@ describe('eventAvailability', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
         kind: 'recurring',
-        days: [ctx.weekday],
+        dates: [ctx.iso],
         start_time: '10:00',
         end_time: '11:00',
       }),
@@ -120,8 +114,8 @@ describe('eventAvailability', () => {
   test('returns "now" after midnight for a single event that started yesterday', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
-        kind: 'single', days: ['Tue'], start_day: 'Tue', start_date: '8/25',
-        start_time: '22:00', end_day: 'Wed', end_date: '8/26', end_time: '02:00',
+        kind: 'single', dates: ['2026-08-25'],
+        start_time: '22:00', end_time: '02:00', overnight: true,
       }),
     });
     assert.equal(
@@ -133,8 +127,8 @@ describe('eventAvailability', () => {
   test('infers midnight wrap for recurring events without explicit day fields', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
-        kind: 'recurring', days: ['Tue'], start_day: null, start_date: '8/25',
-        start_time: '22:00', end_day: null, end_date: null, end_time: '02:00',
+        kind: 'recurring', dates: ['2026-08-25'],
+        start_time: '22:00', end_time: '02:00', overnight: false,
       }),
     });
     assert.equal(
@@ -144,6 +138,23 @@ describe('eventAvailability', () => {
         { burnStart: '2026-08-25', burnEnd: '2026-09-07' },
       ),
       'now',
+    );
+  });
+
+  test('uses the exact week-two start date after midnight for a recurring event', () => {
+    const ev = makeEvent({
+      parsed_time: makeParsedTime({
+        kind: 'recurring', dates: ['2026-08-30', '2026-09-06'], days: ['Sun'],
+        start_time: '23:00', end_time: '01:00', overnight: true,
+      }),
+    });
+    assert.equal(
+      eventAvailability(ev, playaDate('2026-09-07', '00:30')),
+      'now',
+    );
+    assert.equal(
+      eventAvailability(ev, playaDate('2026-09-01', '00:30')),
+      'later',
     );
   });
 });
@@ -171,41 +182,38 @@ describe('nowContext', () => {
     const ctx = nowContext(date);
     // Just verify structure; the weekday depends on the actual day
     assert.ok(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].includes(ctx.weekday));
-    assert.equal(ctx.md, '8/26');
+    assert.equal(ctx.iso, '2026-08-26');
     assert.equal(ctx.minutes, 14 * 60 + 35);
   });
 });
 
 describe('occursOn', () => {
-  test('returns true for recurring event matching today\'s weekday', () => {
+  test('returns true when a recurring event occurs on today\'s date', () => {
     const now = new Date();
     const ctx = nowContext(now);
     const p = makeParsedTime({
       kind: 'recurring',
-      days: [ctx.weekday],
+      dates: [ctx.iso],
     });
     assert.equal(occursOn(p, ctx), true);
   });
 
-  test('returns false for recurring event not matching today\'s weekday', () => {
+  test('returns false when the event has no occurrence on today\'s date', () => {
     const now = new Date();
     const ctx = nowContext(now);
-    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const otherDay = weekdays[(weekdays.indexOf(ctx.weekday) + 1) % 7];
     const p = makeParsedTime({
       kind: 'recurring',
-      days: [otherDay],
+      dates: [],
     });
     assert.equal(occursOn(p, ctx), false);
   });
 
-  test('returns true for single event matching today\'s date M/D', () => {
+  test('returns true for single event matching today\'s ISO date', () => {
     const now = new Date();
     const ctx = nowContext(now);
     const p = makeParsedTime({
       kind: 'single',
-      start_date: ctx.md,
-      start_day: null,
+      dates: [ctx.iso],
     });
     assert.equal(occursOn(p, ctx), true);
   });
@@ -214,48 +222,83 @@ describe('occursOn', () => {
     const now = new Date();
     const ctx = nowContext(now);
     // Pick a different date
-    const otherDate = `${ctx.md === '8/26' ? '8/27' : '8/26'}`;
+    const otherDate = ctx.iso === '2026-08-26' ? '2026-08-27' : '2026-08-26';
     const p = makeParsedTime({
       kind: 'single',
-      start_date: otherDate,
-      start_day: null,
+      dates: [otherDate],
     });
     assert.equal(occursOn(p, ctx), false);
+  });
+
+  test('does not match the same month/day from another source year', () => {
+    const ctx = nowContext(playaDate('2026-08-30', '12:00'));
+    const p = makeParsedTime({
+      kind: 'single',
+      dates: ['2025-08-30'],
+    });
+    assert.equal(occursOn(p, ctx), false);
+    assert.equal(
+      isUpcomingFood(
+        makeEvent({ parsed_time: p }),
+        playaDate('2026-08-30', '12:00'),
+        { burnStart: '2026-08-30', burnEnd: '2026-09-07' },
+      ),
+      false,
+    );
+  });
+
+  test('uses exact week-one and week-two dates for singles and recurrences', () => {
+    const weekOne = nowContext(playaDate('2026-08-30', '12:00'));
+    const weekTwo = nowContext(playaDate('2026-09-06', '12:00'));
+    const between = nowContext(playaDate('2026-09-01', '12:00'));
+    const singleWeekOne = makeParsedTime({ kind: 'single', dates: ['2026-08-30'] });
+    const singleWeekTwo = makeParsedTime({ kind: 'single', dates: ['2026-09-06'] });
+    const recurring = makeParsedTime({
+      kind: 'recurring', dates: ['2026-08-30', '2026-09-06'], days: ['Sun'],
+    });
+
+    assert.equal(occursOn(singleWeekOne, weekOne), true);
+    assert.equal(occursOn(singleWeekOne, weekTwo), false);
+    assert.equal(occursOn(singleWeekTwo, weekOne), false);
+    assert.equal(occursOn(singleWeekTwo, weekTwo), true);
+    assert.equal(occursOn(recurring, weekOne), true);
+    assert.equal(occursOn(recurring, weekTwo), true);
+    assert.equal(occursOn(recurring, between), false);
   });
 });
 
 describe('eventAvailability date gating (burn window + start date)', () => {
   const OPTS = { burnStart: '2026-08-25', burnEnd: '2026-09-07' };
-  const daily = (start_date: string | null, start = '12:00', end = '17:00') =>
+  const daily = (dates: string[], start = '12:00', end = '17:00') =>
     makeEvent({
       food_tags: ['meal'],
       parsed_time: makeParsedTime({
         kind: 'recurring',
+        dates,
         days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-        start_day: null, end_day: null,
-        start_date, start_time: start, end_time: end,
+        start_time: start, end_time: end,
       }),
     });
 
   test('a daily event before the burn window is "later", not "soon" (the Aug-9 bug)', () => {
     // Aug 9, 10am — well before the window; would have matched weekday+time.
     const when = playaDate('2026-08-09', '10:00');
-    assert.equal(eventAvailability(daily('8/31'), when, OPTS), 'later');
+    assert.equal(eventAvailability(daily(['2026-08-31']), when, OPTS), 'later');
   });
 
   test('a daily event during the window, mid-service, is "now"', () => {
     const when = playaDate('2026-08-31', '13:00'); // Aug 31, 1pm, inside 12–5
-    assert.equal(eventAvailability(daily('8/25'), when, OPTS), 'now');
+    assert.equal(eventAvailability(daily(['2026-08-31']), when, OPTS), 'now');
   });
 
   test('a daily event during the window, ~1h before start, is "soon"', () => {
     const when = playaDate('2026-08-31', '11:00'); // Aug 31, 11am, starts 12
-    assert.equal(eventAvailability(daily('8/25'), when, OPTS), 'soon');
+    assert.equal(eventAvailability(daily(['2026-08-31']), when, OPTS), 'soon');
   });
 
   test('in-window but before the event\'s start date is "later"', () => {
     const when = playaDate('2026-08-26', '13:00'); // Aug 26, but starts 8/31
-    assert.equal(eventAvailability(daily('8/31'), when, OPTS), 'later');
+    assert.equal(eventAvailability(daily(['2026-08-31']), when, OPTS), 'later');
   });
 });
 
@@ -265,8 +308,8 @@ describe('isUpcomingFood', () => {
   test('returns false for a single event that ended earlier today', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
-        kind: 'single', days: ['Wed'], start_day: 'Wed', start_date: '8/26',
-        start_time: '10:00', end_day: 'Wed', end_date: '8/26', end_time: '11:00',
+        kind: 'single', dates: ['2026-08-26'],
+        start_time: '10:00', end_time: '11:00', overnight: false,
       }),
     });
     assert.equal(isUpcomingFood(ev, playaDate('2026-08-26', '14:00'), OPTS), false);
@@ -275,8 +318,8 @@ describe('isUpcomingFood', () => {
   test('keeps an overnight single event while it is still serving', () => {
     const ev = makeEvent({
       parsed_time: makeParsedTime({
-        kind: 'single', days: ['Tue'], start_day: 'Tue', start_date: '8/25',
-        start_time: '22:00', end_day: 'Wed', end_date: '8/26', end_time: '02:00',
+        kind: 'single', dates: ['2026-08-25'],
+        start_time: '22:00', end_time: '02:00', overnight: true,
       }),
     });
     assert.equal(isUpcomingFood(ev, playaDate('2026-08-26', '01:00'), OPTS), true);

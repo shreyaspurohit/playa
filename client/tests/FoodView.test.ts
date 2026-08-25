@@ -37,13 +37,11 @@ function makeEvent(overrides: Partial<Event> = {}): Event {
 function makeParsedTime(overrides: Partial<ParsedTime> = {}): ParsedTime {
   return {
     kind: 'recurring',
+    dates: ['2026-08-31'],
     days: ['Mon'],
-    start_day: 'Mon',
-    start_date: null,
-    end_day: 'Mon',
-    end_date: null,
     start_time: '10:00',
     end_time: '11:00',
+    overnight: false,
     ...overrides,
   };
 }
@@ -490,8 +488,6 @@ describe('<FoodView>', () => {
     mountFood({ camps: [camp], isEventFav: () => false });
     assert.equal(mount.querySelector('.food-picks'), null);
     // …picks appear when the event is starred.
-    render(null, mount); teardownDom(); installDom();
-    mount = document.createElement('div'); document.body.appendChild(mount);
     mountFood({ camps: [camp], isEventFav: (id) => id === 'e-pick' });
     const picks = mount.querySelector('.food-picks');
     assert.ok(picks, 'Your picks section present');
@@ -516,8 +512,8 @@ describe('<FoodView>', () => {
         id: 'e-daily', name: 'Daily Lunch', food_tags: ['meal'],
         parsed_time: makeParsedTime({
           kind: 'recurring',
+          dates: ['2026-08-31'],
           days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-          start_day: null, end_day: null, start_date: null,
           start_time: '12:00', end_time: '17:00',
         }),
       })],
@@ -546,11 +542,11 @@ describe('<FoodView>', () => {
         // (the old bug), "AAA" (9/3) would wrongly precede "ZZZ" (8/31).
         makeEvent({
           id: 'e-late', name: 'AAA Ramen', food_tags: ['noodles'],
-          parsed_time: makeParsedTime({ kind: 'single', start_day: null, start_date: '9/3', start_time: '00:00', end_time: '02:00' }),
+          parsed_time: makeParsedTime({ kind: 'single', dates: ['2026-09-03'], start_time: '00:00', end_time: '02:00' }),
         }),
         makeEvent({
           id: 'e-early', name: 'ZZZ Tacos', food_tags: ['tacos'],
-          parsed_time: makeParsedTime({ kind: 'single', start_day: null, start_date: '8/31', start_time: '00:00', end_time: '00:30' }),
+          parsed_time: makeParsedTime({ kind: 'single', dates: ['2026-08-31'], start_time: '00:00', end_time: '00:30' }),
         }),
       ],
     });
@@ -568,7 +564,7 @@ describe('<FoodView>', () => {
       id: 'c-past',
       events: [makeEvent({
         id: 'e-past', name: 'Old Feast', food_tags: ['meal'],
-        parsed_time: makeParsedTime({ kind: 'single', start_day: null, start_date: '1/1' }),
+        parsed_time: makeParsedTime({ kind: 'single', dates: ['2026-01-01'] }),
       })],
     });
     mountFood({ camps: [camp], isEventFav: (id) => id === 'e-past' });

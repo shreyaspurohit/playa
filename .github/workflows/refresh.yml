@@ -395,9 +395,9 @@ jobs:
         env:
           # Pulled from repo secrets. Blank → plaintext build.
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
-          # Burn-week dates — REQUIRED. This pair drives the calendar
-          # fallback + public-access window (see Config.burn_start /
-          # burn_end). No code-side default;
+          # Burn-week dates — REQUIRED. This pair drives only the current-year
+          # calendar and must match its reviewed official schedule window
+          # (see Config.burn_start / burn_end). No environment fallback;
           # if the operator hasn't set these repo vars, the build
           # fails loud rather than producing a site with stale dates.
           BURN_WINDOW_OPEN_FROM: ${{ vars.BURN_WINDOW_OPEN_FROM }}

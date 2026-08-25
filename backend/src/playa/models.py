@@ -15,10 +15,11 @@ class Event:
     # by SiteBuilder post-load; empty string if the raw `time` couldn't be
     # parsed. The template falls back to `time` when this is empty.
     display_time: str = ""
-    # Structured parse for the calendar view. Matches the output shape of
-    # timeparser.parse_event_time(); None when raw `time` is unparseable.
-    #   {kind: "single"|"recurring", days: ["Mon",...], start_day, start_date,
-    #    start_time: "HH:MM" 24h, end_day, end_time}
+    # Structured API occurrence data for Schedule/Food; None when no valid
+    # occurrence is available. Full ISO dates preserve annual source identity.
+    #   {kind: "single"|"recurring", dates: ["YYYY-MM-DD", ...],
+    #    days: ["Mon",...], start_time: "HH:MM", end_time: "HH:MM",
+    #    overnight: bool}
     parsed_time: dict[str, Any] | None = None
     # App-generated food-type classifications for this event (e.g.
     # ["tacos", "vegan"]). Populated by Tagger.tag_event_food at

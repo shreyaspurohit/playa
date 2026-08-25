@@ -3,13 +3,11 @@
 
 export interface ParsedTime {
   kind: 'single' | 'recurring';
-  days: string[];                // ['Mon', ...]
-  start_day: string | null;
-  start_date: string | null;     // 'M/D' when known (enriched from week_map)
+  dates: string[];               // exact occurrence start dates ['YYYY-MM-DD', ...] (ADR 11)
+  days: string[];                // weekdays ['Mon', ...] — display label only, not placement
   start_time: string;            // 'HH:MM' 24h
-  end_day: string | null;
-  end_date: string | null;
-  end_time: string;
+  end_time: string;              // 'HH:MM' 24h
+  overnight: boolean;            // end crosses midnight → end shown on date+1
 }
 
 export interface Event {

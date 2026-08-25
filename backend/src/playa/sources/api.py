@@ -31,7 +31,7 @@ Schema mapping notes:
     by uid and attach to the matching camp.
   * `EventOccurrenceModel.start_time` / `end_time` are ISO-8601 strings
     with timezone — we synthesize `parsed_time` directly. See
-    `_event_from_api()` for the recurring-vs-single decision.
+    `_events_from_api()` for the recurring-vs-single decision.
 """
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ class APISource:
             camp_uid = ev_raw.get("hosted_by_camp")
             if not camp_uid:
                 continue
-            evs = _events_from_api(ev_raw)
+            evs = _events_from_api(ev_raw, source_year=self.year)
             if not evs:
                 continue
             events_by_camp.setdefault(camp_uid, []).extend(evs)
@@ -396,7 +396,7 @@ def _load_art_api_denylist(config: Config) -> set[str]:
     return ids
 
 
-def _events_from_api(d: dict[str, Any]) -> list[Event]:
+def _events_from_api(d: dict[str, Any], *, source_year: int) -> list[Event]:
     """API EventModel → list[Event].
 
     Coalescing rule:
@@ -424,62 +424,99 @@ def _events_from_api(d: dict[str, Any]) -> list[Event]:
         et = _parse_iso(occ.get("end_time"))
         if st is None or et is None:
             continue
+        # Annual source identity is a hard boundary. A stale tuple from a
+        # different edition, or an occurrence whose end crosses New Year,
+        # must never enter this source's schedule payload.
+        if st.year != source_year or et.year != source_year:
+            continue
         parsed.append((st, et))
     if not parsed:
         return []
 
-    # All times-of-day match? → recurring.
-    times_of_day = {(st.strftime("%H:%M"), et.strftime("%H:%M")) for st, et in parsed}
-    end_days = {_day_abbrev(et) for _, et in parsed}
+    # All occurrences share the same time-of-day → one Event carrying the exact
+    # list of occurrence dates (ADR 11). The client places it on precisely those
+    # calendar days — no weekday fan-out — so every night of a multi-night event
+    # is kept and no phantom weekday is invented.
+    times_of_day = {
+        (st.strftime("%H:%M"), et.strftime("%H:%M"))
+        for st, et in parsed
+    }
     if len(times_of_day) == 1:
-        # Order days by date so display reads chronologically.
-        parsed.sort(key=lambda p: p[0])
-        days = []
-        seen = set()
-        for st, _ in parsed:
-            day = _day_abbrev(st)
-            if day not in seen:
-                seen.add(day)
-                days.append(day)
-        st0, et0 = parsed[0]
-        # If the event spans midnight (end day differs from start day
-        # within an occurrence), mark `kind=single` instead so the
-        # schedule view's overnight-event rendering kicks in.
-        spans_midnight = any(
-            _day_abbrev(st) != _day_abbrev(et) for st, et in parsed
-        )
-        if spans_midnight:
-            return [_single_event(uid, title, desc, st0, et0, idx=0)]
-        time_str = (
-            f"From {st0.strftime('%I:%M %p').lstrip('0')} to "
-            f"{et0.strftime('%I:%M %p').lstrip('0')} on "
-            + ", ".join(days)
-        )
-        end_day = end_days.pop() if len(end_days) == 1 else (days[-1] if days else None)
-        parsed_time = {
-            "kind": "recurring" if len(days) > 1 else "single",
-            "days": days,
-            "start_day": days[0] if days else None,
-            "start_date": st0.strftime("%-m/%-d"),
-            "start_time": st0.strftime("%H:%M"),
-            "end_day": end_day,
-            "end_time": et0.strftime("%H:%M"),
-        }
-        ev = Event(
+        pt = _occ_parsed_time(parsed)
+        st0, et0 = sorted(parsed, key=lambda p: p[0])[0]
+        if len(pt["dates"]) == 1:
+            time_str = _single_time_str(st0, et0)
+        else:
+            time_str = (
+                f"From {st0.strftime('%I:%M %p').lstrip('0')} to "
+                f"{et0.strftime('%I:%M %p').lstrip('0')} on "
+                + ", ".join(pt["days"])
+            )
+        return [Event(
             id=str(uid),
             name=title,
             description=desc,
             time=time_str,
             display_time="",
-            parsed_time=parsed_time,
-        )
-        return [ev]
+            parsed_time=pt,
+        )]
 
     # Mixed times → one Event per occurrence.
     out: list[Event] = []
     for i, (st, et) in enumerate(parsed):
         out.append(_single_event(uid, title, desc, st, et, idx=i))
     return out
+
+
+def _iso_date(dt: datetime) -> str:
+    return dt.date().isoformat()
+
+
+def _single_time_str(st: datetime, et: datetime) -> str:
+    """Dated raw-fallback text, shown only when an event has no in-window date."""
+    start_day = _day_abbrev(st)
+    end_day = _day_abbrev(et)
+    return (
+        f"Begins {start_day} ({st.strftime('%-m/%-d')}) at "
+        f"{st.strftime('%I:%M %p').lstrip('0')}, "
+        f"Ends "
+        + (f"{end_day} at " if end_day != start_day else "")
+        + et.strftime('%I:%M %p').lstrip('0')
+    )
+
+
+def _occ_parsed_time(pairs: list[tuple[datetime, datetime]]) -> dict:
+    """Structured schedule form from same-time-of-day occurrences (ADR 11).
+
+    Carries the exact occurrence start dates (`dates`, ``YYYY-MM-DD``) so the
+    client places the event on the literal days it happens — no weekday fan-out.
+    `overnight` marks occurrences whose end crosses midnight (the client shows
+    the end on the next day). `days` is retained only for the display label.
+    """
+    ordered = sorted(pairs, key=lambda p: p[0])
+    st0, et0 = ordered[0]
+    overnight = any(_day_abbrev(st) != _day_abbrev(et) for st, et in ordered)
+    dates: list[str] = []
+    seen_d: set[str] = set()
+    days: list[str] = []
+    seen_wd: set[str] = set()
+    for st, _ in ordered:
+        key = _iso_date(st)
+        if key not in seen_d:
+            seen_d.add(key)
+            dates.append(key)
+        wd = _day_abbrev(st)
+        if wd not in seen_wd:
+            seen_wd.add(wd)
+            days.append(wd)
+    return {
+        "kind": "single" if len(dates) == 1 else "recurring",
+        "dates": dates,
+        "days": days,
+        "start_time": st0.strftime("%H:%M"),
+        "end_time": et0.strftime("%H:%M"),
+        "overnight": overnight,
+    }
 
 
 def _single_event(
@@ -489,31 +526,13 @@ def _single_event(
     """Build a single-occurrence Event. `idx` disambiguates ids when
     one EventModel produces multiple Events."""
     eid = str(uid) if idx == 0 else f"{uid}#{idx}"
-    start_day = _day_abbrev(st)
-    end_day = _day_abbrev(et)
-    time_str = (
-        f"Begins {start_day} ({st.strftime('%-m/%-d')}) at "
-        f"{st.strftime('%I:%M %p').lstrip('0')}, "
-        f"Ends "
-        + (f"{end_day} at " if end_day != start_day else "")
-        + et.strftime('%I:%M %p').lstrip('0')
-    )
-    parsed_time = {
-        "kind": "single",
-        "days": [start_day],
-        "start_day": start_day,
-        "start_date": st.strftime("%-m/%-d"),
-        "start_time": st.strftime("%H:%M"),
-        "end_day": end_day,
-        "end_time": et.strftime("%H:%M"),
-    }
     return Event(
         id=eid,
         name=title,
         description=desc,
-        time=time_str,
+        time=_single_time_str(st, et),
         display_time="",
-        parsed_time=parsed_time,
+        parsed_time=_occ_parsed_time([(st, et)]),
     )
 
 
