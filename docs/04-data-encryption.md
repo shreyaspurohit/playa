@@ -14,10 +14,11 @@ Python builder shells out to `openssl`; the browser decrypts via Web
 Crypto. Both sides agree on the same well-known parameters, and the
 test suite proves the round-trip.
 
-When both `SITE_PASSWORD` and `SITE_TIERS` are unset (local dev), payloads ship
-as gzip+base64 without encryption—no gate, faster iteration. Production uses
-multi-tier envelope encryption through `SITE_TIERS`; the legacy shared-password
-path remains supported.
+When both `SITE_PASSWORD` and `SITE_TIERS` are unset, the builder fails closed
+unless the operator explicitly sets `ALLOW_PLAINTEXT_BUILD=1`. That local-only
+opt-in emits gzip+base64 payloads without a gate for deliberate quick previews;
+it must never be set in CI. Production uses multi-tier envelope encryption
+through `SITE_TIERS`; the legacy shared-password path remains supported.
 
 ## Decisions
 

@@ -1,6 +1,6 @@
 ---
 title: Roadmap
-date: 2026-08-06
+date: 2026-08-27
 status: current
 ---
 
@@ -11,6 +11,12 @@ starting any item.
 
 ## Data and operations
 
+- **Post-2026-event workflow defense-in-depth.** After the live-event change
+  freeze, add a workflow-level preflight requiring `SITE_TIERS` or
+  `SITE_PASSWORD` and update the stale build-step comment that says blank
+  secrets produce plaintext. The builder already fails closed unless the
+  local-only `ALLOW_PLAINTEXT_BUILD=1` opt-in is explicit, so this is redundant
+  operator feedback rather than a current production dependency.
 - Extend the annual `map-audit` report with an optional prior-year comparison
   if schema/count review becomes cumbersome. The current tool already derives
   candidate street radii and radial ranges from official GeoJSON without
@@ -39,6 +45,36 @@ starting any item.
   `/update-map` hand-copy (assisted today by `map-audit`). Pure dev-ergonomics,
   no user-facing change — worth doing to have the code ready for the next
   annual refresh, but not urgent.
+- **Music tab (artist / DJ discovery).** A dedicated tab for music events with
+  filters (genre, artist, day/time, camp). Start API-only: music events already
+  live inside camp `occurrence_set`s, so classify them with a music taxonomy
+  extending `tagger.py` (the food-tag pattern) rather than adding a source.
+  Artist detail the API lacks (bios, set times, lineups) would need an external
+  source — treat that as a separate, later enrichment: confirm the BM API terms
+  allow mixing external data, keep source event text un-rewritten and disclosed,
+  keep `BM_API_KEY` server-side, and embed any external data at build time so
+  the PWA stays offline. Defer the internet-sourced part until a licensed,
+  attributable, offline-embeddable data source is chosen.
+- **Parties linked to art.** Surface parties/events associated with an art piece
+  (e.g. a sound-art installation's nightly set) on the art card. The current API
+  models events as `hosted_by_camp` and art separately, with no direct art↔event
+  link — so this needs a relationship strategy (shared location proximity, or
+  curated linking) before it can render. Honor art location masking until
+  `ART_LOCATION_RELEASE_AT`.
+- **Burner packing list tab.** A year-owned, offline checklist (categories,
+  check-off, custom items). Holds no Event Data, so it follows the journal model
+  — local-first `localStorage`, optional App-folder Dropbox sync, independent of
+  record-source availability (see [20-journal.md](20-journal.md),
+  [16-cloud-sync.md](16-cloud-sync.md)). The most self-contained of these and a
+  good next standalone feature.
+- **Camp location mini-map in the camp card.** Expand a camp card to reveal its
+  playa location on a small per-year BRC map. Reuse `brcForSource` geometry plus
+  `addressToLatLng` (already used for the Schedule "near me" distance). Must
+  honor current-year camp location masking (locked until
+  `CAMP_LOCATION_RELEASE_AT`; only trusted god-mode bypasses) and the
+  exact-year-geometry rule from [10-map-system.md](10-map-system.md) — never
+  borrow another year's coordinates. The expand animation is presentation; keep
+  it accessible and offline.
 
 ## Won't do (decided 2026)
 

@@ -1128,10 +1128,24 @@ class SiteBuilder:
         }
 
     def build(self) -> Path:
-        # `__init__` already validated BURN_START / BURN_END are set.
         # Validate the independent, year-specific D8 location cutoffs
         # before loading any potentially expensive source data.
         self._validate_location_release_policy()
+        try:
+            tiers = self.config.parsed_tiers()
+        except ValueError as e:
+            raise RuntimeError(f"SITE_TIERS misconfigured: {e}") from e
+        if (
+            not tiers
+            and not self.config.site_password
+            and not self.config.allow_plaintext_build
+        ):
+            raise RuntimeError(
+                "refusing implicit plaintext site build: set SITE_TIERS or "
+                "SITE_PASSWORD for an encrypted build. For an intentional "
+                "local-only plaintext preview, set ALLOW_PLAINTEXT_BUILD=1. "
+                "Never set that flag in CI."
+            )
         sync_meta = self._sync_meta()
         current_spec = f"api-{self.config.brc_map_year}"
         if not self.source_specs:
@@ -1176,12 +1190,7 @@ class SiteBuilder:
         # Three build modes:
         #   1. SITE_TIERS set     → envelope encryption (D10)
         #   2. SITE_PASSWORD set  → per-source single-tier encryption
-        #   3. neither            → per-source plaintext (gzip + base64)
-        try:
-            tiers = self.config.parsed_tiers()
-        except ValueError as e:
-            raise RuntimeError(f"SITE_TIERS misconfigured: {e}") from e
-
+        #   3. explicit local opt-in only → plaintext (gzip + base64)
         burn_open = os.environ.get("BURN_OPEN", "").strip() in (
             "1", "true", "yes", "on",
         )

@@ -6,7 +6,7 @@ CLIENT_DIR  := client
 BACKEND_DIR := backend
 
 # Auto-load `.env` if present at the repo root. Lets local dev keep
-# year-specific values (BURN_START, BURN_END, BM_API_KEY, etc.) out
+# year-specific values (BRC_MAP_YEAR, BM_API_YEARS, BM_API_KEY, etc.) out
 # of shell history without polluting the Makefile or shell rc.
 # `.env` is gitignored — see top of .gitignore.
 ifneq (,$(wildcard .env))
@@ -96,8 +96,10 @@ help:
 	@echo ""
 	@echo "    -- Other build knobs --"
 	@echo "    SITE_PASSWORD       single-tier encryption (legacy / dev)."
-	@echo "                          Unset = plaintext build (still gzipped —"
-	@echo "                          same page size as encrypted)."
+	@echo "                          With SITE_TIERS unset, one of these is required"
+	@echo "                          unless ALLOW_PLAINTEXT_BUILD=1."
+	@echo "    ALLOW_PLAINTEXT_BUILD  explicit local-only plaintext opt-in."
+	@echo "                          Never set in CI."
 	@echo "    BM_API_YEARS        comma-separated years to embed,"
 	@echo "                          e.g., BM_API_YEARS=2025,2026 (required)"
 	@echo "                          Schedule windows are reviewed and committed"

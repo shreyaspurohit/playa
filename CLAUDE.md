@@ -176,6 +176,7 @@ The package uses strict src layout. Run `pip install -e ./backend` (or
 | Variable | Default | Purpose |
 |---|---:|---|
 | `SITE_PASSWORD` | unset | single-tier payload encryption |
+| `ALLOW_PLAINTEXT_BUILD` | `0` | explicit local-only plaintext site opt-in; never set in CI |
 | `PBKDF2_ITER` | `200000` | payload/cache PBKDF2 work factor |
 | `BM_API_KEY` | unset | required only for explicit `api-fetch` |
 | `BM_API_BASE_URL` | official API | testing/staging override |
@@ -218,10 +219,15 @@ make preview
 make review-mobile
 ```
 
-Local development may leave `SITE_PASSWORD` and `SITE_TIERS` unset for a
-plaintext build. Still treat the generated HTML and screenshots as private
-Event Data. `make clean` removes generated embeddings/site/client artifacts but
-preserves `data/api/` and `data/gis/`.
+Local development keeps the same encryption vars as production in `.env`
+(`SITE_PASSWORD`/`SITE_TIERS`, plus `BM_CACHE_PASSWORD`), so local builds are
+encrypted like prod. An intentional quick plaintext preview requires the
+explicit local-only `ALLOW_PLAINTEXT_BUILD=1`; a missing password alone fails
+closed. `make review-mobile` uses that opt-in only for its temporary capture,
+then verifies the restored build is encrypted and fails on a plaintext restore.
+Treat generated HTML and screenshots as private Event Data regardless. `make
+clean` removes generated embeddings/site/client artifacts but preserves
+`data/api/` and `data/gis/`.
 
 ## Project layout
 

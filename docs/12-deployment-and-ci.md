@@ -69,6 +69,11 @@ concurrency group so a push cannot interrupt a manual Release replacement.
 are all-years trusted god, all-years normal demigod, and current-year-only
 spirit. Invalid references fail the build.
 
+The builder refuses to emit plaintext payloads unless the local-only
+`ALLOW_PLAINTEXT_BUILD=1` opt-in is explicit. That flag must never be configured
+in Actions; a missing `SITE_PASSWORD`/`SITE_TIERS` therefore fails the build
+before a Pages artifact is written.
+
 ## Deployment verification
 
 - `bm-sources` contains only annual API names, current first.

@@ -716,6 +716,24 @@ class ConfigAPIYearsTests(unittest.TestCase):
         ):
             self.assertEqual(Config.from_env(root=self.root).brc_map_year, 2026)
 
+    def test_plaintext_build_requires_explicit_environment_opt_in(self):
+        with mock.patch.dict(
+            os.environ,
+            {"BRC_MAP_YEAR": "2026", "ALLOW_PLAINTEXT_BUILD": "1"},
+            clear=True,
+        ):
+            self.assertTrue(
+                Config.from_env(root=self.root).allow_plaintext_build,
+            )
+        with mock.patch.dict(
+            os.environ,
+            {"BRC_MAP_YEAR": "2026", "ALLOW_PLAINTEXT_BUILD": "typo"},
+            clear=True,
+        ):
+            self.assertFalse(
+                Config.from_env(root=self.root).allow_plaintext_build,
+            )
+
     def test_environment_rejects_malformed_current_year(self):
         with mock.patch.dict(
             os.environ, {"BRC_MAP_YEAR": "current"}, clear=True,

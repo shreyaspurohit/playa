@@ -31,6 +31,7 @@ class BuilderFixture(unittest.TestCase):
             camp_location_release_at="2026-08-23T00:00:00-07:00",
             art_location_release_at="2026-08-30T00:00:00-07:00",
             brc_map_year=2026,
+            allow_plaintext_build=True,
             pbkdf2_iter=1000,
         )
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +72,18 @@ class BuilderFixture(unittest.TestCase):
 
 
 class SnapshotAndMetadataTests(BuilderFixture):
+    def test_build_refuses_implicit_plaintext_payloads(self):
+        cfg = Config(
+            root=self.root,
+            brc_map_year=2026,
+            camp_location_release_at="2026-08-23T00:00:00-07:00",
+            art_location_release_at="2026-08-30T00:00:00-07:00",
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "refusing implicit plaintext site build",
+        ):
+            SiteBuilder(cfg, sources=["api-2026"]).build()
+
     def test_unknown_current_year_window_is_not_inferred(self):
         unknown = Config(
             root=self.root,
@@ -197,7 +210,7 @@ class SnapshotAndMetadataTests(BuilderFixture):
             with self.assertRaisesRegex(RuntimeError, "api-2026.*only 1 camp"):
                 SiteBuilder(self.config, sources=["api-2026"]).build()
 
-    def test_full_plain_build_has_api_only_meta_and_cache_freshness(self):
+    def test_explicit_plain_build_has_api_only_meta_and_cache_freshness(self):
         self.write_cache(2026, fetched_at="2026-08-10T05:06:07Z")
         self.write_cache(2025)
         # A source can contain events before the configured calendar window.

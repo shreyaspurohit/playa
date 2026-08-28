@@ -25,6 +25,10 @@ class Config:
 
     # Runtime settings (via env when using Config.from_env()).
     site_password: str = ""
+    # Plaintext site payloads are retained for deliberate local previews, but
+    # must be explicitly opted into so a missing SITE_PASSWORD/SITE_TIERS can
+    # never silently produce a deployable plaintext site.
+    allow_plaintext_build: bool = False
     pbkdf2_iter: int = 200_000
 
     # Current-year API location-release policy (ADR D8). These are
@@ -168,6 +172,9 @@ class Config:
             root=root or cls.project_root(),
             brc_map_year=int(brc_map_year_raw),
             site_password=os.environ.get("SITE_PASSWORD", "").strip(),
+            allow_plaintext_build=os.environ.get(
+                "ALLOW_PLAINTEXT_BUILD", "",
+            ).strip().lower() in ("1", "true", "yes", "on"),
             pbkdf2_iter=int(os.environ.get("PBKDF2_ITER", "200000")),
             camp_location_release_at=os.environ.get(
                 "CAMP_LOCATION_RELEASE_AT", "",
