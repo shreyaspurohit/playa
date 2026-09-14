@@ -18,7 +18,7 @@ build-backend = "setuptools.build_meta"
 name = "playa"
 version = "0.0.0"
 description = "API-snapshot-backed Burning Man static site builder."
-requires-python = ">=3.14,<3.15"
+requires-python = ">=3.14.7,<3.15"
 license = { text = "MIT" }
 authors = [{ name = "Shreyas Purohit" }]
 # No `readme` field — setuptools sandboxes to the package root and refuses
